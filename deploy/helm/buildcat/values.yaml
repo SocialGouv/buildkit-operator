@@ -10,7 +10,10 @@
 # point at an existing one.
 namespace: buildcat
 
-replicaCount: 1
+# buildd runs HA: >1 replica with leader election (only the leader reconciles; the /route API
+# is served by every replica behind the Service).
+replicaCount: 2
+leaderElection: true
 
 # --- buildd: the controller-runtime manager + HTTP /route API on :8080 -------
 image:

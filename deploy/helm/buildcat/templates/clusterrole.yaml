@@ -50,3 +50,8 @@ rules:
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshots"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # --- leader election (HA): the controller-runtime manager holds a Lease ----
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

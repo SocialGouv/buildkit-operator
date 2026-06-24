@@ -11,12 +11,12 @@ import (
 	"net/http"
 	"time"
 
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	buildcatv1 "github.com/socialgouv/buildcat/api/v1alpha1"
 	"github.com/socialgouv/buildcat/internal/builder"
 	"github.com/socialgouv/buildcat/internal/controller"
 	"github.com/socialgouv/buildcat/internal/metrics"
 	"github.com/socialgouv/buildcat/internal/router"
-	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,6 +62,7 @@ func main() {
 	port := flag.Int("port", 1234, "buildkitd mTLS port")
 	healthPort := flag.Int("health-port", 8080, "companion health port")
 	flag.DurationVar(&routeWait, "route-wait", 180*time.Second, "max wait for a daemon to become Ready on /route")
+	leaderElect := flag.Bool("leader-elect", false, "enable leader election for HA (run >1 replica; only the leader reconciles)")
 	flag.Parse()
 	cfg.Port = int32(*port)
 	cfg.HealthPort = int32(*healthPort)
@@ -75,8 +76,11 @@ func main() {
 		panic(err)
 	}
 	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
-		Scheme:  scheme,
-		Metrics: metricsserver.Options{BindAddress: *metricsAddr}, // M4 observability
+		Scheme:                  scheme,
+		Metrics:                 metricsserver.Options{BindAddress: *metricsAddr}, // M4 observability
+		LeaderElection:          *leaderElect,                                     // HA: only the leader reconciles
+		LeaderElectionID:        "buildcat-buildd.buildcat.dev",
+		LeaderElectionNamespace: cfg.Namespace,
 	})
 	if err != nil {
 		log.Error(err, "unable to start manager")
@@ -114,6 +118,10 @@ type routeServer struct {
 	wait         time.Duration
 	coldStartSem chan struct{} // bounds concurrent cold-start attaches (bench C backpressure)
 }
+
+// NeedLeaderElection makes the /route API run on EVERY replica (not just the leader) so the
+// Service load-balances across all buildd pods. Reconciliation still runs only on the leader.
+func (s *routeServer) NeedLeaderElection() bool { return false }
 
 func (s *routeServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
