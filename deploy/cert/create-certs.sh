@@ -56,13 +56,16 @@ SAN_DNS_2="*.${NS}.svc.cluster.local"
 SAN_DNS_3="localhost"
 SAN_IP_1="127.0.0.1"
 SAN_CLIENT="client"
+# Off-cluster CI via the shared SNI gateway: set GATEWAY_HOST=builds.example.com to also cover
+# *.${GATEWAY_HOST} so the client's SNI (<daemon>.${GATEWAY_HOST}) validates against the daemon cert.
+GATEWAY_HOST="${GATEWAY_HOST:-}"
 
 mkdir -p "${DIR}" "${CLIENT_DIR}"
 
 echo ">> buildcat mTLS certs"
 echo "   namespace : ${NS}"
 echo "   output    : ${DIR}"
-echo "   daemon SAN: DNS:${SAN_DNS_1}, DNS:${SAN_DNS_2}, DNS:${SAN_DNS_3}, IP:${SAN_IP_1}"
+echo "   daemon SAN: DNS:${SAN_DNS_1}, DNS:${SAN_DNS_2}, DNS:${SAN_DNS_3}${GATEWAY_HOST:+, DNS:*.${GATEWAY_HOST}}, IP:${SAN_IP_1}"
 echo "   client SAN: DNS:${SAN_CLIENT}"
 echo
 
@@ -79,7 +82,8 @@ gen_with_mkcert() {
 
     # Daemon server cert with the wildcard SANs.
     mkcert -cert-file cert.pem -key-file key.pem \
-      "${SAN_DNS_1}" "${SAN_DNS_2}" "${SAN_DNS_3}" "${SAN_IP_1}" >/dev/null 2>&1
+      "${SAN_DNS_1}" "${SAN_DNS_2}" "${SAN_DNS_3}" "${SAN_IP_1}" \
+      ${GATEWAY_HOST:+"*.${GATEWAY_HOST}"} >/dev/null 2>&1
 
     # Client cert (clientAuth EKU via -client).
     mkcert -client -cert-file "client/cert.pem" -key-file "client/key.pem" \
@@ -136,6 +140,7 @@ subjectAltName   = @alt_names
 DNS.1 = ${SAN_DNS_1}
 DNS.2 = ${SAN_DNS_2}
 DNS.3 = ${SAN_DNS_3}
+${GATEWAY_HOST:+DNS.4 = *.${GATEWAY_HOST}}
 IP.1  = ${SAN_IP_1}
 EOF
     openssl genrsa -out "${DIR}/key.pem" "${KEY_BITS}" 2>/dev/null

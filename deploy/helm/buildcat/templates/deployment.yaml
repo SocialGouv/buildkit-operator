@@ -41,7 +41,9 @@ spec:
             - --keep-snapshots={{ .Values.snapshots.keep }}
             - --max-cold-starts={{ .Values.maxColdStarts }}
             - --leader-elect={{ .Values.leaderElection }}
-            - --daemon-service-type={{ .Values.daemonServiceType }}
+            {{- if .Values.gateway.host }}
+            - --gateway-host={{ .Values.gateway.host }}
+            {{- end }}
             - --port={{ .Values.buildkit.port }}
             - --api-listen=:{{ .Values.service.port }}
             - --metrics-addr=:{{ .Values.metrics.port }}

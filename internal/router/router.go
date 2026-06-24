@@ -156,8 +156,8 @@ func Endpoint(key, namespace string, port int32) string {
 	return "tcp://" + ServiceFQDN(key, namespace) + ":" + strconv.Itoa(int(port))
 }
 
-// EndpointHost formats a daemon endpoint for an arbitrary host — e.g. a LoadBalancer IP/hostname
-// when daemons are exposed externally (the gateway, for off-cluster CI).
+// EndpointHost formats a daemon endpoint for an arbitrary host — e.g. the <daemon>.<gateway-domain>
+// SNI hostname when daemons are reached through the shared gateway (off-cluster CI).
 func EndpointHost(host string, port int32) string {
 	return "tcp://" + host + ":" + strconv.Itoa(int(port))
 }

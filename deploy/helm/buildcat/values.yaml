@@ -102,15 +102,25 @@ resources:
     cpu: 500m
     memory: 512Mi
 
-# buildd Service (exposes the /route API and /healthz on :8080).
-# Per-project daemon Service type. LoadBalancer exposes each daemon's :1234 (mTLS) to off-cluster
-# CI (the gateway); buildd then returns the external LB endpoint from /route. Creates one public IP
-# per daemon — the daemon cert SAN must cover the external endpoint.
-daemonServiceType: ClusterIP
+# Shared SNI gateway for off-cluster CI. When `host` is set, daemons stay ClusterIP and ONE
+# LoadBalancer (the gateway) fronts all of them: buildd returns tcp://<daemon>.<host>:1234 and the
+# gateway routes by SNI to the daemon's ClusterIP — mTLS stays end-to-end. Point a wildcard DNS
+# *.<host> at the gateway LB; the daemon cert SAN must cover *.<host>. Empty host = in-cluster only.
+gateway:
+  host: "" # e.g. builds.buildcat.example.com
+  image:
+    repository: ghcr.io/socialgouv/buildcat-gateway
+    tag: dev
+  service:
+    type: LoadBalancer
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 128Mi }
 
+# buildd Service (exposes the /route API and /healthz on :8080). Set type: LoadBalancer to reach
+# the /route API from off-cluster runners.
 service:
   port: 8080
-  # LoadBalancer to expose the /route API to off-cluster runners (the gateway).
   type: ClusterIP
 
 # Names of the mTLS Secrets minted by deploy/cert/create-certs.sh. The daemon

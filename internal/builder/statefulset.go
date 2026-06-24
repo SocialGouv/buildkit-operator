@@ -28,7 +28,6 @@ type Config struct {
 	Port               int32  // TCP mTLS port (1234)
 	HealthPort         int32  // companion health port (8080)
 	Companion          bool   // include the companion sidecar (default true; off needs no custom image)
-	DaemonServiceType  string // ClusterIP (default) | LoadBalancer (external CI via the gateway)
 	S3CredsSecret      string // Secret with AWS_ACCESS_KEY_ID/SECRET for the s3 cold cache (env on the daemon)
 }
 
@@ -52,14 +51,10 @@ func Labels(bp *buildcatv1.BuildProject) map[string]string {
 	}
 }
 
-// Service is the per-project Service exposing the daemon over mTLS. ClusterIP by default;
-// LoadBalancer when external CI (off-cluster runners) must reach the daemon (the gateway).
+// Service is the per-project ClusterIP Service exposing the daemon over mTLS. Off-cluster CI reaches
+// daemons through the single shared SNI gateway (cmd/gateway), not a public LB per daemon.
 func Service(bp *buildcatv1.BuildProject, cfg Config) *corev1.Service {
 	l := Labels(bp)
-	svcType := corev1.ServiceTypeClusterIP
-	if cfg.DaemonServiceType != "" {
-		svcType = corev1.ServiceType(cfg.DaemonServiceType)
-	}
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      router.DaemonName(bp.Spec.Key),
@@ -67,7 +62,7 @@ func Service(bp *buildcatv1.BuildProject, cfg Config) *corev1.Service {
 			Labels:    l,
 		},
 		Spec: corev1.ServiceSpec{
-			Type:     svcType,
+			Type:     corev1.ServiceTypeClusterIP,
 			Selector: l,
 			Ports: []corev1.ServicePort{{
 				Name:       "buildkit",

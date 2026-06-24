@@ -1,6 +1,6 @@
 name: images
 
-# Build + push the buildd and companion images to this repo's GitHub Container Registry.
+# Build + push the buildd, companion and gateway images to this repo's GitHub Container Registry.
 # Uses the Actions GITHUB_TOKEN (packages: write), so no personal token / scope is needed.
 on:
   push:
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        component: [buildd, companion]
+        component: [buildd, companion, gateway]
     steps:
       - uses: actions/checkout@v4
 
