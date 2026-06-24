@@ -53,7 +53,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/devthejo/buildcat/internal/router"
+	"github.com/socialgouv/buildcat/internal/router"
 )
 
 // config holds the resolved CLI configuration. Cobra defaults are env-aware

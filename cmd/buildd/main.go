@@ -11,11 +11,11 @@ import (
 	"net/http"
 	"time"
 
-	buildcatv1 "github.com/devthejo/buildcat/api/v1alpha1"
-	"github.com/devthejo/buildcat/internal/builder"
-	"github.com/devthejo/buildcat/internal/controller"
-	"github.com/devthejo/buildcat/internal/metrics"
-	"github.com/devthejo/buildcat/internal/router"
+	buildcatv1 "github.com/socialgouv/buildcat/api/v1alpha1"
+	"github.com/socialgouv/buildcat/internal/builder"
+	"github.com/socialgouv/buildcat/internal/controller"
+	"github.com/socialgouv/buildcat/internal/metrics"
+	"github.com/socialgouv/buildcat/internal/router"
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -49,7 +49,7 @@ func main() {
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context to target (empty = current-context)")
 	flag.StringVar(&cfg.Namespace, "namespace", "buildcat", "namespace the daemons run in")
 	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.18.2-rootless", "buildkitd image (vanilla)")
-	flag.StringVar(&cfg.CompanionImage, "companion-image", "ovh-registry/buildcat-companion:dev", "companion sidecar image")
+	flag.StringVar(&cfg.CompanionImage, "companion-image", "ghcr.io/socialgouv/buildcat-companion:dev", "companion sidecar image")
 	flag.StringVar(&cfg.DaemonCertsSecret, "daemon-certs-secret", "buildkit-daemon-certs", "mTLS server certs secret")
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
 	flag.StringVar(&cfg.BuilddURL, "buildd-url", "http://buildd.buildcat.svc:8080", "companion heartbeat target")

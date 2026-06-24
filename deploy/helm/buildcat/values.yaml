@@ -14,7 +14,7 @@ replicaCount: 1
 
 # --- buildd: the controller-runtime manager + HTTP /route API on :8080 -------
 image:
-  repository: ovh-registry/buildcat-buildd
+  repository: ghcr.io/socialgouv/buildcat-buildd
   tag: dev
   pullPolicy: IfNotPresent
 
@@ -23,8 +23,11 @@ image:
 # creates. It is surfaced here so the controller can read it from its env and so
 # the whole fleet is pinned to one digest/tag.
 companion:
+  # Inject the companion sidecar into per-project daemons. Requires the companion image to
+  # be built+pushed (it bundles buildctl). Set false to run daemon-only (no inode backstop).
+  enabled: true
   image:
-    repository: ovh-registry/buildcat-companion
+    repository: ghcr.io/socialgouv/buildcat-companion
     tag: dev
     pullPolicy: IfNotPresent
 
@@ -54,9 +57,22 @@ defaults:
 # See deploy/README.md for the Kyverno caveat around seccompProfile: Unconfined.
 securityProfile: rootless
 
-# Snapshot class used by the controller for VolumeSnapshot-based cache seed/
-# durability (M3). OVH ships this CSI snapshot class on gen2.
-snapshotClassName: csi-cinder-snapclass-v1
+# Snapshot class used by the controller for VolumeSnapshot-based cache seed/durability (M3).
+# OVH ships csi-cinder-snapclass-v1 (at-rest) and csi-cinder-snapclass-in-use-v1 (in-use); the
+# in-use variant lets buildd snapshot a hot daemon without scale-to-zero (bench D-bis).
+snapshotClassName: csi-cinder-snapclass-in-use-v1
+
+# Durability snapshots retained per project (M3, oldest pruned).
+snapshots:
+  keep: 3
+
+# Max concurrent cold-start attaches buildd allows (M4 backpressure; seed from bench C so a
+# CI burst does not serialize Cinder attaches into minutes).
+maxColdStarts: 8
+
+# Prometheus metrics endpoint (M4). Scrape buildcat_* + controller-runtime metrics here.
+metrics:
+  port: 8081
 
 serviceAccount:
   # Name of the ServiceAccount buildd runs as. If empty, the chart fullname is

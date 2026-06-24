@@ -1,9 +1,9 @@
 # buildcat — control plane for one hot vanilla buildkitd per (project, arch).
 
-MODULE        := github.com/devthejo/buildcat
+MODULE        := github.com/socialgouv/buildcat
 CONTROLLER_GEN := go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
-IMG_BUILDD    ?= ovh-registry/buildcat-buildd:dev
-IMG_COMPANION ?= ovh-registry/buildcat-companion:dev
+IMG_BUILDD    ?= ghcr.io/socialgouv/buildcat-buildd:dev
+IMG_COMPANION ?= ghcr.io/socialgouv/buildcat-companion:dev
 
 .PHONY: all
 all: generate manifests build

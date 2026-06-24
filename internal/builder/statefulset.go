@@ -7,8 +7,8 @@ package builder
 import (
 	"fmt"
 
-	buildcatv1 "github.com/devthejo/buildcat/api/v1alpha1"
-	"github.com/devthejo/buildcat/internal/router"
+	buildcatv1 "github.com/socialgouv/buildcat/api/v1alpha1"
+	"github.com/socialgouv/buildcat/internal/router"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"

@@ -1,4 +1,4 @@
-module github.com/devthejo/buildcat
+module github.com/socialgouv/buildcat
 
 go 1.24.0
 
