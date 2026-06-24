@@ -87,6 +87,12 @@ func DaemonName(key string) string {
 	return "buildkitd-" + key
 }
 
+// CachePVCName is the retained cache PVC of a project — the StatefulSet's "cache"
+// volumeClaimTemplate at ordinal 0 (cache-<daemon>-0). It persists across scale-to-zero.
+func CachePVCName(key string) string {
+	return "cache-" + DaemonName(key) + "-0"
+}
+
 // ServiceFQDN is the in-cluster DNS name of a project's daemon Service.
 func ServiceFQDN(key, namespace string) string {
 	return DaemonName(key) + "." + namespace + ".svc"

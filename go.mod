@@ -3,6 +3,7 @@ module github.com/devthejo/buildcat
 go 1.24.0
 
 require (
+	github.com/kubernetes-csi/external-snapshotter/client/v8 v8.2.0
 	github.com/spf13/cobra v1.8.1
 	k8s.io/api v0.31.3
 	k8s.io/apimachinery v0.31.3

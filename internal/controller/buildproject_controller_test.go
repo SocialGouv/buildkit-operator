@@ -8,6 +8,7 @@ import (
 	buildcatv1 "github.com/devthejo/buildcat/api/v1alpha1"
 	"github.com/devthejo/buildcat/internal/builder"
 	"github.com/devthejo/buildcat/internal/router"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -25,6 +27,9 @@ func testScheme(t *testing.T) *runtime.Scheme {
 		t.Fatal(err)
 	}
 	if err := buildcatv1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := volumesnapshotv1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -159,5 +164,33 @@ func TestReconcile_ScalesIdleToZero(t *testing.T) {
 	}
 	if sts.Spec.Replicas == nil || *sts.Spec.Replicas != 0 {
 		t.Errorf("idle warm project: replicas = %v, want 0 (scale-to-zero)", sts.Spec.Replicas)
+	}
+}
+
+// M3 durability: when the cadence is due and the cache PVC exists, the reconciler must
+// create a VolumeSnapshot of that PVC (in-use; no scale-to-zero required on OVH).
+func TestReconcile_SnapshotsOnCadence(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildcat", "snaptest"
+	bp := &buildcatv1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierHot, SnapshotEverySec: 60},
+	}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: router.CachePVCName(key), Namespace: ns}}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp, pvc).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080, SnapshotClass: "csi-cinder-snapclass-v1"}}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var snaps volumesnapshotv1.VolumeSnapshotList
+	if err := c.List(context.Background(), &snaps, client.InNamespace(ns)); err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps.Items) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(snaps.Items))
+	}
+	if src := snaps.Items[0].Spec.Source.PersistentVolumeClaimName; src == nil || *src != router.CachePVCName(key) {
+		t.Errorf("snapshot source = %v, want %s", src, router.CachePVCName(key))
 	}
 }

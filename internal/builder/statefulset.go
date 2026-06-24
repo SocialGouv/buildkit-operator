@@ -23,6 +23,7 @@ type Config struct {
 	CompanionImage     string // our sidecar image (must bundle buildctl)
 	DaemonCertsSecret  string // mTLS server certs (wildcard SAN) shared by all daemons
 	BuildkitdConfigMap string // ConfigMap holding buildkitd.toml (gc config)
+	SnapshotClass      string // VolumeSnapshotClass for durability snapshots (M3)
 	BuilddURL          string // companion heartbeat target
 	Port               int32  // TCP mTLS port (1234)
 	HealthPort         int32  // companion health port (8080)
@@ -144,6 +145,18 @@ func StatefulSet(bp *buildcatv1.BuildProject, cfg Config) *appsv1.StatefulSet {
 	}
 
 	sc := bp.Spec.StorageClass
+	pvcSpec := corev1.PersistentVolumeClaimSpec{
+		AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+		StorageClassName: &sc,
+		Resources: corev1.VolumeResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(fmt.Sprintf("%dGi", bp.Spec.CacheVolumeGi))},
+		},
+	}
+	if bp.Spec.RestoreFromSnapshot != "" { // DR / seed: provision the warm cache from a snapshot
+		pvcSpec.DataSource = &corev1.TypedLocalObjectReference{
+			APIGroup: ptr("snapshot.storage.k8s.io"), Kind: "VolumeSnapshot", Name: bp.Spec.RestoreFromSnapshot,
+		}
+	}
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: cfg.Namespace, Labels: l},
 		Spec: appsv1.StatefulSetSpec{
@@ -162,15 +175,7 @@ func StatefulSet(bp *buildcatv1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			},
 			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{{
 				ObjectMeta: metav1.ObjectMeta{Name: cacheVolName},
-				Spec: corev1.PersistentVolumeClaimSpec{
-					AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-					StorageClassName: &sc,
-					Resources: corev1.VolumeResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceStorage: resource.MustParse(fmt.Sprintf("%dGi", bp.Spec.CacheVolumeGi)),
-						},
-					},
-				},
+				Spec:       pvcSpec,
 			}},
 		},
 	}

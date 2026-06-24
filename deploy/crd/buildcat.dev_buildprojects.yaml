@@ -157,6 +157,11 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              restoreFromSnapshot:
+                description: |-
+                  RestoreFromSnapshot, if set, seeds the cache PVC from this VolumeSnapshot on creation
+                  (DR / new cluster / lost volume). Ignored once the PVC exists.
+                type: string
               securityProfile:
                 default: rootless
                 description: SecurityProfile hardens the buildkitd pod.
@@ -166,8 +171,9 @@ spec:
                 - privileged
                 type: string
               snapshotEverySec:
-                description: SnapshotEverySec is the at-rest durability/seed cadence
-                  (0 = never).
+                description: |-
+                  SnapshotEverySec is the durability/seed snapshot cadence (0 = never). OVH supports
+                  in-use snapshots, so this does not require scale-to-zero.
                 format: int32
                 minimum: 0
                 type: integer

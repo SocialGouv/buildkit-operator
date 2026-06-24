@@ -7,11 +7,13 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	buildcatv1 "github.com/devthejo/buildcat/api/v1alpha1"
 	"github.com/devthejo/buildcat/internal/builder"
 	"github.com/devthejo/buildcat/internal/router"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -27,9 +29,12 @@ import (
 // BuildProjectReconciler reconciles BuildProject objects.
 type BuildProjectReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Cfg    builder.Config
+	Scheme        *runtime.Scheme
+	Cfg           builder.Config
+	KeepSnapshots int // durability snapshots retained per project (default 3)
 }
+
+const projectKeyLabel = "buildcat.dev/project-key"
 
 // +kubebuilder:rbac:groups=buildcat.dev,resources=buildprojects,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=buildcat.dev,resources=buildprojects/status,verbs=get;update;patch
@@ -39,6 +44,7 @@ type BuildProjectReconciler struct {
 // +kubebuilder:rbac:groups="",resources=services;persistentvolumeclaims;configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshots,verbs=get;list;watch;create;delete
 
 // Reconcile ensures the Service + StatefulSet exist and reflects readiness in status.
 func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -84,10 +90,22 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, client.IgnoreNotFound(err)
 		}
 	}
+	snapAfter, serr := r.maybeSnapshot(ctx, &bp)
+	if serr != nil {
+		l.V(1).Info("snapshot deferred", "err", serr.Error())
+	}
 	l.V(1).Info("reconciled", "key", bp.Spec.Key, "phase", bp.Status.Phase, "ready", ready, "desired", desired)
-	// While warm (and not hot), requeue so a quiet project scales to zero on time.
+
+	// Requeue at the soonest of: idle re-check (while warm) and the next snapshot due.
+	requeue := time.Duration(0)
 	if desired == 1 && bp.Spec.Tier != buildcatv1.TierHot {
-		return ctrl.Result{RequeueAfter: idleRecheckInterval(&bp)}, nil
+		requeue = idleRecheckInterval(&bp)
+	}
+	if snapAfter > 0 && (requeue == 0 || snapAfter < requeue) {
+		requeue = snapAfter
+	}
+	if requeue > 0 {
+		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
 	return ctrl.Result{}, nil
 }
@@ -196,11 +214,82 @@ func boolToCond(b bool) metav1.ConditionStatus {
 	return metav1.ConditionFalse
 }
 
+// maybeSnapshot takes a durability VolumeSnapshot of the project's cache when the cadence
+// (SnapshotEverySec) is due. OVH supports in-use snapshots (bench D-bis), so this needs no
+// scale-to-zero. Returns the duration until the next snapshot is due (0 = disabled).
+func (r *BuildProjectReconciler) maybeSnapshot(ctx context.Context, bp *buildcatv1.BuildProject) (time.Duration, error) {
+	if bp.Spec.SnapshotEverySec <= 0 || r.Cfg.SnapshotClass == "" {
+		return 0, nil
+	}
+	cadence := time.Duration(bp.Spec.SnapshotEverySec) * time.Second
+	pvcName := router.CachePVCName(bp.Spec.Key)
+	var pvc corev1.PersistentVolumeClaim
+	if err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: r.Cfg.Namespace}, &pvc); err != nil {
+		return cadence, client.IgnoreNotFound(err) // no cache PVC yet (never built) — retry later
+	}
+	var snaps volumesnapshotv1.VolumeSnapshotList
+	if err := r.List(ctx, &snaps, client.InNamespace(r.Cfg.Namespace), client.MatchingLabels{projectKeyLabel: bp.Spec.Key}); err != nil {
+		return cadence, err
+	}
+	if latest := newestSnapshot(snaps.Items); latest != nil {
+		if age := time.Since(latest.CreationTimestamp.Time); age < cadence {
+			return cadence - age, nil
+		}
+	}
+	name := fmt.Sprintf("snap-%s-%d", bp.Spec.Key, time.Now().Unix())
+	snap := &volumesnapshotv1.VolumeSnapshot{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Cfg.Namespace, Labels: map[string]string{projectKeyLabel: bp.Spec.Key}},
+		Spec: volumesnapshotv1.VolumeSnapshotSpec{
+			Source:                  volumesnapshotv1.VolumeSnapshotSource{PersistentVolumeClaimName: ptr(pvcName)},
+			VolumeSnapshotClassName: ptr(r.Cfg.SnapshotClass),
+		},
+	}
+	if err := ctrl.SetControllerReference(bp, snap, r.Scheme); err != nil {
+		return cadence, err
+	}
+	if err := r.Create(ctx, snap); err != nil {
+		return cadence, err
+	}
+	orig := bp.DeepCopy()
+	bp.Status.LastSnapshot = name
+	_ = r.Status().Patch(ctx, bp, client.MergeFrom(orig))
+	r.pruneSnapshots(ctx, append(snaps.Items, *snap))
+	return cadence, nil
+}
+
+func newestSnapshot(items []volumesnapshotv1.VolumeSnapshot) *volumesnapshotv1.VolumeSnapshot {
+	var newest *volumesnapshotv1.VolumeSnapshot
+	for i := range items {
+		if newest == nil || items[i].CreationTimestamp.After(newest.CreationTimestamp.Time) {
+			newest = &items[i]
+		}
+	}
+	return newest
+}
+
+// pruneSnapshots keeps the newest KeepSnapshots (default 3) per project and deletes the rest.
+func (r *BuildProjectReconciler) pruneSnapshots(ctx context.Context, items []volumesnapshotv1.VolumeSnapshot) {
+	keep := r.KeepSnapshots
+	if keep <= 0 {
+		keep = 3
+	}
+	if len(items) <= keep {
+		return
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreationTimestamp.After(items[j].CreationTimestamp.Time) })
+	for i := keep; i < len(items); i++ {
+		_ = r.Delete(ctx, &items[i])
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
 // SetupWithManager wires the reconciler and the objects it owns.
 func (r *BuildProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&buildcatv1.BuildProject{}).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
+		Owns(&volumesnapshotv1.VolumeSnapshot{}).
 		Complete(r)
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/devthejo/buildcat/internal/builder"
 	"github.com/devthejo/buildcat/internal/controller"
 	"github.com/devthejo/buildcat/internal/router"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +35,7 @@ var scheme = runtime.NewScheme()
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(buildcatv1.AddToScheme(scheme))
+	utilruntime.Must(volumesnapshotv1.AddToScheme(scheme))
 }
 
 func main() {
@@ -51,6 +53,8 @@ func main() {
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
 	flag.StringVar(&cfg.BuilddURL, "buildd-url", "http://buildd.buildcat.svc:8080", "companion heartbeat target")
 	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
+	flag.StringVar(&cfg.SnapshotClass, "snapshot-class", "", "VolumeSnapshotClass for durability snapshots (empty = disabled)")
+	keepSnaps := flag.Int("keep-snapshots", 3, "durability snapshots retained per project")
 	flag.StringVar(&apiListen, "api-listen", ":8080", "address for the /route + /heartbeat HTTP API")
 	port := flag.Int("port", 1234, "buildkitd mTLS port")
 	healthPort := flag.Int("health-port", 8080, "companion health port")
@@ -77,9 +81,10 @@ func main() {
 	}
 
 	if err := (&controller.BuildProjectReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Cfg:    cfg,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Cfg:           cfg,
+		KeepSnapshots: *keepSnaps,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller")
 		panic(err)

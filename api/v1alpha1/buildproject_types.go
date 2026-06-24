@@ -62,9 +62,14 @@ type BuildProjectSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	IdleTimeoutSec int32 `json:"idleTimeoutSec,omitempty"`
 
-	// SnapshotEverySec is the at-rest durability/seed cadence (0 = never).
+	// SnapshotEverySec is the durability/seed snapshot cadence (0 = never). OVH supports
+	// in-use snapshots, so this does not require scale-to-zero.
 	// +kubebuilder:validation:Minimum=0
 	SnapshotEverySec int32 `json:"snapshotEverySec,omitempty"`
+
+	// RestoreFromSnapshot, if set, seeds the cache PVC from this VolumeSnapshot on creation
+	// (DR / new cluster / lost volume). Ignored once the PVC exists.
+	RestoreFromSnapshot string `json:"restoreFromSnapshot,omitempty"`
 
 	// SecurityProfile hardens the buildkitd pod.
 	// +kubebuilder:validation:Enum=rootless;userns;privileged
