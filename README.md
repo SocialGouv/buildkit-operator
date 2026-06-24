@@ -216,4 +216,4 @@ These feed `idleTimeoutSec`, `--max-cold-starts`, warm-pool size, and the snapsh
 
 ## License
 
-TBD.
+[MIT](LICENSE) © SocialGouv.
