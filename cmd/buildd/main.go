@@ -145,10 +145,6 @@ func (s *routeServer) Start(ctx context.Context) error {
 	return nil
 }
 
-// forkIdleTimeoutSec is the short idle window for ephemeral fork-PR daemons — they serve a one-off
-// untrusted build, not a warm project, so they scale to zero fast (vs the canonical default).
-const forkIdleTimeoutSec = 300
-
 // decodeReq enforces POST and decodes a RouteRequest, writing the HTTP error itself. Returns
 // ok=false when the caller should return immediately — the shared preamble for the POST handlers.
 func decodeReq(w http.ResponseWriter, r *http.Request) (router.RouteRequest, bool) {
@@ -188,16 +184,16 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	canonical := spec.Key
 	key, result := canonical, "warm"
 	if req.Untrusted {
-		// Fork PR: ephemeral daemon seeded read-only from the canonical snapshot, no write-back
-		// (SnapshotEverySec stays 0) — distinct key, so it can never poison the canonical cache.
+		// Fork PR: ephemeral daemon derived read-only from the canonical snapshot — distinct key, so
+		// it can never poison the canonical cache (anti cache-poisoning). Same derivation policy as
+		// fan-out clones, via buildcatv1.DeriveChild.
 		key, result = router.ForkKey(canonical), "untrusted"
+		seed := ""
 		var canon buildcatv1.BuildProject
 		if err := s.c.Get(ctx, types.NamespacedName{Name: canonical, Namespace: s.cfg.Namespace}, &canon); err == nil {
-			spec.RestoreFromSnapshot = canon.Status.LastSnapshot
+			seed = canon.Status.LastSnapshot
 		}
-		spec.Key = key
-		spec.Tier = buildcatv1.TierWarm
-		spec.IdleTimeoutSec = forkIdleTimeoutSec
+		spec = buildcatv1.DeriveChild(spec, seed, buildcatv1.ForkChild, key)
 	}
 
 	respond := func() {

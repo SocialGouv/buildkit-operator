@@ -331,11 +331,7 @@ func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *buildc
 				Name: ckey, Namespace: r.Cfg.Namespace,
 				Labels: map[string]string{projectKeyLabel: bp.Spec.Key, "buildcat.dev/clone-of": bp.Spec.Key},
 			},
-			Spec: buildcatv1.BuildProjectSpec{
-				Key: ckey, Repo: bp.Spec.Repo, Target: bp.Spec.Target, Arch: bp.Spec.Arch,
-				Tier: buildcatv1.TierHot, StorageClass: bp.Spec.StorageClass, CacheVolumeGi: bp.Spec.CacheVolumeGi,
-				SecurityProfile: bp.Spec.SecurityProfile, RestoreFromSnapshot: bp.Status.LastSnapshot,
-			},
+			Spec: buildcatv1.DeriveChild(bp.Spec, bp.Status.LastSnapshot, buildcatv1.CloneChild, ckey),
 		}
 		if err := ctrl.SetControllerReference(bp, &clone, r.Scheme); err != nil {
 			return err
