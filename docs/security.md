@@ -77,7 +77,7 @@ isolation**, which a single shared `buildkitd` cannot offer:
 | Risk on a shared daemon | buildcat |
 |---|---|
 | **Cross-project cache poisoning** — any project's build can write cache that another project reads. | Each `(project, arch)` gets its **own daemon and its own PVC**. There is no shared writable cache to poison across projects. |
-| **Untrusted fork PRs** run with the same cache-write access as trusted builds. | `untrusted: true` routes to a `ForkKey` daemon: **ephemeral, seeded read-only from the project snapshot, with no write-back**. A malicious fork cannot poison the project's warm cache. |
+| **Untrusted fork PRs** run with the same cache-write access as trusted builds. | `untrusted: true` routes to a `ForkKey` daemon: **ephemeral, seeded read-only from the project snapshot, with no write-back**. A malicious fork cannot poison the project's warm cache. The fork spec comes from the shared `DeriveChild(parent, snapshot, ForkChild, key)` policy — the *same* derivation the M5 fan-out uses (`CloneChild`), so isolation behaviour can't silently diverge between the two paths. |
 | **Noisy-neighbour / contention** — one heavy build starves others sharing the daemon. | Dedicated daemon per project; no sharing of CPU/store with unrelated builds. |
 | **mTLS endpoint is a single shared trust domain.** | Per-daemon Service; the daemon cert can be scoped, and fork daemons are separate endpoints. |
 
@@ -87,9 +87,10 @@ isolation**, which a single shared `buildkitd` cannot offer:
   than the shared service — both must relax `no_new_privs`. If your threat model cannot tolerate
   that at all, the answer is a sandboxed runtime (gVisor/Kata/Sysbox) or VM-isolated builders, which
   is orthogonal to buildcat and applies equally to any buildkit deployment.
-- **More LoadBalancers when publicly exposed.** Gateway mode provisions a public LB per daemon (vs a
-  shared pool's fixed set). That is more external surface; keep daemons `ClusterIP` and route from
-  in-cluster runners when you don't need internet-facing builds.
+- **Public exposure is one shared gateway LB.** Daemons stay `ClusterIP`; off-cluster CI reaches all
+  of them through a **single** SNI gateway LoadBalancer (not one LB per daemon), so external surface
+  is fixed and small regardless of project count. mTLS stays end-to-end — the gateway terminates no
+  TLS. Keep even that LB off (in-cluster runners only) when you don't need internet-facing builds.
 - **The live exemption is platform state.** The Kyverno exemption must be tracked in GitOps; an
   undocumented live edit is config drift.
 

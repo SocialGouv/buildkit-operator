@@ -18,7 +18,7 @@ custom snapshotter.** It is a small **control plane** (routing + lifecycle) on t
 This README is the overview. The [`docs/`](docs/) directory holds the deep-dives and the **measured
 evidence** gathered validating buildcat on a real OVH MKS cluster:
 
-- [architecture.md](docs/architecture.md) — routing key, reconcile loop, HA, gateway mode
+- [architecture.md](docs/architecture.md) — routing key, reconcile loop, HA, the shared SNI gateway
 - [security.md](docs/security.md) — rootless constraint, Kyverno fix, threat model, fork isolation
 - [storage-and-cold-cache.md](docs/storage-and-cold-cache.md) — the 3 cache layers; **S3 ≈ 9× cold**
 - [performance.md](docs/performance.md) — measured warm/cold, with/without S3
@@ -71,19 +71,21 @@ sits at the wrong layer and does not deliver shared cache mounts.
 | Path | What |
 |---|---|
 | [`api/v1alpha1`](api/v1alpha1) | CRD: `BuildProject` (cache identity + daemon lifecycle) |
-| [`internal/router`](internal/router) | the **stable routing key** — `ProjectKey(repo,target,arch)`; pure, shared by CLI and control plane |
+| [`internal/router`](internal/router) | the **stable routing key** — `ProjectKey(repo,name,target,arch)`; pure, shared by CLI and control plane |
 | [`internal/builder`](internal/builder) | renders the `buildkitd` `StatefulSet` + `Service` (gen2 PVC, security profiles) |
 | [`internal/controller`](internal/controller) | the `BuildProject` reconciler (scale, snapshot, fan-out, status) |
 | [`internal/metrics`](internal/metrics) | Prometheus collectors |
 | [`cmd/buildd`](cmd/buildd) | the control plane (manager + `/route` API) |
-| [`cmd/companion`](cmd/companion) | per-daemon sidecar: readiness, heartbeat, inode-GC backstop, clean drain |
+| [`cmd/companion`](cmd/companion) | per-daemon sidecar: readiness, inode-GC backstop, clean drain |
 | [`cmd/build`](cmd/build) | the client CLI — a thin, drop-in-ish `docker build` |
 | [`deploy/`](deploy) | Helm chart, generated CRDs/RBAC, mTLS cert script, `buildkitd.toml`, warm-pool |
 
 **Routing rule (critical):** all builds that must share a cache **must resolve to the same key**
-⇒ the same StatefulSet ⇒ the same daemon. The key is `"p" + sha256(normRepo ⏎ normTarget ⏎
-normArch)[:16]` — coarse on purpose (no context, no branch) so concurrent and later builds
-converge. A too-fine key fragments the cache and kills sharing.
+⇒ the same StatefulSet ⇒ the same daemon. The key is `"p" + sha256(normRepo [⏎ n:name] ⏎
+normTarget ⏎ normArch)[:16]` — coarse on purpose (no context, no branch) so concurrent and later
+builds converge. A too-fine key fragments the cache and kills sharing. The optional `name` segments
+a **monorepo** into per-component daemons (one daemon + cache per image); an **empty** `name` is
+omitted from the hash, so single-image repos keep the exact same key (migration-safe).
 
 ---
 
@@ -93,7 +95,7 @@ converge. A too-fine key fragments the cache and kills sharing.
 |---|---|---|
 | **M1** | Daemon-per-project, routed | `BuildProject` → STS-of-1 + Service + gen2 PVC + mTLS; build via `buildx remote`. Concurrent builds share layers **and** cache mounts. |
 | **M2** | Elasticity | tier-aware **scale-to-zero** when idle (`IdleTimeoutSec`), the PVC is **retained** (no restore on wake); `/prewarm` webhook; preemptible **warm pool** so wake-ups don't trigger node autoscaling. |
-| **M3** | Durability & cold cache | periodic **in-use** `VolumeSnapshot` (no scale-to-zero needed on OVH), **restore-from-snapshot** (`spec.restoreFromSnapshot`), inode-GC backstop, S3 cold cache via the CLI. |
+| **M3** | Durability & cold cache | periodic **in-use** `VolumeSnapshot` (no scale-to-zero needed on OVH), **restore-from-snapshot** (`spec.restoreFromSnapshot`), inode-GC backstop, **S3 cold cache as a project policy** (buildd holds the bucket, `/route` returns the per-project reference, the client applies it automatically). |
 | **M4** | Observability, security, backpressure | Prometheus metrics; **fork-PR isolation** (untrusted builds get an ephemeral daemon seeded read-only, no write-back — anti cache-poisoning); **cold-start rate limit** (`--max-cold-starts`). |
 | **M5** | Conditional fan-out | `spec.Fanout` materializes N warm **CoW clone** daemons from the latest snapshot for a saturated project — vertical scaling (Resources/`CacheVolumeGi`) stays the first resort. |
 
@@ -110,6 +112,7 @@ metadata:
 spec:
   key: p1a2b3c4d5e6f7a8         # stable cache identity (set by the router)
   repo: github.com/acme/app     # normalized, informational
+  name: ""                      # optional monorepo component ("" => whole repo; segments the cache)
   target: ""                    # Dockerfile target stage ("" => default)
   arch: amd64                   # amd64 | arm64
   tier: warm                    # hot (never scale-to-zero) | warm | cold
@@ -175,15 +178,23 @@ that mutate rule (the precedented pattern for CI/build namespaces), or switch `s
 # build via the CLI (resolves the key, routes through buildd, builds via buildx remote+mTLS)
 build --repo github.com/acme/app --arch amd64 -t registry/acme/app:sha --push .
 
+# monorepo: --name (env BUILDCAT_NAME) segments one repo into per-component daemons + caches
+build --repo github.com/acme/monorepo --name api --arch amd64 -t registry/acme/api:sha --push .
+
 # or just talk to the buildd API
 curl -XPOST http://buildcat-buildd.buildcat.svc:8080/route   -d '{"repo":"github.com/acme/app","arch":"amd64"}'
 curl -XPOST http://buildcat-buildd.buildcat.svc:8080/prewarm -d '{"repo":"github.com/acme/app","arch":"amd64"}'   # on git push
 curl -XPOST http://buildcat-buildd.buildcat.svc:8080/route   -d '{"repo":"...","arch":"amd64","untrusted":true}'   # fork PR -> isolated daemon
 ```
 
-`buildd` HTTP API: `POST /route` (ensure + wait Ready, returns the mTLS endpoint), `POST /prewarm`
-(anticipatory scale-up, returns immediately), `POST /heartbeat`, `GET /healthz`, and Prometheus on
-`--metrics-addr` (`:8081`).
+The cold cache is a **project policy**, not a client concern: when buildd is configured with an S3
+bucket (`--s3-bucket …`), `/route` returns the per-project cache reference (bucket/region/endpoint,
+prefix = the project key, **no credentials**) and the `build` CLI applies it automatically — CI
+callers configure zero S3. See [storage-and-cold-cache.md](docs/storage-and-cold-cache.md).
+
+`buildd` HTTP API: `POST /route` (ensure + wait Ready, returns the mTLS endpoint + optional cache
+reference), `POST /prewarm` (anticipatory scale-up, returns immediately), `GET /healthz`, and
+Prometheus on `--metrics-addr` (`:8081`).
 
 ---
 

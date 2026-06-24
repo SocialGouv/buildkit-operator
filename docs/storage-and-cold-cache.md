@@ -22,32 +22,44 @@ same way it consumes a container registry — you provide it. In production that
 Storage** (`s3.<region>.io.cloud.ovh.net`); for the autonomous proof in this session it was a
 throwaway MinIO. There is no MinIO in the architecture; it was a test backend.
 
-S3 is wired **per build**, not on the daemon:
+### S3 is a **project policy**, configured once on buildd — not on every CI caller
 
-- The `build` CLI flag `--cache-s3`, or the example `build.sh`, inject
-  `--cache-from type=s3,… --cache-to type=s3,…,mode=max` from `BUILDCAT_S3_*` env.
-- `buildd` carries **no** S3 configuration — it is purely a build-time concern.
+The cold cache is **centralized in the control plane** so CI callers configure **zero** S3 (no
+flags, no env, no secrets on the client side):
+
+- **buildd holds the bucket config** — flags `--s3-bucket`, `--s3-region`, `--s3-endpoint` (Helm
+  values `s3.bucket` / `s3.region` / `s3.endpoint`). An empty bucket disables the cold cache.
+- **`/route` returns the per-project cache reference** in `RouteResponse.Cache`: the bucket, region,
+  endpoint, and a `name` = the **project key** (the per-project cache prefix). It carries **NO
+  credentials**.
+- **The client applies it automatically.** The `build` CLI (and `build.sh`) read `RouteResponse.Cache`
+  and add `--cache-from type=s3,… --cache-to type=s3,…,mode=max` themselves — no S3 flags, no S3 env
+  on the caller.
+- **The AWS credentials live on the daemon pods**, not on the wire and not on the runner: a k8s
+  Secret (`--s3-creds-secret`, Helm `s3.credsSecret`) holding `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY`, mounted as env on the daemons. buildkit's s3 backend falls back to the
+  daemon's AWS env when the client passes no creds — which it now never does.
 
 ```
-BUILDCAT_S3_BUCKET     bucket name                 (required to enable)
-BUILDCAT_S3_ENDPOINT   endpoint URL                (e.g. OVH, or in-cluster MinIO)
-BUILDCAT_S3_REGION     region                      (default us-east-1)
-BUILDCAT_S3_KEY        access key id               (secret)
-BUILDCAT_S3_SECRET     secret access key           (secret)
+# on buildd / the Helm chart (the bucket config + creds for the cold cache)
+--s3-bucket        / s3.bucket        shared bucket name (empty = disabled)
+--s3-region        / s3.region        region (default us-east-1)
+--s3-endpoint      / s3.endpoint      endpoint URL (OVH Object Storage / MinIO; empty = AWS default)
+--s3-creds-secret  / s3.credsSecret   k8s Secret (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) → daemon env
 ```
 
 ### The daemon does the S3 I/O — the runner never touches S3
 
 With the `buildx` **remote** driver, cache export/import for `type=s3` runs **inside `buildkitd`**,
-not in the client. The CI runner only passes the endpoint string through. Consequences proven this
-session:
+not in the client. The client only passes the (credential-free) reference through. Consequences
+proven this session:
 
 - The S3 endpoint is resolved **daemon-side**, so it can be an **in-cluster** address
   (`minio.buildcat.svc:9000`) that the external GitHub-hosted runner cannot even reach. The runner
   never opens an S3 connection. In the example CI log:
   `#8 importing cache manifest from s3:12475883348330026593` — the in-cluster daemon did it.
-- S3 credentials and endpoint live with the **build job**, not the daemon; rotating them is a CI
-  secret change.
+- S3 credentials live on the **daemon pods** (a k8s Secret mounted as AWS env), never on the runner
+  and never on the wire; rotating them is a Secret change in the cluster, not a CI-secret change.
 
 ### What S3 covers (and what it doesn't)
 

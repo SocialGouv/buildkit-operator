@@ -16,8 +16,8 @@ the daemon's content store, snapshots, and bbolt metadata are vanilla.
   ┌─────────────────────────┐  reconciles                     │ creates / scales / snapshots
   │ StatefulSet-of-1         │ ◄───────────────────────────────┘
   │  buildkitd (vanilla)     │   one per (project, arch)
-  │  + companion (sidecar)   │   Service :1234 (TCP + mTLS)  — ClusterIP, or LoadBalancer in gateway mode
-  │  + Cinder gen2 PVC (warm)│
+  │  + companion (sidecar)   │   Service :1234 (TCP + mTLS)  — always ClusterIP
+  │  + Cinder gen2 PVC (warm)│   (off-cluster CI reaches it via the shared SNI gateway)
   └─────────────────────────┘
 ```
 
@@ -29,11 +29,11 @@ as a **pure function**, shared verbatim by the CLI and the control plane so they
 
 | Function | Formula | Purpose |
 |---|---|---|
-| `ProjectKey(repo, target, arch)` | `"p" + sha256(normRepo \x00 normTarget \x00 normArch)[:16]` | the canonical cache identity |
+| `ProjectKey(repo, name, target, arch)` | `"p" + sha256(normRepo [\x00 n:name] \x00 normTarget \x00 normArch)[:16]` | the canonical cache identity |
 | `ForkKey(canonicalKey)` | `"fork" + key` | an **ephemeral, isolated** daemon for untrusted/fork PRs |
 | `CloneKey(canonicalKey, i)` | `"c" + i + key` | the i-th **CoW clone** for fan-out (M5) |
 | `CachePVCName(key)` | `"cache-buildkitd-" + key + "-0"` | the StatefulSet's `volumeClaimTemplate` PVC |
-| `EndpointHost(host, port)` | `tcp://host:port` | used by the public gateway to return an LB address |
+| `EndpointHost(host, port)` | `tcp://host:port` | the deterministic `<daemon>.<gateway-host>` endpoint for off-cluster CI via the shared SNI gateway |
 
 Design points proven out in this session:
 
@@ -44,9 +44,14 @@ Design points proven out in this session:
   different caches; folding them together would thrash.
 - **`arch` is part of the key** because a daemon is single-arch (it builds natively; cross-arch is a
   separate daemon, not QEMU-in-one).
+- **The optional `name` segments a monorepo** into per-component daemons — one daemon + cache per
+  image, so unrelated components in the same repo don't share (or thrash) a cache. It is **omitted
+  from the hash when empty**, so a single-image repo keeps the exact key it had before `name`
+  existed (migration-safe). Wired end-to-end through `RouteRequest.Name`, `BuildProjectSpec.Name`,
+  `DeriveChild`, and the CLI `--name` flag (env `BUILDCAT_NAME`) / `build.sh NAME`.
 
-Example: `SocialGouv/buildcat-example` + `amd64` → `pa081c22c974da132` (the daemon name you see
-running on the cluster).
+Example: `SocialGouv/buildcat-example` + `amd64` (empty name) → `pa081c22c974da132` (the daemon name
+you see running on the cluster).
 
 ## The reconcile loop
 
@@ -63,7 +68,11 @@ controller-runtime loop. Per object it converges:
    cadence, using OVH's in-use snapclass so the daemon does **not** need to scale to zero to be
    snapshotted. Old snapshots are pruned to `--keep-snapshots`.
 4. **`reconcileFanout`** — when `spec.fanout > 0` (M5), materializes N **CoW clone** daemons
-   (`CloneKey`) from the latest snapshot — vertical-first scaling for a saturated project.
+   (`CloneKey`) from the latest snapshot — vertical-first scaling for a saturated project. The clone
+   spec comes from the **shared derivation policy** `buildcatv1.DeriveChild(parent, parentSnapshot,
+   CloneChild, key)` — the *same* function the `/route` fork path uses (with `ForkChild`), so a
+   fan-out clone and a fork daemon can never drift in how they inherit storage/security and seed
+   from the parent snapshot.
 5. **Status** — `phase` (Pending/Warm/Idle/Scaling/Failed), `replicas`, `endpoint`, `lastSnapshot`.
    Status is only written when it actually changes (a busy-loop guard learned the hard way —
    unconditional status writes re-trigger reconcile forever).
@@ -86,17 +95,31 @@ Verified live: `buildcat-buildd` reports `2/2` ready and the `buildcat-buildd.bu
 held by one of the two pods. Kill the leader and the follower takes the Lease; `/route` never stops
 serving.
 
-## Public gateway mode
+## The shared SNI gateway (off-cluster CI)
 
-By default daemon Services are `ClusterIP` (in-cluster clients only). For an **external** CI runner,
-buildd runs in **gateway mode** (`--daemon-service-type=LoadBalancer`): the daemon Service is a
-LoadBalancer and `/route` returns the **external** ingress (`endpointFor` waits up to 90 s for the
-LB IP and returns `tcp://<lb-ip>:1234`). The runner then dials that IP directly over mTLS.
+Daemon Services are **always `ClusterIP`** (in-cluster clients only). An **external** CI runner
+reaches every daemon through **one shared SNI gateway** — a new `cmd/gateway` binary (image
+`ghcr.io/socialgouv/buildcat-gateway`) fronted by a **single** LoadBalancer, instead of a public LB
+per daemon (which doesn't scale with project count).
 
-This requires the daemon certificate's SAN to cover the public address — see
-[ci-integration.md](ci-integration.md) and [security.md](security.md). It is the same shape the
-existing `buildkit-service` uses (public LB + mTLS); buildcat just provisions the LB per daemon and
-hands back the address through the routing API.
+How it routes, without terminating TLS:
+
+1. buildd is started with `--gateway-host <domain>`, which makes `/route` return a **deterministic**
+   endpoint `tcp://<daemon>.<gateway-host>:1234` — computed straight from the key, **no polling**
+   (no waiting on an LB ingress IP).
+2. The runner dials that hostname. Its TLS ClientHello carries SNI `<daemon>.<gateway-host>`.
+3. The gateway **peeks the ClientHello's SNI** (it terminates **no** TLS), maps `<daemon>` to that
+   project's daemon `ClusterIP` Service `<daemon>.<ns>.svc:1234`, and pipes the still-encrypted
+   bytes through. **mTLS stays end-to-end to the daemon** — client-cert auth is intact; the gateway
+   never sees plaintext and rejects any SNI outside its domain or not a `buildkitd-` daemon name.
+
+Requirements: a wildcard DNS record `*.<gateway-host>` → the gateway LB, and the daemon
+certificate's SAN must cover `*.<gateway-host>` (`create-certs.sh` honours `GATEWAY_HOST=…`). The
+Helm chart renders the gateway Deployment + its one LoadBalancer Service from
+`gateway.{host,image,service.type,resources}`, gated on `gateway.host`. See
+[ci-integration.md](ci-integration.md) and [security.md](security.md). This is the same end-to-end
+mTLS shape the existing `buildkit-service` uses — buildcat just fans one LB out to many daemons by
+SNI instead of allocating one LB each.
 
 ## What stays vanilla (non-goals)
 

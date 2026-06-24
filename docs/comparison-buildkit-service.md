@@ -31,7 +31,7 @@ A **shared pool** of rootless buildkit pods:
 | **Daemon security posture** | rootless + Unconfined | **identical** (same rootless constraint) |
 | **Control-plane HA** | n/a (no operator) | leader election, 2 replicas, `/route` on all |
 | **Cold-start cost** | none (always warm) | ≈ 90 s to provision a fresh daemon |
-| **Public surface** | 8 fixed LBs | 1 LB per exposed daemon (gateway mode) |
+| **Public surface** | 8 fixed LBs | **2 fixed LBs** when exposed (buildd `/route` + one shared SNI gateway), regardless of project count |
 
 ## What each wins
 
@@ -52,8 +52,10 @@ A **shared pool** of rootless buildkit pods:
 - **Cold-start** — it is always warm, so there is never a 90 s provision wait. buildcat mitigates
   this (warm pool, `/prewarm`, PVC retention, S3) but does not eliminate it.
 - **Simplicity** — a StatefulSet + HPA + consistent-hash is less machinery than a CRD + reconciler +
-  snapshots + fan-out.
-- **Fixed, known surface** — a stable set of endpoints rather than per-daemon LBs.
+  snapshots + fan-out + a gateway.
+- **Fixed, known surface** — a stable set of endpoints. (buildcat is now also fixed and small — 2
+  LBs via the shared SNI gateway — so this gap has largely closed; the remaining edge is just less
+  moving infrastructure.)
 
 ## What is the same (don't oversell)
 
@@ -70,5 +72,6 @@ A **shared pool** of rootless buildkit pods:
 - **A few always-busy repos where 90 s cold-starts are unacceptable and isolation is a non-issue:**
   the shared pool's always-warm simplicity is hard to beat.
 
-The two are not mutually exclusive: buildcat's gateway + mTLS shape is deliberately the same as
-buildkit-service, so a CI integration can point at either.
+The two are not mutually exclusive: buildcat's public LB + end-to-end mTLS shape is deliberately the
+same as buildkit-service (buildcat just fans one shared SNI gateway out to many daemons instead of a
+fixed LB set), so a CI integration can point at either.

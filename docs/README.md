@@ -7,7 +7,7 @@ buildcat on a real OVH Managed Kubernetes cluster (GRA9, Cinder gen2).
 
 | Doc | What it answers |
 |---|---|
-| [architecture.md](architecture.md) | How the control plane routes and manages daemons: the cache-sharing routing key, the reconcile loop, lifecycle states, control-plane HA, the public gateway mode. |
+| [architecture.md](architecture.md) | How the control plane routes and manages daemons: the cache-sharing routing key, the reconcile loop, lifecycle states, control-plane HA, the shared SNI gateway for off-cluster CI. |
 | [security.md](security.md) | Why rootless `buildkitd` needs `no_new_privs` off, the Kyverno/PSS constraint and its fix, the threat model, and what per-project + fork isolation actually buy you. |
 | [storage-and-cold-cache.md](storage-and-cold-cache.md) | The three storage layers (warm PVC, durable VolumeSnapshots, **cold S3**), how the S3 cache is wired, and what it measurably buys (cold ≈ 9×). |
 | [performance.md](performance.md) | Methodology + measured build times (warm vs cold, with vs without S3). |

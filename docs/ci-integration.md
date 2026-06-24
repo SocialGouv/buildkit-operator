@@ -20,7 +20,7 @@ endpoint=$(curl -fsS -XPOST "$BUILDCAT_BUILDD_URL/route" \
 docker buildx create --name buildcat --driver remote \
   --driver-opt "cacert=$certs/ca.pem,cert=$certs/cert.pem,key=$certs/key.pem" "$endpoint" --use
 
-# 3. build — optionally with the S3 cold cache (see below)
+# 3. build — the S3 cold cache (if any) comes back in the /route response and is applied automatically
 exec docker buildx build --builder buildcat $extra "$@"
 ```
 
@@ -31,7 +31,11 @@ Environment:
 | `BUILDCAT_BUILDD_URL` | external buildd `/route` endpoint (LB/Ingress) |
 | `BUILDCAT_CERTS_DIR` | dir holding `ca.pem cert.pem key.pem` (client mTLS material) |
 | `REPO` / `ARCH` | project identity (defaults: git origin / `amd64`) |
-| `BUILDCAT_S3_*` | optional S3 cold cache (no-op if `BUILDCAT_S3_BUCKET` unset) |
+| `NAME` | optional monorepo component (segments the repo into per-image daemons; empty = whole repo) |
+
+The cold cache needs **no** client config: it is a project policy on buildd, returned by `/route`
+and applied automatically (see [the S3 section below](#s3-from-ci--zero-client-config) and
+[storage-and-cold-cache.md](storage-and-cold-cache.md)).
 
 ## Worked example: GitHub-hosted runner
 
@@ -46,10 +50,7 @@ jobs:
       BUILDCAT_BUILDD_URL: ${{ vars.BUILDCAT_BUILDD_URL }}
       BUILDCAT_CERTS_DIR: certs
       REPO: ${{ github.repository }}
-      BUILDCAT_S3_BUCKET: ${{ vars.BUILDCAT_S3_BUCKET }}     # optional cold cache
-      BUILDCAT_S3_ENDPOINT: ${{ vars.BUILDCAT_S3_ENDPOINT }}
-      BUILDCAT_S3_KEY: ${{ secrets.BUILDCAT_S3_KEY }}
-      BUILDCAT_S3_SECRET: ${{ secrets.BUILDCAT_S3_SECRET }}
+      # no S3 config here — the cold cache is a buildd policy, returned by /route and applied automatically
     steps:
       - uses: actions/checkout@v4
       - run: |                                   # client mTLS material from repo secrets (base64)
@@ -62,41 +63,47 @@ jobs:
 ```
 
 The repo also carries a `.gitlab-ci.yml` calling the **same** `build.sh` — the proof the integration
-is CI-agnostic. A green run on the hosted runner (`28126430796`) routed to
-`tcp://135.125.57.6:1234`, built, and exercised the S3 cache.
+is CI-agnostic. A green run on the hosted runner (`28126430796`) routed to the example daemon, built,
+and exercised the S3 cache.
 
 ## Public exposure (why and how)
 
 A hosted runner is **outside** the cluster, so buildcat must be reachable over the internet — exactly
-like `buildkit-service` (public LB + mTLS). Two endpoints are exposed:
+like `buildkit-service` (public LB + mTLS). **Two** LoadBalancers are exposed, and only two
+regardless of how many projects exist:
 
 | Endpoint | Service | Purpose |
 |---|---|---|
 | `BUILDCAT_BUILDD_URL` | `buildcat-buildd` LoadBalancer `:8080` | the `/route` API |
-| daemon endpoint | `buildkitd-<key>` LoadBalancer `:1234` | the build, over mTLS |
+| `tcp://<daemon>.<gateway-host>:1234` | the **shared SNI gateway** LoadBalancer `:1234` | the build, over mTLS, to any daemon |
 
-This is **gateway mode** (`--daemon-service-type=LoadBalancer`): buildd makes each daemon Service a
-LoadBalancer and `/route` returns its **external** ingress IP (see
-[architecture.md](architecture.md#public-gateway-mode)).
+Daemons themselves stay **`ClusterIP`**. buildd is started with `--gateway-host <domain>` (Helm
+`gateway.host`), so `/route` returns the deterministic hostname `tcp://<daemon>.<gateway-host>:1234`;
+the single gateway LB peeks the TLS SNI and pipes to the daemon's ClusterIP Service — mTLS stays
+end-to-end. This needs a **wildcard DNS** record `*.<gateway-host>` → the gateway LB (see
+[architecture.md](architecture.md#the-shared-sni-gateway-off-cluster-ci)).
 
 ### The certificate SAN requirement
 
-mTLS validates the daemon's hostname, so the **daemon certificate's SAN must cover the public
-address** the runner dials. The cert script ([`deploy/cert/create-certs.sh`](../deploy/cert)) bakes
-in `*.buildcat.svc`; for public exposure also include the LB IP/DNS (and `127.0.0.1` if you
-port-forward for tests). If the SAN is wrong you get TLS validation failures or
-`context deadline exceeded` against a name that doesn't resolve/validate. When the public DNS name
-isn't resolvable from the runner, dial the LB IP directly and override `servername` via the buildx
-driver-opt so the cert's DNS SAN still validates.
+mTLS validates the daemon's hostname, so the **daemon certificate's SAN must cover the address the
+runner dials** — which, through the gateway, is `<daemon>.<gateway-host>`. The cert script
+([`deploy/cert/create-certs.sh`](../deploy/cert)) bakes in `*.buildcat.svc`; for public exposure run
+it with `GATEWAY_HOST=<gateway-host>` so it also adds the **wildcard SAN `*.<gateway-host>`** (one
+cert validates every daemon's SNI hostname). If the SAN is wrong you get TLS validation failures or
+`context deadline exceeded`. (The gateway terminates no TLS, so it needs no cert of its own — it only
+peeks the SNI; the trust stays end-to-end between the client cert and the daemon cert.)
 
-### S3 from CI — the runner never touches S3
+### S3 from CI — zero client config
 
-When `BUILDCAT_S3_*` is set, `build.sh` adds `--cache-from/--cache-to type=s3`. Crucially the
-**daemon** performs the S3 I/O, so:
+The cold cache is a **buildd policy**, so a CI caller configures **no** S3 at all (no flags, no env,
+no secrets). When buildd is set up with a bucket (`--s3-bucket …`), `/route` returns the per-project
+cache reference (bucket/region/endpoint, prefix = the project key, **no credentials**) and the
+client adds `--cache-from/--cache-to type=s3` automatically. The **daemon** performs the S3 I/O, so:
 
 - the endpoint can be **in-cluster** (`http://minio.buildcat.svc:9000`) — unreachable from the
   runner, yet it works, because the in-cluster daemon connects;
-- S3 creds are CI secrets attached to the build, never on the daemon.
+- the AWS creds live on the **daemon pods** (a k8s Secret via `--s3-creds-secret`), never on the
+  runner and never on the wire.
 
 The example CI log shows the daemon doing it: `importing cache manifest from s3:…`. See
 [storage-and-cold-cache.md](storage-and-cold-cache.md).
@@ -104,5 +111,7 @@ The example CI log shows the daemon doing it: `importing cache manifest from s3:
 ## Live endpoints (this deployment, `ovh-dev`)
 
 - buildd `/route`: `http://57.128.55.102:8080`
-- example daemon (`SocialGouv/buildcat-example` → key `pa081c22c974da132`): `tcp://135.125.57.6:1234`
+- shared SNI gateway LB `:1234` — fronts every daemon; `/route` returns
+  `tcp://<daemon>.<gateway-host>:1234` (e.g. `buildkitd-pa081c22c974da132.<gateway-host>` for
+  `SocialGouv/buildcat-example` → key `pa081c22c974da132`)
 - S3 (in-cluster MinIO, proof backend): `http://minio.buildcat.svc:9000`, bucket `buildcache`
