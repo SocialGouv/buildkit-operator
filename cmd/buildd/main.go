@@ -18,6 +18,7 @@ import (
 	"github.com/socialgouv/buildcat/internal/metrics"
 	"github.com/socialgouv/buildcat/internal/router"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -54,6 +55,7 @@ func main() {
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
 	flag.StringVar(&cfg.BuilddURL, "buildd-url", "http://buildd.buildcat.svc:8080", "companion heartbeat target")
 	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
+	flag.StringVar(&cfg.DaemonServiceType, "daemon-service-type", "", "ClusterIP (default) | LoadBalancer (expose daemons externally for off-cluster CI)")
 	flag.StringVar(&cfg.SnapshotClass, "snapshot-class", "", "VolumeSnapshotClass for durability snapshots (empty = disabled)")
 	keepSnaps := flag.Int("keep-snapshots", 3, "durability snapshots retained per project")
 	maxCold := flag.Int("max-cold-starts", 8, "max concurrent cold-start attaches (bench C backpressure)")
@@ -183,7 +185,7 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	respond := func() {
 		metrics.RoutesTotal.WithLabelValues(result).Inc()
 		metrics.RouteDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
-		writeJSON(w, router.RouteResponse{Key: key, Endpoint: router.Endpoint(key, s.cfg.Namespace, s.cfg.Port), Namespace: s.cfg.Namespace})
+		writeJSON(w, router.RouteResponse{Key: key, Endpoint: s.endpointFor(ctx, key), Namespace: s.cfg.Namespace})
 	}
 
 	if err := s.ensureBuildProject(ctx, spec); err != nil {
@@ -242,6 +244,38 @@ func (s *routeServer) ready(ctx context.Context, key string) bool {
 		return false
 	}
 	return sts.Status.ReadyReplicas >= 1
+}
+
+// endpointFor returns the address clients dial: the daemon's external LoadBalancer endpoint when
+// the gateway is enabled (off-cluster CI), else the in-cluster Service DNS.
+func (s *routeServer) endpointFor(ctx context.Context, key string) string {
+	internal := router.Endpoint(key, s.cfg.Namespace, s.cfg.Port)
+	if s.cfg.DaemonServiceType != string(corev1.ServiceTypeLoadBalancer) {
+		return internal
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		var svc corev1.Service
+		if err := s.c.Get(ctx, types.NamespacedName{Name: router.DaemonName(key), Namespace: s.cfg.Namespace}, &svc); err == nil {
+			for _, ing := range svc.Status.LoadBalancer.Ingress {
+				host := ing.IP
+				if host == "" {
+					host = ing.Hostname
+				}
+				if host != "" {
+					return router.EndpointHost(host, s.cfg.Port)
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return internal
+		}
+		select {
+		case <-ctx.Done():
+			return internal
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 func (s *routeServer) waitReady(ctx context.Context, key string) error {

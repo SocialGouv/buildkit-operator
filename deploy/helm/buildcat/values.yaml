@@ -93,8 +93,15 @@ resources:
     memory: 512Mi
 
 # buildd Service (exposes the /route API and /healthz on :8080).
+# Per-project daemon Service type. LoadBalancer exposes each daemon's :1234 (mTLS) to off-cluster
+# CI (the gateway); buildd then returns the external LB endpoint from /route. Creates one public IP
+# per daemon — the daemon cert SAN must cover the external endpoint.
+daemonServiceType: ClusterIP
+
 service:
   port: 8080
+  # LoadBalancer to expose the /route API to off-cluster runners (the gateway).
+  type: ClusterIP
 
 # Names of the mTLS Secrets minted by deploy/cert/create-certs.sh. The daemon
 # Secret is mounted by per-project daemons (the controller wires it in); the
