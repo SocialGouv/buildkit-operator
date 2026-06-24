@@ -7,6 +7,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	buildcatv1 "github.com/devthejo/buildcat/api/v1alpha1"
 	"github.com/devthejo/buildcat/internal/builder"
@@ -52,7 +53,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.ensureService(ctx, &bp); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure service: %w", err)
 	}
-	desired := desiredReplicas(&bp)
+	desired := desiredReplicas(&bp, time.Now())
 	if err := r.ensureStatefulSet(ctx, &bp, desired); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure statefulset: %w", err)
 	}
@@ -61,19 +62,33 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	_ = r.Get(ctx, types.NamespacedName{Name: router.DaemonName(bp.Spec.Key), Namespace: r.Cfg.Namespace}, &live)
 	ready := live.Status.ReadyReplicas
 
+	newPhase := phaseFrom(desired, ready, bp.Status.InflightBuilds)
+	newEndpoint := router.Endpoint(bp.Spec.Key, r.Cfg.Namespace, r.Cfg.Port)
+	readyCond := boolToCond(ready >= 1)
+	prev := meta.FindStatusCondition(bp.Status.Conditions, "Ready")
+	// Only write status when something actually changed — an unconditional Status().Update
+	// re-triggers reconcile (status is watched) and would busy-loop with the idle requeue.
+	changed := bp.Status.Replicas != ready || bp.Status.Phase != newPhase || bp.Status.Endpoint != newEndpoint ||
+		prev == nil || prev.Status != readyCond || prev.Reason != newPhase
 	bp.Status.Replicas = ready
-	bp.Status.Endpoint = router.Endpoint(bp.Spec.Key, r.Cfg.Namespace, r.Cfg.Port)
-	bp.Status.Phase = phaseFrom(desired, ready, bp.Status.InflightBuilds)
+	bp.Status.Endpoint = newEndpoint
+	bp.Status.Phase = newPhase
 	meta.SetStatusCondition(&bp.Status.Conditions, metav1.Condition{
 		Type:    "Ready",
-		Status:  boolToCond(ready >= 1),
-		Reason:  bp.Status.Phase,
+		Status:  readyCond,
+		Reason:  newPhase,
 		Message: fmt.Sprintf("replicas desired=%d ready=%d", desired, ready),
 	})
-	if err := r.Status().Update(ctx, &bp); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+	if changed {
+		if err := r.Status().Update(ctx, &bp); err != nil {
+			return ctrl.Result{}, client.IgnoreNotFound(err)
+		}
 	}
-	l.V(1).Info("reconciled", "key", bp.Spec.Key, "phase", bp.Status.Phase, "ready", ready)
+	l.V(1).Info("reconciled", "key", bp.Spec.Key, "phase", bp.Status.Phase, "ready", ready, "desired", desired)
+	// While warm (and not hot), requeue so a quiet project scales to zero on time.
+	if desired == 1 && bp.Spec.Tier != buildcatv1.TierHot {
+		return ctrl.Result{RequeueAfter: idleRecheckInterval(&bp)}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -118,10 +133,33 @@ func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *buil
 	return nil
 }
 
-// desiredReplicas is the elasticity decision. M1: always 1 (no scale-to-zero yet).
-// M2 will fold in: hot tier, IdleTimeoutSec vs LastBuildTime, pending builds/prewarm.
-func desiredReplicas(bp *buildcatv1.BuildProject) int32 {
-	return 1
+// desiredReplicas is the M2 elasticity decision: the hot tier stays at 1; otherwise
+// 1 while a build is in flight or the project was active within IdleTimeoutSec, else 0
+// (scale-to-zero — the PVC is retained via volumeClaimTemplates, so the next build just
+// reattaches the warm cache; no restore). Idle timeout default seeded from bench B.
+func desiredReplicas(bp *buildcatv1.BuildProject, now time.Time) int32 {
+	if bp.Spec.Tier == buildcatv1.TierHot {
+		return 1
+	}
+	if bp.Status.InflightBuilds > 0 {
+		return 1
+	}
+	if bp.Status.LastBuildTime != nil && bp.Spec.IdleTimeoutSec > 0 {
+		if now.Sub(bp.Status.LastBuildTime.Time) < time.Duration(bp.Spec.IdleTimeoutSec)*time.Second {
+			return 1
+		}
+	}
+	return 0
+}
+
+// idleRecheckInterval requeues a warm project often enough to scale it down promptly
+// once it crosses IdleTimeoutSec (events alone won't fire when nothing changes).
+func idleRecheckInterval(bp *buildcatv1.BuildProject) time.Duration {
+	iv := time.Duration(bp.Spec.IdleTimeoutSec) * time.Second / 6
+	if iv < 30*time.Second {
+		iv = 30 * time.Second
+	}
+	return iv
 }
 
 func phaseFrom(desired, ready, inflight int32) string {

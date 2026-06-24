@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	buildcatv1 "github.com/devthejo/buildcat/api/v1alpha1"
 	"github.com/devthejo/buildcat/internal/builder"
@@ -37,7 +38,7 @@ func TestReconcile_CreatesDaemon(t *testing.T) {
 	ns := "buildcat"
 	bp := &buildcatv1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64"},
+		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierHot},
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
 	r := &BuildProjectReconciler{
@@ -54,7 +55,11 @@ func TestReconcile_CreatesDaemon(t *testing.T) {
 		t.Fatalf("statefulset not created: %v", err)
 	}
 	if sts.Spec.Replicas == nil || *sts.Spec.Replicas != 1 {
-		t.Errorf("replicas = %v, want 1", sts.Spec.Replicas)
+		got := int32(-1)
+		if sts.Spec.Replicas != nil {
+			got = *sts.Spec.Replicas
+		}
+		t.Errorf("replicas = %d, want 1 (hot tier)", got)
 	}
 	if n := len(sts.Spec.VolumeClaimTemplates); n != 1 {
 		t.Fatalf("volumeClaimTemplates = %d, want 1 (the gen2 cache PVC)", n)
@@ -100,5 +105,59 @@ func TestReconcile_Idempotent(t *testing.T) {
 		if _, err := r.Reconcile(context.Background(), req); err != nil {
 			t.Fatalf("reconcile %d: %v", i, err)
 		}
+	}
+}
+
+// M2 elasticity: the scale decision must honor tier + idle window + in-flight.
+func TestDesiredReplicas(t *testing.T) {
+	now := time.Now()
+	mk := func(tier string, idleSec int32, ago time.Duration, hasBuilt bool, inflight int32) *buildcatv1.BuildProject {
+		bp := &buildcatv1.BuildProject{Spec: buildcatv1.BuildProjectSpec{Tier: tier, IdleTimeoutSec: idleSec}}
+		bp.Status.InflightBuilds = inflight
+		if hasBuilt {
+			ts := metav1.NewTime(now.Add(-ago))
+			bp.Status.LastBuildTime = &ts
+		}
+		return bp
+	}
+	cases := []struct {
+		name string
+		bp   *buildcatv1.BuildProject
+		want int32
+	}{
+		{"hot always on", mk(buildcatv1.TierHot, 0, 0, false, 0), 1},
+		{"warm recent build", mk(buildcatv1.TierWarm, 900, time.Minute, true, 0), 1},
+		{"warm idle -> zero", mk(buildcatv1.TierWarm, 900, time.Hour, true, 0), 0},
+		{"warm never built -> zero", mk(buildcatv1.TierWarm, 900, 0, false, 0), 0},
+		{"warm in-flight -> one", mk(buildcatv1.TierWarm, 900, time.Hour, true, 2), 1},
+	}
+	for _, c := range cases {
+		if got := desiredReplicas(c.bp, now); got != c.want {
+			t.Errorf("%s: desiredReplicas = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// An idle warm project must be scaled to zero by the reconciler (PVC retained).
+func TestReconcile_ScalesIdleToZero(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildcat", "idle"
+	old := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	bp := &buildcatv1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierWarm, IdleTimeoutSec: 900},
+	}
+	bp.Status.LastBuildTime = &old
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}); err != nil {
+		t.Fatal(err)
+	}
+	var sts appsv1.StatefulSet
+	if err := c.Get(context.Background(), types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}, &sts); err != nil {
+		t.Fatal(err)
+	}
+	if sts.Spec.Replicas == nil || *sts.Spec.Replicas != 0 {
+		t.Errorf("idle warm project: replicas = %v, want 0 (scale-to-zero)", sts.Spec.Replicas)
 	}
 }

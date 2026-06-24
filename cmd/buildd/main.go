@@ -109,6 +109,7 @@ type routeServer struct {
 func (s *routeServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/route", s.handleRoute)
+	mux.HandleFunc("/prewarm", s.handlePrewarm)
 	mux.HandleFunc("/heartbeat", s.handleHeartbeat)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
@@ -144,6 +145,7 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.touchLastBuild(ctx, key) // mark active so the daemon scales up / stays warm
 	if err := s.waitReady(ctx, key); err != nil {
 		http.Error(w, "daemon not ready: "+err.Error(), http.StatusGatewayTimeout)
 		return
@@ -195,26 +197,52 @@ func (s *routeServer) waitReady(ctx context.Context, key string) error {
 	}
 }
 
-// handleHeartbeat records that a daemon is alive / recently built (drives idle in M2).
+// handlePrewarm scales a project toward warm in anticipation (git push / PR webhook) and
+// returns immediately — it does NOT wait for readiness; it just masks the future attach latency
+// (bench: isolated attach ~19s p50, so pre-warming on push hides it for the CI build that follows).
+func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req router.RouteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	key := router.ProjectKey(req.Repo, req.Target, req.Arch)
+	if err := s.ensureBuildProject(r.Context(), key, req); err != nil {
+		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.touchLastBuild(r.Context(), key)
+	w.WriteHeader(http.StatusAccepted)
+	writeJSON(w, router.RouteResponse{Key: key, Endpoint: router.Endpoint(key, s.cfg.Namespace, s.cfg.Port), Namespace: s.cfg.Namespace})
+}
+
+// handleHeartbeat is a liveness ack from a companion. It deliberately does NOT bump
+// LastBuildTime: heartbeats fire continuously and would defeat idle scale-to-zero. Build
+// activity is signalled by /route and /prewarm. (Long builds exceeding IdleTimeoutSec need
+// true in-flight tracking — lands with the Build CR; until then keep IdleTimeoutSec generous.)
 func (s *routeServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var hb struct {
 		Key   string `json:"key"`
 		Ready bool   `json:"ready"`
 		TS    string `json:"ts"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&hb); err != nil || hb.Key == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
+	_ = json.NewDecoder(r.Body).Decode(&hb)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// touchLastBuild marks the project active now, which keeps/brings desiredReplicas to 1.
+func (s *routeServer) touchLastBuild(ctx context.Context, key string) {
 	var bp buildcatv1.BuildProject
-	if err := s.c.Get(r.Context(), types.NamespacedName{Name: hb.Key, Namespace: s.cfg.Namespace}, &bp); err != nil {
-		http.Error(w, "unknown project", http.StatusNotFound)
+	if err := s.c.Get(ctx, types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp); err != nil {
 		return
 	}
 	now := metav1.Now()
 	bp.Status.LastBuildTime = &now
-	_ = s.c.Status().Update(r.Context(), &bp)
-	w.WriteHeader(http.StatusNoContent)
+	_ = s.c.Status().Update(ctx, &bp)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
