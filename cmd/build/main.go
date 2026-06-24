@@ -147,8 +147,8 @@ func run(ctx context.Context, cfg *config) error {
 	if repo == "" {
 		return fmt.Errorf("could not resolve a repository: pass --repo (or run inside a git repo / non-empty context)")
 	}
-	arch := normalizeArch(cfg.arch)
-	if arch == "" {
+	arch := router.NormalizeArch(cfg.arch)
+	if arch != "amd64" && arch != "arm64" {
 		return fmt.Errorf("unsupported --arch %q: want amd64 or arm64", cfg.arch)
 	}
 
@@ -187,7 +187,7 @@ func run(ctx context.Context, cfg *config) error {
 	buildArgs := cfg.buildxBuildArgs(builder, resp)
 
 	if cfg.dryRun {
-		printDryRun(cfg, repo, arch, resp, buildArgs)
+		printDryRun(cfg, repo, arch, resp, builder, buildArgs)
 		return nil
 	}
 
@@ -379,7 +379,7 @@ func s3CacheArgs(key string) []string {
 
 // printDryRun reports the resolved identity, the routing result, and the exact
 // buildx argv to stdout, without touching docker.
-func printDryRun(cfg *config, repo, arch string, resp router.RouteResponse, buildArgs []string) {
+func printDryRun(cfg *config, repo, arch string, resp router.RouteResponse, builder string, buildArgs []string) {
 	out := os.Stdout
 	fmt.Fprintln(out, "dry-run: resolved build (no builder created, nothing executed)")
 	fmt.Fprintf(out, "  repo:      %s\n", repo)
@@ -388,7 +388,7 @@ func printDryRun(cfg *config, repo, arch string, resp router.RouteResponse, buil
 	fmt.Fprintf(out, "  key:       %s\n", resp.Key)
 	fmt.Fprintf(out, "  endpoint:  %s\n", resp.Endpoint)
 	fmt.Fprintf(out, "  namespace: %s\n", resp.Namespace)
-	fmt.Fprintf(out, "  builder:   buildcat-%s\n", resp.Key)
+	fmt.Fprintf(out, "  builder:   %s\n", builder)
 	fmt.Fprintf(out, "  argv:      docker %s\n", strings.Join(buildArgs, " "))
 }
 
@@ -402,25 +402,13 @@ func runStreaming(ctx context.Context, name string, args []string) error {
 	return cmd.Run()
 }
 
-// defaultArch maps the host GOARCH to a buildcat arch, defaulting to amd64.
+// defaultArch maps the host GOARCH to a buildcat arch via the shared router normalizer (the same
+// one buildd uses), defaulting to amd64 for anything outside buildcat's supported set.
 func defaultArch() string {
-	if a := normalizeArch(runtime.GOARCH); a != "" {
+	if a := router.NormalizeArch(runtime.GOARCH); a == "amd64" || a == "arm64" {
 		return a
 	}
 	return "amd64"
-}
-
-// normalizeArch maps known arch spellings to buildcat's canonical set
-// (amd64 | arm64); unknown values yield "".
-func normalizeArch(a string) string {
-	switch strings.ToLower(strings.TrimSpace(a)) {
-	case "amd64", "x86_64":
-		return "amd64"
-	case "arm64", "aarch64":
-		return "arm64"
-	default:
-		return ""
-	}
 }
 
 // defaultCertsDir returns $HOME/.buildcat/certs, or a relative fallback when

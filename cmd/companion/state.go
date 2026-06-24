@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"sync/atomic"
 	"time"
+
+	"github.com/socialgouv/buildcat/internal/router"
 )
 
 // state is the shared, concurrency-safe runtime state for the companion: the
@@ -124,13 +126,6 @@ func (s *state) heartbeatLoop(ctx context.Context) {
 	}
 }
 
-// heartbeat is the JSON payload POSTed to <buildd-url>/heartbeat.
-type heartbeat struct {
-	Key   string `json:"key"`
-	Ready bool   `json:"ready"`
-	TS    string `json:"ts"`
-}
-
 func (s *state) heartbeatOnce(ctx context.Context) {
 	ready := s.ready(ctx)
 
@@ -139,7 +134,7 @@ func (s *state) heartbeatOnce(ctx context.Context) {
 		return
 	}
 
-	body, err := json.Marshal(heartbeat{
+	body, err := json.Marshal(router.Heartbeat{
 		Key:   s.cfg.projectKey,
 		Ready: ready,
 		TS:    time.Now().UTC().Format(time.RFC3339),

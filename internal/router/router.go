@@ -29,6 +29,14 @@ type RouteResponse struct {
 	Namespace string `json:"namespace"`
 }
 
+// Heartbeat is the liveness payload a companion POSTs to buildd's /heartbeat — shared here so the
+// producer (companion) and consumer (buildd) can never drift on the wire shape.
+type Heartbeat struct {
+	Key   string `json:"key"`
+	Ready bool   `json:"ready"`
+	TS    string `json:"ts"`
+}
+
 // NormalizeRepo reduces a repository reference to a canonical host/path form so
 // that https://, ssh://, git@host: and trailing .git/slashes all collapse to the
 // same identity. Lowercased.
@@ -116,26 +124,11 @@ func ServiceFQDN(key, namespace string) string {
 
 // Endpoint is the mTLS address clients dial for a project's daemon.
 func Endpoint(key, namespace string, port int32) string {
-	return "tcp://" + ServiceFQDN(key, namespace) + ":" + itoa(port)
+	return "tcp://" + ServiceFQDN(key, namespace) + ":" + strconv.Itoa(int(port))
 }
 
 // EndpointHost formats a daemon endpoint for an arbitrary host — e.g. a LoadBalancer IP/hostname
 // when daemons are exposed externally (the gateway, for off-cluster CI).
 func EndpointHost(host string, port int32) string {
-	return "tcp://" + host + ":" + itoa(port)
-}
-
-func itoa(p int32) string {
-	// small, allocation-light int->string for ports
-	if p == 0 {
-		return "0"
-	}
-	var b [6]byte
-	i := len(b)
-	for p > 0 {
-		i--
-		b[i] = byte('0' + p%10)
-		p /= 10
-	}
-	return string(b[i:])
+	return "tcp://" + host + ":" + strconv.Itoa(int(port))
 }

@@ -7,6 +7,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 	"time"
 
@@ -68,7 +69,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	_ = r.Get(ctx, types.NamespacedName{Name: router.DaemonName(bp.Spec.Key), Namespace: r.Cfg.Namespace}, &live)
 	ready := live.Status.ReadyReplicas
 
-	newPhase := phaseFrom(desired, ready, bp.Status.InflightBuilds)
+	newPhase := phaseFrom(desired, ready)
 	newEndpoint := router.Endpoint(bp.Spec.Key, r.Cfg.Namespace, r.Cfg.Port)
 	readyCond := boolToCond(ready >= 1)
 	prev := meta.FindStatusCondition(bp.Status.Conditions, "Ready")
@@ -124,6 +125,9 @@ func (r *BuildProjectReconciler) ensureService(ctx context.Context, bp *buildcat
 		return r.Create(ctx, want)
 	} else if err != nil {
 		return err
+	}
+	if reflect.DeepEqual(existing.Spec.Ports, want.Spec.Ports) && reflect.DeepEqual(existing.Spec.Selector, want.Spec.Selector) {
+		return nil // already in the desired state — skip the no-op write (a needless API round-trip + Service watch event every reconcile)
 	}
 	existing.Spec.Ports = want.Spec.Ports
 	existing.Spec.Selector = want.Spec.Selector
@@ -194,7 +198,7 @@ func idleRecheckInterval(bp *buildcatv1.BuildProject) time.Duration {
 	return iv
 }
 
-func phaseFrom(desired, ready, inflight int32) string {
+func phaseFrom(desired, ready int32) string {
 	switch {
 	case desired == 0:
 		return "Idle"

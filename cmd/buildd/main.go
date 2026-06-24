@@ -146,40 +146,59 @@ func (s *routeServer) Start(ctx context.Context) error {
 	return nil
 }
 
-// handleRoute resolves the project key, ensures a BuildProject exists, waits for the
-// daemon to be Ready, and returns the mTLS endpoint to build against.
-func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
+// forkIdleTimeoutSec is the short idle window for ephemeral fork-PR daemons — they serve a one-off
+// untrusted build, not a warm project, so they scale to zero fast (vs the canonical default).
+const forkIdleTimeoutSec = 300
+
+// decodeReq enforces POST and decodes a RouteRequest, writing the HTTP error itself. Returns
+// ok=false when the caller should return immediately — the shared preamble for the POST handlers.
+func decodeReq(w http.ResponseWriter, r *http.Request) (router.RouteRequest, bool) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
+		return router.RouteRequest{}, false
 	}
 	var req router.RouteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return router.RouteRequest{}, false
+	}
+	return req, true
+}
+
+// canonicalSpec turns a RouteRequest into the normalized canonical BuildProject spec — the single
+// place that derives (key, repo, target, arch), shared by /route and /prewarm.
+func canonicalSpec(req router.RouteRequest) buildcatv1.BuildProjectSpec {
+	return buildcatv1.BuildProjectSpec{
+		Key:    router.ProjectKey(req.Repo, req.Target, req.Arch),
+		Repo:   router.NormalizeRepo(req.Repo),
+		Target: router.NormalizeTarget(req.Target),
+		Arch:   router.NormalizeArch(req.Arch),
+	}
+}
+
+// handleRoute resolves the project key, ensures a BuildProject exists, waits for the
+// daemon to be Ready, and returns the mTLS endpoint to build against.
+func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeReq(w, r)
+	if !ok {
 		return
 	}
 	ctx := r.Context()
 	start := time.Now()
-	canonical := router.ProjectKey(req.Repo, req.Target, req.Arch)
+	spec := canonicalSpec(req)
+	canonical := spec.Key
 	key, result := canonical, "warm"
-	spec := buildcatv1.BuildProjectSpec{
-		Key: canonical, Repo: router.NormalizeRepo(req.Repo),
-		Target: router.NormalizeTarget(req.Target), Arch: router.NormalizeArch(req.Arch),
-	}
 	if req.Untrusted {
 		// Fork PR: ephemeral daemon seeded read-only from the canonical snapshot, no write-back
-		// (SnapshotEverySec=0) — distinct key, so it can never poison the canonical cache.
+		// (SnapshotEverySec stays 0) — distinct key, so it can never poison the canonical cache.
 		key, result = router.ForkKey(canonical), "untrusted"
-		seed := ""
 		var canon buildcatv1.BuildProject
 		if err := s.c.Get(ctx, types.NamespacedName{Name: canonical, Namespace: s.cfg.Namespace}, &canon); err == nil {
-			seed = canon.Status.LastSnapshot
+			spec.RestoreFromSnapshot = canon.Status.LastSnapshot
 		}
-		spec = buildcatv1.BuildProjectSpec{
-			Key: key, Repo: spec.Repo, Target: spec.Target, Arch: spec.Arch,
-			Tier: buildcatv1.TierWarm, IdleTimeoutSec: 300,
-			RestoreFromSnapshot: seed, SnapshotEverySec: 0,
-		}
+		spec.Key = key
+		spec.Tier = buildcatv1.TierWarm
+		spec.IdleTimeoutSec = forkIdleTimeoutSec
 	}
 
 	respond := func() {
@@ -301,20 +320,12 @@ func (s *routeServer) waitReady(ctx context.Context, key string) error {
 // returns immediately — it does NOT wait for readiness; it just masks the future attach latency
 // (bench: isolated attach ~19s p50, so pre-warming on push hides it for the CI build that follows).
 func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+	req, ok := decodeReq(w, r)
+	if !ok {
 		return
 	}
-	var req router.RouteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	key := router.ProjectKey(req.Repo, req.Target, req.Arch)
-	spec := buildcatv1.BuildProjectSpec{
-		Key: key, Repo: router.NormalizeRepo(req.Repo),
-		Target: router.NormalizeTarget(req.Target), Arch: router.NormalizeArch(req.Arch),
-	}
+	spec := canonicalSpec(req)
+	key := spec.Key
 	if err := s.ensureBuildProject(r.Context(), spec); err != nil {
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -326,14 +337,10 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 
 // handleHeartbeat is a liveness ack from a companion. It deliberately does NOT bump
 // LastBuildTime: heartbeats fire continuously and would defeat idle scale-to-zero. Build
-// activity is signalled by /route and /prewarm. (Long builds exceeding IdleTimeoutSec need
-// true in-flight tracking — lands with the Build CR; until then keep IdleTimeoutSec generous.)
+// activity is signalled by /route and /prewarm. (Long builds exceeding IdleTimeoutSec would need
+// true in-flight tracking via status.inflightBuilds; until then keep IdleTimeoutSec generous.)
 func (s *routeServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
-	var hb struct {
-		Key   string `json:"key"`
-		Ready bool   `json:"ready"`
-		TS    string `json:"ts"`
-	}
+	var hb router.Heartbeat
 	_ = json.NewDecoder(r.Body).Decode(&hb)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -341,9 +348,8 @@ func (s *routeServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 // handlePromote (M5) bumps the canonical lineage generation. The full pointer swap to the
 // most-advanced clone PVC + old-lineage GC is the documented next step (no bbolt merge needed).
 func (s *routeServer) handlePromote(w http.ResponseWriter, r *http.Request) {
-	var req router.RouteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	req, ok := decodeReq(w, r)
+	if !ok {
 		return
 	}
 	key := router.ProjectKey(req.Repo, req.Target, req.Arch)
