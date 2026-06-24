@@ -71,6 +71,20 @@ func TestNormalizeRepo(t *testing.T) {
 	}
 }
 
+func TestForkKey_DistinctFromCanonical(t *testing.T) {
+	canonical := ProjectKey("github.com/org/repo", "", "amd64")
+	fork := ForkKey(canonical)
+	if fork == canonical {
+		t.Fatal("fork key must differ from canonical (no shared cache)")
+	}
+	if name := DaemonName(fork); len(name) > 63 {
+		t.Errorf("fork daemon name %q exceeds 63", name)
+	}
+	if ForkKey(canonical) != fork {
+		t.Error("ForkKey must be deterministic")
+	}
+}
+
 func TestDaemonNameAndEndpoint(t *testing.T) {
 	k := ProjectKey("github.com/org/repo", "", "amd64")
 	name := DaemonName(k)

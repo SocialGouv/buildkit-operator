@@ -16,6 +16,9 @@ type RouteRequest struct {
 	Repo   string `json:"repo"`
 	Target string `json:"target"`
 	Arch   string `json:"arch"`
+	// Untrusted marks a fork-PR build: routed to an ephemeral daemon seeded read-only from the
+	// canonical snapshot, with no write-back to the canonical cache (anti cache-poisoning, M4).
+	Untrusted bool `json:"untrusted,omitempty"`
 }
 
 // RouteResponse is the wire response: the resolved key and the mTLS endpoint to build against.
@@ -85,6 +88,12 @@ func ProjectKey(repo, target, arch string) string {
 // "buildkitd-p<16hex>" => 27 chars, DNS-1123 safe, well under 63.
 func DaemonName(key string) string {
 	return "buildkitd-" + key
+}
+
+// ForkKey is the ephemeral key for untrusted (fork-PR) builds of a project. Distinct from
+// the canonical key so a fork daemon never shares the canonical cache (anti cache-poisoning).
+func ForkKey(canonicalKey string) string {
+	return "fork" + canonicalKey
 }
 
 // CachePVCName is the retained cache PVC of a project — the StatefulSet's "cache"

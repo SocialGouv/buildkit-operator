@@ -12,6 +12,7 @@ import (
 
 	buildcatv1 "github.com/devthejo/buildcat/api/v1alpha1"
 	"github.com/devthejo/buildcat/internal/builder"
+	"github.com/devthejo/buildcat/internal/metrics"
 	"github.com/devthejo/buildcat/internal/router"
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -143,10 +144,21 @@ func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *buil
 	} else if err != nil {
 		return err
 	}
-	if existing.Spec.Replicas == nil || *existing.Spec.Replicas != desired {
+	old := int32(0)
+	if existing.Spec.Replicas != nil {
+		old = *existing.Spec.Replicas
+	}
+	if old != desired {
 		patch := client.MergeFrom(existing.DeepCopy())
 		existing.Spec.Replicas = &desired
-		return r.Patch(ctx, &existing, patch)
+		if err := r.Patch(ctx, &existing, patch); err != nil {
+			return err
+		}
+		if desired > old {
+			metrics.ScaleEvents.WithLabelValues("up").Inc()
+		} else {
+			metrics.ScaleEvents.WithLabelValues("down").Inc()
+		}
 	}
 	return nil
 }
@@ -250,6 +262,7 @@ func (r *BuildProjectReconciler) maybeSnapshot(ctx context.Context, bp *buildcat
 	if err := r.Create(ctx, snap); err != nil {
 		return cadence, err
 	}
+	metrics.SnapshotsTotal.Inc()
 	orig := bp.DeepCopy()
 	bp.Status.LastSnapshot = name
 	_ = r.Status().Patch(ctx, bp, client.MergeFrom(orig))

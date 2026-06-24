@@ -14,6 +14,7 @@ import (
 	buildcatv1 "github.com/devthejo/buildcat/api/v1alpha1"
 	"github.com/devthejo/buildcat/internal/builder"
 	"github.com/devthejo/buildcat/internal/controller"
+	"github.com/devthejo/buildcat/internal/metrics"
 	"github.com/devthejo/buildcat/internal/router"
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -55,6 +56,8 @@ func main() {
 	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
 	flag.StringVar(&cfg.SnapshotClass, "snapshot-class", "", "VolumeSnapshotClass for durability snapshots (empty = disabled)")
 	keepSnaps := flag.Int("keep-snapshots", 3, "durability snapshots retained per project")
+	maxCold := flag.Int("max-cold-starts", 8, "max concurrent cold-start attaches (bench C backpressure)")
+	metricsAddr := flag.String("metrics-addr", ":8081", "Prometheus metrics bind address")
 	flag.StringVar(&apiListen, "api-listen", ":8080", "address for the /route + /heartbeat HTTP API")
 	port := flag.Int("port", 1234, "buildkitd mTLS port")
 	healthPort := flag.Int("health-port", 8080, "companion health port")
@@ -73,7 +76,7 @@ func main() {
 	}
 	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:  scheme,
-		Metrics: metricsserver.Options{BindAddress: "0"}, // off in M1; obs lands in M4
+		Metrics: metricsserver.Options{BindAddress: *metricsAddr}, // M4 observability
 	})
 	if err != nil {
 		log.Error(err, "unable to start manager")
@@ -90,7 +93,7 @@ func main() {
 		panic(err)
 	}
 
-	if err := mgr.Add(&routeServer{c: mgr.GetClient(), cfg: cfg, addr: apiListen, wait: routeWait}); err != nil {
+	if err := mgr.Add(&routeServer{c: mgr.GetClient(), cfg: cfg, addr: apiListen, wait: routeWait, coldStartSem: make(chan struct{}, *maxCold)}); err != nil {
 		log.Error(err, "unable to add route server")
 		panic(err)
 	}
@@ -105,10 +108,11 @@ func main() {
 // routeServer is the synchronous routing + heartbeat API, run as a manager Runnable
 // so it shares the manager's lifecycle and (started) client cache.
 type routeServer struct {
-	c    client.Client
-	cfg  builder.Config
-	addr string
-	wait time.Duration
+	c            client.Client
+	cfg          builder.Config
+	addr         string
+	wait         time.Duration
+	coldStartSem chan struct{} // bounds concurrent cold-start attaches (bench C backpressure)
 }
 
 func (s *routeServer) Start(ctx context.Context) error {
@@ -143,44 +147,92 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	key := router.ProjectKey(req.Repo, req.Target, req.Arch)
 	ctx := r.Context()
+	start := time.Now()
+	canonical := router.ProjectKey(req.Repo, req.Target, req.Arch)
+	key, result := canonical, "warm"
+	spec := buildcatv1.BuildProjectSpec{
+		Key: canonical, Repo: router.NormalizeRepo(req.Repo),
+		Target: router.NormalizeTarget(req.Target), Arch: router.NormalizeArch(req.Arch),
+	}
+	if req.Untrusted {
+		// Fork PR: ephemeral daemon seeded read-only from the canonical snapshot, no write-back
+		// (SnapshotEverySec=0) — distinct key, so it can never poison the canonical cache.
+		key, result = router.ForkKey(canonical), "untrusted"
+		seed := ""
+		var canon buildcatv1.BuildProject
+		if err := s.c.Get(ctx, types.NamespacedName{Name: canonical, Namespace: s.cfg.Namespace}, &canon); err == nil {
+			seed = canon.Status.LastSnapshot
+		}
+		spec = buildcatv1.BuildProjectSpec{
+			Key: key, Repo: spec.Repo, Target: spec.Target, Arch: spec.Arch,
+			Tier: buildcatv1.TierWarm, IdleTimeoutSec: 300,
+			RestoreFromSnapshot: seed, SnapshotEverySec: 0,
+		}
+	}
 
-	if err := s.ensureBuildProject(ctx, key, req); err != nil {
+	respond := func() {
+		metrics.RoutesTotal.WithLabelValues(result).Inc()
+		metrics.RouteDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
+		writeJSON(w, router.RouteResponse{Key: key, Endpoint: router.Endpoint(key, s.cfg.Namespace, s.cfg.Port), Namespace: s.cfg.Namespace})
+	}
+
+	if err := s.ensureBuildProject(ctx, spec); err != nil {
+		metrics.RoutesTotal.WithLabelValues("error").Inc()
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.touchLastBuild(ctx, key) // mark active so the daemon scales up / stays warm
+	s.touchLastBuild(ctx, key)
+
+	if s.ready(ctx, key) { // warm: no cold-start gating
+		respond()
+		return
+	}
+	if result == "warm" {
+		result = "cold"
+	}
+	// Backpressure: cap concurrent Cinder attaches (bench C: bursts serialize into minutes).
+	select {
+	case s.coldStartSem <- struct{}{}:
+		defer func() { <-s.coldStartSem }()
+	case <-ctx.Done():
+		metrics.RoutesTotal.WithLabelValues("error").Inc()
+		http.Error(w, "client gone", 499)
+		return
+	}
+	metrics.ColdStartsInflight.Inc()
+	defer metrics.ColdStartsInflight.Dec()
+
 	if err := s.waitReady(ctx, key); err != nil {
+		metrics.RoutesTotal.WithLabelValues("error").Inc()
 		http.Error(w, "daemon not ready: "+err.Error(), http.StatusGatewayTimeout)
 		return
 	}
-	writeJSON(w, router.RouteResponse{
-		Key:       key,
-		Endpoint:  router.Endpoint(key, s.cfg.Namespace, s.cfg.Port),
-		Namespace: s.cfg.Namespace,
-	})
+	respond()
 }
 
-func (s *routeServer) ensureBuildProject(ctx context.Context, key string, req router.RouteRequest) error {
+func (s *routeServer) ensureBuildProject(ctx context.Context, spec buildcatv1.BuildProjectSpec) error {
 	var bp buildcatv1.BuildProject
-	err := s.c.Get(ctx, types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp)
+	err := s.c.Get(ctx, types.NamespacedName{Name: spec.Key, Namespace: s.cfg.Namespace}, &bp)
 	if err == nil {
 		return nil
 	}
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
-	bp = buildcatv1.BuildProject{
-		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: s.cfg.Namespace},
-		Spec: buildcatv1.BuildProjectSpec{
-			Key:    key,
-			Repo:   router.NormalizeRepo(req.Repo),
-			Target: router.NormalizeTarget(req.Target),
-			Arch:   router.NormalizeArch(req.Arch),
-		},
+	return s.c.Create(ctx, &buildcatv1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: spec.Key, Namespace: s.cfg.Namespace},
+		Spec:       spec,
+	})
+}
+
+// ready reports whether the project's daemon already has a ready replica (warm fast path).
+func (s *routeServer) ready(ctx context.Context, key string) bool {
+	var sts appsv1.StatefulSet
+	if err := s.c.Get(ctx, types.NamespacedName{Name: router.DaemonName(key), Namespace: s.cfg.Namespace}, &sts); err != nil {
+		return false
 	}
-	return s.c.Create(ctx, &bp)
+	return sts.Status.ReadyReplicas >= 1
 }
 
 func (s *routeServer) waitReady(ctx context.Context, key string) error {
@@ -216,7 +268,11 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := router.ProjectKey(req.Repo, req.Target, req.Arch)
-	if err := s.ensureBuildProject(r.Context(), key, req); err != nil {
+	spec := buildcatv1.BuildProjectSpec{
+		Key: key, Repo: router.NormalizeRepo(req.Repo),
+		Target: router.NormalizeTarget(req.Target), Arch: router.NormalizeArch(req.Arch),
+	}
+	if err := s.ensureBuildProject(r.Context(), spec); err != nil {
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
