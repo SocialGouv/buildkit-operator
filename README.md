@@ -13,6 +13,22 @@ custom snapshotter.** It is a small **control plane** (routing + lifecycle) on t
 
 ---
 
+## Documentation
+
+This README is the overview. The [`docs/`](docs/) directory holds the deep-dives and the **measured
+evidence** gathered validating buildcat on a real OVH MKS cluster:
+
+- [architecture.md](docs/architecture.md) — routing key, reconcile loop, HA, gateway mode
+- [security.md](docs/security.md) — rootless constraint, Kyverno fix, threat model, fork isolation
+- [storage-and-cold-cache.md](docs/storage-and-cold-cache.md) — the 3 cache layers; **S3 ≈ 9× cold**
+- [performance.md](docs/performance.md) — measured warm/cold, with/without S3
+- [comparison-buildkit-service.md](docs/comparison-buildkit-service.md) — side-by-side vs the shared service
+- [ci-integration.md](docs/ci-integration.md) — CI-agnostic integration + public exposure
+- [benchmarks-phase0.md](docs/benchmarks-phase0.md) — the Cinder gen2 bench that picks the config
+- [operations.md](docs/operations.md) — deploy / expose / observe / tear down runbook
+
+---
+
 ## Why this design
 
 The core insight: **concurrency and cache sharing are free if they stay inside a single
