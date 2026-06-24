@@ -29,6 +29,7 @@ type Config struct {
 	HealthPort         int32  // companion health port (8080)
 	Companion          bool   // include the companion sidecar (default true; off needs no custom image)
 	DaemonServiceType  string // ClusterIP (default) | LoadBalancer (external CI via the gateway)
+	S3CredsSecret      string // Secret with AWS_ACCESS_KEY_ID/SECRET for the s3 cold cache (env on the daemon)
 }
 
 const (
@@ -109,6 +110,13 @@ func StatefulSet(bp *buildcatv1.BuildProject, cfg Config) *appsv1.StatefulSet {
 	if bp.Spec.SecurityProfile != buildcatv1.ProfilePrivileged {
 		daemon.VolumeMounts = append(daemon.VolumeMounts,
 			corev1.VolumeMount{Name: "config", MountPath: rootlessConfig})
+	}
+	if cfg.S3CredsSecret != "" {
+		// AWS creds for the s3 cold cache live on the DAEMON, not in every CI caller's secrets:
+		// buildkit's s3 backend falls back to the AWS env chain when the client passes no creds.
+		daemon.EnvFrom = append(daemon.EnvFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: cfg.S3CredsSecret}},
+		})
 	}
 
 	containers := []corev1.Container{daemon}

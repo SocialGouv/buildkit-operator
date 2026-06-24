@@ -28,13 +28,11 @@
 //	BUILDCAT_BUILDD_URL     base URL of buildd          (default http://buildd.buildcat.svc:8080)
 //	BUILDCAT_CLIENT_CERTS   dir with ca.pem/cert.pem/key.pem for the remote driver mTLS
 //	                        (default $HOME/.buildcat/certs)
-//	BUILDCAT_S3_BUCKET      S3/MinIO bucket for the cold cache  (required with --cache-s3)
-//	BUILDCAT_S3_REGION      S3 region                           (with --cache-s3)
-//	BUILDCAT_S3_ENDPOINT    S3 endpoint URL (MinIO/OVH)         (optional, with --cache-s3)
-//	BUILDCAT_S3_PREFIX      key prefix inside the bucket        (optional; default the project key)
+//	BUILDCAT_NAME           optional monorepo component (segments the cache identity)
 //
-// AWS credentials for the S3 cache are read by buildx/buildkit from the usual
-// AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN environment.
+// The S3 cold cache is a PROJECT policy, not a client concern: when buildd has a bucket configured
+// it returns the per-project cache reference on /route and this CLI applies it automatically — no S3
+// env or credentials on the client side (the daemons hold the AWS creds via buildd --s3-creds-secret).
 package main
 
 import (
@@ -69,7 +67,6 @@ type config struct {
 	push        bool
 	output      string
 	progress    string
-	cacheS3     bool
 	builddURL   string
 	clientCerts string
 	dryRun      bool
@@ -124,8 +121,6 @@ func newRootCmd() *cobra.Command {
 		"buildx output destination (e.g. type=local,dest=out); mutually exclusive with --push")
 	f.StringVar(&cfg.progress, "progress", "auto",
 		"progress output mode: auto | plain | tty | rawjson")
-	f.BoolVar(&cfg.cacheS3, "cache-s3", false,
-		"add S3 cold cache (--cache-from/--cache-to type=s3) configured from BUILDCAT_S3_* env")
 	f.StringVar(&cfg.builddURL, "buildd-url", envOr("BUILDCAT_BUILDD_URL", "http://buildd.buildcat.svc:8080"),
 		"base URL of the buildd control plane; routing POSTs to <url>/route")
 	f.StringVar(&cfg.clientCerts, "client-certs", envOr("BUILDCAT_CLIENT_CERTS", defaultCertsDir()),
@@ -345,41 +340,29 @@ func (cfg *config) buildxBuildArgs(builder string, resp router.RouteResponse) []
 	if cfg.progress != "" {
 		args = append(args, "--progress", cfg.progress)
 	}
-	if cfg.cacheS3 {
-		args = append(args, s3CacheArgs(resp.Key)...)
+	if resp.Cache != nil {
+		args = append(args, cacheArgs(resp.Cache)...)
 	}
 
 	return append(args, cfg.contextDir)
 }
 
-// s3CacheArgs builds the buildx S3 cold-cache flags from the BUILDCAT_S3_* env.
-// Bucket is required; region/endpoint/prefix are added only when set. The
-// authoritative project key is the default prefix so each project's cold cache
-// is namespaced exactly like its daemon.
-func s3CacheArgs(key string) []string {
-	bucket := os.Getenv("BUILDCAT_S3_BUCKET")
-	if bucket == "" {
-		// Honour the flag intent loudly rather than silently dropping the cache:
-		// a missing bucket is almost always a misconfiguration.
-		slog.Warn("--cache-s3 set but BUILDCAT_S3_BUCKET is empty; skipping S3 cache")
+// cacheArgs renders the buildx remote-cache flags from the reference buildd returned on /route.
+// It carries NO credentials: the daemon resolves them from its own AWS env (buildd --s3-creds-secret),
+// so the cold cache is a project policy, not something every CI caller has to configure.
+func cacheArgs(c *router.CacheConfig) []string {
+	if c == nil || c.Type != "s3" || c.Bucket == "" {
 		return nil
 	}
-
-	prefix := os.Getenv("BUILDCAT_S3_PREFIX")
-	if prefix == "" {
-		prefix = key
+	parts := []string{"type=s3", "bucket=" + c.Bucket, "name=" + c.Name}
+	if c.Region != "" {
+		parts = append(parts, "region="+c.Region)
 	}
-
-	parts := []string{"region=" + os.Getenv("BUILDCAT_S3_REGION"), "bucket=" + bucket, "prefix=" + prefix + "/"}
-	if ep := os.Getenv("BUILDCAT_S3_ENDPOINT"); ep != "" {
-		parts = append(parts, "endpoint_url="+ep)
+	if c.EndpointURL != "" {
+		parts = append(parts, "endpoint_url="+c.EndpointURL, "use_path_style=true")
 	}
 	common := strings.Join(parts, ",")
-
-	return []string{
-		"--cache-from", "type=s3," + common,
-		"--cache-to", "type=s3,mode=max," + common,
-	}
+	return []string{"--cache-from", common, "--cache-to", common + ",mode=max"}
 }
 
 // printDryRun reports the resolved identity, the routing result, and the exact

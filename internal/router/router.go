@@ -25,11 +25,25 @@ type RouteRequest struct {
 	Untrusted bool `json:"untrusted,omitempty"`
 }
 
-// RouteResponse is the wire response: the resolved key and the mTLS endpoint to build against.
+// RouteResponse is the wire response: the resolved key, the mTLS endpoint to build against, and
+// (optionally) the project's cold-cache reference for the client to apply.
 type RouteResponse struct {
 	Key       string `json:"key"`
 	Endpoint  string `json:"endpoint"`
 	Namespace string `json:"namespace"`
+	// Cache, when non-nil, is the project's cold cache the client should add to the build. It carries
+	// NO credentials: the daemon holds them (AWS env from a Secret), so the cache config is centralized
+	// in buildd instead of duplicated across every CI caller's secrets.
+	Cache *CacheConfig `json:"cache,omitempty"`
+}
+
+// CacheConfig is a buildx remote-cache reference buildd hands to the client (currently S3 only).
+type CacheConfig struct {
+	Type        string `json:"type"`                  // "s3"
+	Bucket      string `json:"bucket"`                // shared bucket
+	Region      string `json:"region,omitempty"`      // S3 region
+	EndpointURL string `json:"endpointUrl,omitempty"` // S3 endpoint (OVH Object Storage / MinIO)
+	Name        string `json:"name"`                  // per-project cache prefix = the project key
 }
 
 // Heartbeat is the liveness payload a companion POSTs to buildd's /heartbeat — shared here so the

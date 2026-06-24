@@ -65,6 +65,12 @@ func main() {
 	healthPort := flag.Int("health-port", 8080, "companion health port")
 	flag.DurationVar(&routeWait, "route-wait", 180*time.Second, "max wait for a daemon to become Ready on /route")
 	leaderElect := flag.Bool("leader-elect", false, "enable leader election for HA (run >1 replica; only the leader reconciles)")
+	// S3 cold cache as a PROJECT policy: buildd hands the per-project cache reference to clients on
+	// /route (no creds on the wire); the creds live on the daemons via --s3-creds-secret.
+	flag.StringVar(&cfg.S3CredsSecret, "s3-creds-secret", "", "Secret with AWS_ACCESS_KEY_ID/SECRET, mounted as env on the daemons for the s3 cold cache")
+	s3Bucket := flag.String("s3-bucket", "", "shared S3 bucket for the cold cache (empty = disabled); buildd returns the per-project reference to clients")
+	s3Region := flag.String("s3-region", "us-east-1", "S3 region for the cold cache")
+	s3Endpoint := flag.String("s3-endpoint", "", "S3 endpoint URL (OVH Object Storage / MinIO; empty = AWS default)")
 	flag.Parse()
 	cfg.Port = int32(*port)
 	cfg.HealthPort = int32(*healthPort)
@@ -99,7 +105,11 @@ func main() {
 		panic(err)
 	}
 
-	if err := mgr.Add(&routeServer{c: mgr.GetClient(), cfg: cfg, addr: apiListen, wait: routeWait, coldStartSem: make(chan struct{}, *maxCold)}); err != nil {
+	if err := mgr.Add(&routeServer{
+		c: mgr.GetClient(), cfg: cfg, addr: apiListen, wait: routeWait,
+		coldStartSem: make(chan struct{}, *maxCold),
+		s3Bucket:     *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
+	}); err != nil {
 		log.Error(err, "unable to add route server")
 		panic(err)
 	}
@@ -119,6 +129,26 @@ type routeServer struct {
 	addr         string
 	wait         time.Duration
 	coldStartSem chan struct{} // bounds concurrent cold-start attaches (bench C backpressure)
+	// S3 cold cache (project policy): the shared bucket reference buildd hands to clients on /route.
+	// Credentials are NOT here — they live on the daemons (cfg.S3CredsSecret).
+	s3Bucket   string
+	s3Region   string
+	s3Endpoint string
+}
+
+// cacheFor returns the project's cold-cache reference (prefix = the key) when an S3 bucket is
+// configured, else nil. No credentials: the daemon holds them via cfg.S3CredsSecret.
+func (s *routeServer) cacheFor(key string) *router.CacheConfig {
+	if s.s3Bucket == "" {
+		return nil
+	}
+	return &router.CacheConfig{
+		Type:        "s3",
+		Bucket:      s.s3Bucket,
+		Region:      s.s3Region,
+		EndpointURL: s.s3Endpoint,
+		Name:        key,
+	}
 }
 
 // NeedLeaderElection makes the /route API run on EVERY replica (not just the leader) so the
@@ -200,7 +230,7 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	respond := func() {
 		metrics.RoutesTotal.WithLabelValues(result).Inc()
 		metrics.RouteDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
-		writeJSON(w, router.RouteResponse{Key: key, Endpoint: s.endpointFor(ctx, key), Namespace: s.cfg.Namespace})
+		writeJSON(w, router.RouteResponse{Key: key, Endpoint: s.endpointFor(ctx, key), Namespace: s.cfg.Namespace, Cache: s.cacheFor(key)})
 	}
 
 	if err := s.ensureBuildProject(ctx, spec); err != nil {
@@ -328,7 +358,7 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 	}
 	s.touchLastBuild(r.Context(), key)
 	w.WriteHeader(http.StatusAccepted)
-	writeJSON(w, router.RouteResponse{Key: key, Endpoint: router.Endpoint(key, s.cfg.Namespace, s.cfg.Port), Namespace: s.cfg.Namespace})
+	writeJSON(w, router.RouteResponse{Key: key, Endpoint: router.Endpoint(key, s.cfg.Namespace, s.cfg.Port), Namespace: s.cfg.Namespace, Cache: s.cacheFor(key)})
 }
 
 // handleHeartbeat is a liveness ack from a companion. It deliberately does NOT bump

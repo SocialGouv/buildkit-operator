@@ -69,6 +69,16 @@ snapshotClassName: csi-cinder-snapclass-in-use-v1
 snapshots:
   keep: 3
 
+# S3 cold cache as a PROJECT policy. When `bucket` is set, buildd returns the per-project cache
+# reference on /route and clients apply it automatically — no S3 config or credentials on the CI
+# side. The daemons read the AWS creds from `credsSecret` (env AWS_ACCESS_KEY_ID/SECRET). Point this
+# at OVH Object Storage in production; an empty bucket disables the cold cache.
+s3:
+  bucket: ""
+  region: us-east-1
+  endpoint: "" # e.g. https://s3.gra.io.cloud.ovh.net (empty = AWS default)
+  credsSecret: "" # k8s Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+
 # Max concurrent cold-start attaches buildd allows (M4 backpressure; seed from bench C so a
 # CI burst does not serialize Cinder attaches into minutes).
 maxColdStarts: 8

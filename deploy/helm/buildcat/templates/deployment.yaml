@@ -46,6 +46,12 @@ spec:
             - --api-listen=:{{ .Values.service.port }}
             - --metrics-addr=:{{ .Values.metrics.port }}
             - --buildd-url=http://{{ include "buildcat.fullname" . }}-buildd.{{ .Values.namespace }}.svc:{{ .Values.service.port }}
+            {{- if .Values.s3.bucket }}
+            - --s3-bucket={{ .Values.s3.bucket }}
+            - --s3-region={{ .Values.s3.region }}
+            - --s3-endpoint={{ .Values.s3.endpoint }}
+            - --s3-creds-secret={{ .Values.s3.credsSecret }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
