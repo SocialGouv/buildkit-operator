@@ -164,8 +164,9 @@ func decodeReq(w http.ResponseWriter, r *http.Request) (router.RouteRequest, boo
 // place that derives (key, repo, target, arch), shared by /route and /prewarm.
 func canonicalSpec(req router.RouteRequest) buildcatv1.BuildProjectSpec {
 	return buildcatv1.BuildProjectSpec{
-		Key:    router.ProjectKey(req.Repo, req.Target, req.Arch),
+		Key:    router.ProjectKey(req.Repo, req.Name, req.Target, req.Arch),
 		Repo:   router.NormalizeRepo(req.Repo),
+		Name:   router.NormalizeName(req.Name),
 		Target: router.NormalizeTarget(req.Target),
 		Arch:   router.NormalizeArch(req.Arch),
 	}

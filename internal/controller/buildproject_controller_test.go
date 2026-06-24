@@ -39,7 +39,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 // Service, both owned by the BuildProject, and publish the mTLS endpoint in status.
 func TestReconcile_CreatesDaemon(t *testing.T) {
 	s := testScheme(t)
-	key := router.ProjectKey("github.com/org/repo", "", "amd64")
+	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
 	ns := "buildcat"
 	bp := &buildcatv1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
@@ -97,7 +97,7 @@ func TestReconcile_CreatesDaemon(t *testing.T) {
 // A second reconcile must be idempotent (no error, still one STS).
 func TestReconcile_Idempotent(t *testing.T) {
 	s := testScheme(t)
-	key := router.ProjectKey("github.com/org/repo", "", "amd64")
+	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
 	ns := "buildcat"
 	bp := &buildcatv1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},

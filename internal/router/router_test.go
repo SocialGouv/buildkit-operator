@@ -7,7 +7,7 @@ import "testing"
 // and later builds converge on one daemon and share its cache. A regression here
 // silently fragments the cache.
 func TestProjectKey_SameProjectConverges(t *testing.T) {
-	want := ProjectKey("https://github.com/Org/Repo.git", "", "amd64")
+	want := ProjectKey("https://github.com/Org/Repo.git", "", "", "amd64")
 	same := []string{
 		"https://github.com/org/repo",
 		"https://github.com/org/repo/",
@@ -18,18 +18,19 @@ func TestProjectKey_SameProjectConverges(t *testing.T) {
 		"  https://GitHub.com/ORG/repo  ",
 	}
 	for _, r := range same {
-		if got := ProjectKey(r, "", "amd64"); got != want {
+		if got := ProjectKey(r, "", "", "amd64"); got != want {
 			t.Errorf("ProjectKey(%q) = %s, want %s (must converge)", r, got, want)
 		}
 	}
 }
 
 func TestProjectKey_DistinctWhenItShould(t *testing.T) {
-	base := ProjectKey("github.com/org/repo", "", "amd64")
+	base := ProjectKey("github.com/org/repo", "", "", "amd64")
 	cases := map[string]string{
-		"diff arch":   ProjectKey("github.com/org/repo", "", "arm64"),
-		"diff target": ProjectKey("github.com/org/repo", "builder", "amd64"),
-		"diff repo":   ProjectKey("github.com/org/other", "", "amd64"),
+		"diff arch":   ProjectKey("github.com/org/repo", "", "", "arm64"),
+		"diff target": ProjectKey("github.com/org/repo", "", "builder", "amd64"),
+		"diff repo":   ProjectKey("github.com/org/other", "", "", "amd64"),
+		"diff name":   ProjectKey("github.com/org/repo", "api", "", "amd64"),
 	}
 	for name, k := range cases {
 		if k == base {
@@ -38,21 +39,39 @@ func TestProjectKey_DistinctWhenItShould(t *testing.T) {
 	}
 }
 
+// The optional name segments a monorepo into per-component daemons, but an EMPTY name must be
+// transparent: a single-image repo keeps the exact key it had before name existed (migration-safe).
+func TestProjectKey_NameSegmentsMonorepo(t *testing.T) {
+	noName := ProjectKey("github.com/org/mono", "", "", "amd64")
+	api := ProjectKey("github.com/org/mono", "api", "", "amd64")
+	web := ProjectKey("github.com/org/mono", "web", "", "amd64")
+	if api == web || api == noName || web == noName {
+		t.Error("distinct monorepo components must get distinct daemons")
+	}
+	// empty name is transparent + normalized (trim/case).
+	if ProjectKey("r", "", "", "amd64") != ProjectKey("r", "  ", "", "amd64") {
+		t.Error("blank name must normalize to empty (no segment)")
+	}
+	if ProjectKey("r", "API", "", "amd64") != ProjectKey("r", "api", "", "amd64") {
+		t.Error("name must be case-normalized")
+	}
+}
+
 func TestProjectKey_TargetAndArchNormalized(t *testing.T) {
-	if ProjectKey("r", "", "amd64") != ProjectKey("r", "default", "x86_64") {
+	if ProjectKey("r", "", "", "amd64") != ProjectKey("r", "", "default", "x86_64") {
 		t.Error("empty target must equal 'default'; x86_64 must equal amd64")
 	}
-	if ProjectKey("r", "T", "ARM64") != ProjectKey("r", "t", "aarch64") {
+	if ProjectKey("r", "", "T", "ARM64") != ProjectKey("r", "", "t", "aarch64") {
 		t.Error("target/arch must be case- and alias-normalized")
 	}
 }
 
 func TestProjectKey_FormatAndDeterministic(t *testing.T) {
-	k := ProjectKey("github.com/org/repo", "", "amd64")
+	k := ProjectKey("github.com/org/repo", "", "", "amd64")
 	if len(k) != 17 || k[0] != 'p' {
 		t.Errorf("key %q: want 'p'+16 hex (len 17)", k)
 	}
-	if k != ProjectKey("github.com/org/repo", "", "amd64") {
+	if k != ProjectKey("github.com/org/repo", "", "", "amd64") {
 		t.Error("ProjectKey must be deterministic")
 	}
 }
@@ -72,7 +91,7 @@ func TestNormalizeRepo(t *testing.T) {
 }
 
 func TestForkKey_DistinctFromCanonical(t *testing.T) {
-	canonical := ProjectKey("github.com/org/repo", "", "amd64")
+	canonical := ProjectKey("github.com/org/repo", "", "", "amd64")
 	fork := ForkKey(canonical)
 	if fork == canonical {
 		t.Fatal("fork key must differ from canonical (no shared cache)")
@@ -86,7 +105,7 @@ func TestForkKey_DistinctFromCanonical(t *testing.T) {
 }
 
 func TestDaemonNameAndEndpoint(t *testing.T) {
-	k := ProjectKey("github.com/org/repo", "", "amd64")
+	k := ProjectKey("github.com/org/repo", "", "", "amd64")
 	name := DaemonName(k)
 	if name != "buildkitd-"+k {
 		t.Errorf("DaemonName = %q", name)

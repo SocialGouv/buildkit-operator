@@ -14,7 +14,10 @@ import (
 
 // RouteRequest is the wire request from the CLI to buildd's /route endpoint.
 type RouteRequest struct {
-	Repo   string `json:"repo"`
+	Repo string `json:"repo"`
+	// Name is an optional component within the repo (a monorepo image/path). Empty for a
+	// single-image repo — and an empty Name keeps the exact same key as before this field existed.
+	Name   string `json:"name,omitempty"`
 	Target string `json:"target"`
 	Arch   string `json:"arch"`
 	// Untrusted marks a fork-PR build: routed to an ephemeral daemon seeded read-only from the
@@ -72,6 +75,11 @@ func NormalizeTarget(target string) string {
 	return t
 }
 
+// NormalizeName canonicalizes the optional monorepo component name (lowercased, trimmed).
+func NormalizeName(name string) string {
+	return strings.TrimSpace(strings.ToLower(name))
+}
+
 // NormalizeArch canonicalizes the architecture token.
 func NormalizeArch(arch string) string {
 	a := strings.TrimSpace(strings.ToLower(arch))
@@ -86,10 +94,17 @@ func NormalizeArch(arch string) string {
 }
 
 // ProjectKey is the stable cache identity: "p" + first 16 hex chars of
-// sha256(normRepo \x00 normTarget \x00 normArch). Coarse on purpose (no context,
-// no branch) so concurrent + later builds of the same project converge on one daemon.
-func ProjectKey(repo, target, arch string) string {
-	h := sha256.Sum256([]byte(NormalizeRepo(repo) + "\x00" + NormalizeTarget(target) + "\x00" + NormalizeArch(arch)))
+// sha256(normRepo [\x00 n:name] \x00 normTarget \x00 normArch). Coarse on purpose (no context,
+// no branch) so concurrent + later builds of the same project converge on one daemon. The optional
+// name segments a monorepo into per-component daemons; it is OMITTED when empty, so single-image
+// repos keep the exact key they had before name existed (migration-safe).
+func ProjectKey(repo, name, target, arch string) string {
+	seed := NormalizeRepo(repo)
+	if n := NormalizeName(name); n != "" {
+		seed += "\x00n:" + n
+	}
+	seed += "\x00" + NormalizeTarget(target) + "\x00" + NormalizeArch(arch)
+	h := sha256.Sum256([]byte(seed))
 	return "p" + hex.EncodeToString(h[:])[:16]
 }
 

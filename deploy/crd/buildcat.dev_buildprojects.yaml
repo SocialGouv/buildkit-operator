@@ -100,6 +100,11 @@ spec:
                   (repo, target, arch). Set by the router at creation; immutable.
                 minLength: 1
                 type: string
+              name:
+                description: |-
+                  Name is the optional monorepo component (image/path) within the repo. Informational; it
+                  segments the Key so a monorepo's images each get their own daemon. Empty for single-image repos.
+                type: string
               repo:
                 description: |-
                   Repo is the normalized source repository (lowercased, scheme/.git stripped).

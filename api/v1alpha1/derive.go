@@ -23,6 +23,7 @@ func DeriveChild(parent BuildProjectSpec, parentSnapshot string, role ChildRole,
 	child := BuildProjectSpec{
 		Key:                 key,
 		Repo:                parent.Repo,
+		Name:                parent.Name,
 		Target:              parent.Target,
 		Arch:                parent.Arch,
 		StorageClass:        parent.StorageClass,

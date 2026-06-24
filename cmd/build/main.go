@@ -60,6 +60,7 @@ import (
 // (via envOr) so `--help` shows the value that will actually be used.
 type config struct {
 	repo        string
+	name        string
 	target      string
 	arch        string
 	contextDir  string
@@ -105,6 +106,8 @@ func newRootCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&cfg.repo, "repo", os.Getenv("BUILDCAT_REPO"),
 		"source repository identity (empty = derive from git remote.origin.url, then context basename)")
+	f.StringVar(&cfg.name, "name", os.Getenv("BUILDCAT_NAME"),
+		"optional monorepo component (image/path) — segments the cache identity so each image gets its own daemon")
 	f.StringVar(&cfg.target, "target", os.Getenv("BUILDCAT_TARGET"),
 		"Dockerfile target stage (also part of the cache identity)")
 	f.StringVar(&cfg.arch, "arch", envOr("BUILDCAT_ARCH", defaultArch()),
@@ -154,9 +157,10 @@ func run(ctx context.Context, cfg *config) error {
 
 	// The router is the single source of truth for the key; computing it locally
 	// too lets us log the value we expect and surface routing drift early.
-	localKey := router.ProjectKey(repo, cfg.target, arch)
+	localKey := router.ProjectKey(repo, cfg.name, cfg.target, arch)
 	logger.Info("resolved build",
 		"repo", repo,
+		"name", cfg.name,
 		"target", cfg.target,
 		"arch", arch,
 		"context", cfg.contextDir,
@@ -167,6 +171,7 @@ func run(ctx context.Context, cfg *config) error {
 	// 2. ROUTE.
 	resp, err := routeBuild(ctx, cfg.builddURL, router.RouteRequest{
 		Repo:   repo,
+		Name:   cfg.name,
 		Target: cfg.target,
 		Arch:   arch,
 	})

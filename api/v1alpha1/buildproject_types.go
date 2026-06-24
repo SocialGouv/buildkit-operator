@@ -34,6 +34,10 @@ type BuildProjectSpec struct {
 	// Informational; the Key is what routes.
 	Repo string `json:"repo,omitempty"`
 
+	// Name is the optional monorepo component (image/path) within the repo. Informational; it
+	// segments the Key so a monorepo's images each get their own daemon. Empty for single-image repos.
+	Name string `json:"name,omitempty"`
+
 	// Target is the Dockerfile target stage this daemon serves ("" => default).
 	Target string `json:"target,omitempty"`
 
