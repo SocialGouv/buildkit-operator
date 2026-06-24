@@ -209,7 +209,9 @@ func phaseFrom(desired, ready int32) string {
 	}
 }
 
-// applyDefaults guards against BuildProjects created without CRD defaulting.
+// applyDefaults guards against BuildProjects created without CRD/apiserver defaulting (the fake
+// client in tests, or objects built in-process). It MUST mirror the +kubebuilder:default markers in
+// api/v1alpha1/buildproject_types.go — keep the two in sync.
 func applyDefaults(bp *buildcatv1.BuildProject) {
 	if bp.Spec.StorageClass == "" {
 		bp.Spec.StorageClass = "csi-cinder-high-speed-gen2"
@@ -219,6 +221,12 @@ func applyDefaults(bp *buildcatv1.BuildProject) {
 	}
 	if bp.Spec.Tier == "" {
 		bp.Spec.Tier = buildcatv1.TierWarm
+	}
+	if bp.Spec.IdleTimeoutSec == 0 {
+		// Mirrors +kubebuilder:default=900 (bench B). Without this, an undefaulted warm project
+		// scales to zero immediately after every build (desiredReplicas skips the LastBuildTime
+		// window when IdleTimeoutSec==0). 0 is unreachable via the API (omitempty => defaulted).
+		bp.Spec.IdleTimeoutSec = 900
 	}
 	if bp.Spec.SecurityProfile == "" {
 		bp.Spec.SecurityProfile = buildcatv1.ProfileRootless

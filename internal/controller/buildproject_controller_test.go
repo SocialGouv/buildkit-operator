@@ -167,6 +167,33 @@ func TestReconcile_ScalesIdleToZero(t *testing.T) {
 	}
 }
 
+// Regression: a warm project created WITHOUT IdleTimeoutSec (relying on defaulting) and built
+// recently must stay warm. The fake client skips apiserver defaulting, so applyDefaults must supply
+// the CRD default (900); otherwise IdleTimeoutSec stays 0 and desiredReplicas scales it to zero
+// right after every build.
+func TestReconcile_DefaultsIdleTimeout(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildcat", "nodefault"
+	recent := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+	bp := &buildcatv1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierWarm}, // IdleTimeoutSec unset (0)
+	}
+	bp.Status.LastBuildTime = &recent
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}); err != nil {
+		t.Fatal(err)
+	}
+	var sts appsv1.StatefulSet
+	if err := c.Get(context.Background(), types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}, &sts); err != nil {
+		t.Fatal(err)
+	}
+	if sts.Spec.Replicas == nil || *sts.Spec.Replicas != 1 {
+		t.Errorf("recently-built warm project with defaulted idle timeout: replicas = %v, want 1 (stayed warm)", sts.Spec.Replicas)
+	}
+}
+
 // M3 durability: when the cadence is due and the cache PVC exists, the reconciler must
 // create a VolumeSnapshot of that PVC (in-use; no scale-to-zero required on OVH).
 func TestReconcile_SnapshotsOnCadence(t *testing.T) {
