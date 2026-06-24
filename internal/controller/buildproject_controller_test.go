@@ -194,3 +194,34 @@ func TestReconcile_SnapshotsOnCadence(t *testing.T) {
 		t.Errorf("snapshot source = %v, want %s", src, router.CachePVCName(key))
 	}
 }
+
+// M5 fan-out: Fanout=N + a snapshot to clone from => N sibling clone BuildProjects, each seeded
+// (CoW) from the latest snapshot and not fanning out themselves.
+func TestReconcile_FanoutCreatesClones(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildcat", "fan"
+	bp := &buildcatv1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierHot, Fanout: 2},
+	}
+	bp.Status.LastSnapshot = "snap-fan-1"
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	for i := 1; i <= 2; i++ {
+		ckey := router.CloneKey(key, i)
+		var clone buildcatv1.BuildProject
+		if err := c.Get(context.Background(), types.NamespacedName{Name: ckey, Namespace: ns}, &clone); err != nil {
+			t.Fatalf("clone %d (%s) not created: %v", i, ckey, err)
+		}
+		if clone.Spec.RestoreFromSnapshot != "snap-fan-1" {
+			t.Errorf("clone %d restore = %q, want snap-fan-1", i, clone.Spec.RestoreFromSnapshot)
+		}
+		if clone.Spec.Fanout != 0 {
+			t.Errorf("clone %d must not fan out itself", i)
+		}
+	}
+}

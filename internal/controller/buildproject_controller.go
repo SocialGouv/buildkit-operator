@@ -95,6 +95,9 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if serr != nil {
 		l.V(1).Info("snapshot deferred", "err", serr.Error())
 	}
+	if ferr := r.reconcileFanout(ctx, &bp); ferr != nil {
+		l.V(1).Info("fanout deferred", "err", ferr.Error())
+	}
 	l.V(1).Info("reconciled", "key", bp.Spec.Key, "phase", bp.Status.Phase, "ready", ready, "desired", desired)
 
 	// Requeue at the soonest of: idle re-check (while warm) and the next snapshot due.
@@ -293,6 +296,44 @@ func (r *BuildProjectReconciler) pruneSnapshots(ctx context.Context, items []vol
 	for i := keep; i < len(items); i++ {
 		_ = r.Delete(ctx, &items[i])
 	}
+}
+
+// reconcileFanout (M5, conditional) materializes Fanout warm clone daemons for a saturated
+// project. Each clone is a sibling BuildProject seeded (CoW) from the latest snapshot — the bench
+// proved Cinder clones are CoW (fast boot). Clones run hot, are owned by the canonical (cascade
+// GC), and don't fan out themselves; layers converge via shared S3, cache mounts stay per-daemon.
+// Vertical scaling (Resources / CacheVolumeGi) remains the first resort.
+func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *buildcatv1.BuildProject) error {
+	if bp.Spec.Fanout <= 0 || bp.Status.LastSnapshot == "" {
+		return nil // disabled, or no snapshot to clone from yet
+	}
+	for i := int32(1); i <= bp.Spec.Fanout; i++ {
+		ckey := router.CloneKey(bp.Spec.Key, int(i))
+		var clone buildcatv1.BuildProject
+		if err := r.Get(ctx, types.NamespacedName{Name: ckey, Namespace: r.Cfg.Namespace}, &clone); err == nil {
+			continue
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+		clone = buildcatv1.BuildProject{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: ckey, Namespace: r.Cfg.Namespace,
+				Labels: map[string]string{projectKeyLabel: bp.Spec.Key, "buildcat.dev/clone-of": bp.Spec.Key},
+			},
+			Spec: buildcatv1.BuildProjectSpec{
+				Key: ckey, Repo: bp.Spec.Repo, Target: bp.Spec.Target, Arch: bp.Spec.Arch,
+				Tier: buildcatv1.TierHot, StorageClass: bp.Spec.StorageClass, CacheVolumeGi: bp.Spec.CacheVolumeGi,
+				SecurityProfile: bp.Spec.SecurityProfile, RestoreFromSnapshot: bp.Status.LastSnapshot,
+			},
+		}
+		if err := ctrl.SetControllerReference(bp, &clone, r.Scheme); err != nil {
+			return err
+		}
+		if err := r.Create(ctx, &clone); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ptr[T any](v T) *T { return &v }

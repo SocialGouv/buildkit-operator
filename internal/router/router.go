@@ -8,6 +8,7 @@ package router
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 )
 
@@ -94,6 +95,12 @@ func DaemonName(key string) string {
 // the canonical key so a fork daemon never shares the canonical cache (anti cache-poisoning).
 func ForkKey(canonicalKey string) string {
 	return "fork" + canonicalKey
+}
+
+// CloneKey is the key of the i-th fan-out clone of a project (M5). Distinct from the canonical
+// and fork keys, so each clone is an independent sibling daemon seeded from the snapshot.
+func CloneKey(canonicalKey string, i int) string {
+	return "c" + strconv.Itoa(i) + canonicalKey
 }
 
 // CachePVCName is the retained cache PVC of a project — the StatefulSet's "cache"

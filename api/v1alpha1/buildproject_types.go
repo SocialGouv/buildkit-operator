@@ -71,6 +71,12 @@ type BuildProjectSpec struct {
 	// (DR / new cluster / lost volume). Ignored once the PVC exists.
 	RestoreFromSnapshot string `json:"restoreFromSnapshot,omitempty"`
 
+	// Fanout is the number of additional warm clone daemons for a saturated project (M5,
+	// conditional — vertical first). Each clone is a sibling BuildProject seeded (CoW) from the
+	// latest snapshot; layers converge via shared S3. 0 = no fan-out.
+	// +kubebuilder:validation:Minimum=0
+	Fanout int32 `json:"fanout,omitempty"`
+
 	// SecurityProfile hardens the buildkitd pod.
 	// +kubebuilder:validation:Enum=rootless;userns;privileged
 	// +kubebuilder:default=rootless

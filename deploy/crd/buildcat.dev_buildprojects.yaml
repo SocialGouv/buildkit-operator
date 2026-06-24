@@ -78,6 +78,14 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
+              fanout:
+                description: |-
+                  Fanout is the number of additional warm clone daemons for a saturated project (M5,
+                  conditional — vertical first). Each clone is a sibling BuildProject seeded (CoW) from the
+                  latest snapshot; layers converge via shared S3. 0 = no fan-out.
+                format: int32
+                minimum: 0
+                type: integer
               idleTimeoutSec:
                 default: 900
                 description: |-
