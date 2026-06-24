@@ -296,11 +296,6 @@ spec:
                   (0 or 1).
                 format: int32
                 type: integer
-              volumeGen:
-                description: VolumeGen is bumped on promote (M5). The canonical cache
-                  lineage.
-                format: int32
-                type: integer
             required:
             - inflightBuilds
             - replicas

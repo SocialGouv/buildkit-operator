@@ -56,7 +56,7 @@ sits at the wrong layer and does not deliver shared cache mounts.
   │  build    │ ───────────────────► │  buildd (Deployment)                      │
   │  (CLI)    │ ◄─── endpoint ────── │   • controller-runtime manager            │
   └─────┬─────┘                      │   • reconciles BuildProject -> daemon     │
-        │ buildx remote (mTLS)       │   • HTTP API: /route /prewarm /promote    │
+        │ buildx remote (mTLS)       │   • HTTP API: /route /prewarm             │
         ▼                            │   • Prometheus /metrics                   │
   ┌───────────────────────┐         └───────────────┬──────────────────────────┘
   │ StatefulSet-of-1       │  reconciles            │ creates / scales
@@ -95,7 +95,7 @@ converge. A too-fine key fragments the cache and kills sharing.
 | **M2** | Elasticity | tier-aware **scale-to-zero** when idle (`IdleTimeoutSec`), the PVC is **retained** (no restore on wake); `/prewarm` webhook; preemptible **warm pool** so wake-ups don't trigger node autoscaling. |
 | **M3** | Durability & cold cache | periodic **in-use** `VolumeSnapshot` (no scale-to-zero needed on OVH), **restore-from-snapshot** (`spec.restoreFromSnapshot`), inode-GC backstop, S3 cold cache via the CLI. |
 | **M4** | Observability, security, backpressure | Prometheus metrics; **fork-PR isolation** (untrusted builds get an ephemeral daemon seeded read-only, no write-back — anti cache-poisoning); **cold-start rate limit** (`--max-cold-starts`). |
-| **M5** | Conditional fan-out | `spec.Fanout` materializes N warm **CoW clone** daemons from the latest snapshot for a saturated project (vertical scaling first); `/promote` bumps the canonical lineage. |
+| **M5** | Conditional fan-out | `spec.Fanout` materializes N warm **CoW clone** daemons from the latest snapshot for a saturated project — vertical scaling (Resources/`CacheVolumeGi`) stays the first resort. |
 
 ---
 
@@ -125,7 +125,6 @@ status:
   replicas: 1
   endpoint: tcp://buildkitd-p1a2b3c4d5e6f7a8.buildcat.svc:1234
   lastSnapshot: snap-...
-  volumeGen: 0
 ```
 
 You rarely write these by hand — the `build` CLI / `buildd` `/route` create them on demand.
@@ -183,8 +182,8 @@ curl -XPOST http://buildcat-buildd.buildcat.svc:8080/route   -d '{"repo":"...","
 ```
 
 `buildd` HTTP API: `POST /route` (ensure + wait Ready, returns the mTLS endpoint), `POST /prewarm`
-(anticipatory scale-up, returns immediately), `POST /promote` (M5), `POST /heartbeat`, `GET
-/healthz`, and Prometheus on `--metrics-addr` (`:8081`).
+(anticipatory scale-up, returns immediately), `POST /heartbeat`, `GET /healthz`, and Prometheus on
+`--metrics-addr` (`:8081`).
 
 ---
 

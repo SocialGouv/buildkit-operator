@@ -129,7 +129,6 @@ func (s *routeServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/route", s.handleRoute)
 	mux.HandleFunc("/prewarm", s.handlePrewarm)
-	mux.HandleFunc("/promote", s.handlePromote)
 	mux.HandleFunc("/heartbeat", s.handleHeartbeat)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
@@ -343,28 +342,6 @@ func (s *routeServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var hb router.Heartbeat
 	_ = json.NewDecoder(r.Body).Decode(&hb)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// handlePromote (M5) bumps the canonical lineage generation. The full pointer swap to the
-// most-advanced clone PVC + old-lineage GC is the documented next step (no bbolt merge needed).
-func (s *routeServer) handlePromote(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeReq(w, r)
-	if !ok {
-		return
-	}
-	key := router.ProjectKey(req.Repo, req.Target, req.Arch)
-	var bp buildcatv1.BuildProject
-	if err := s.c.Get(r.Context(), types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp); err != nil {
-		http.Error(w, "unknown project", http.StatusNotFound)
-		return
-	}
-	orig := bp.DeepCopy()
-	bp.Status.VolumeGen++
-	if err := s.c.Status().Patch(r.Context(), &bp, client.MergeFrom(orig)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"key": key, "volumeGen": bp.Status.VolumeGen})
 }
 
 // touchLastBuild marks the project active now, which keeps/brings desiredReplicas to 1.

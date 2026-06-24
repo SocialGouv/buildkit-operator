@@ -10,7 +10,7 @@ the daemon's content store, snapshots, and bbolt metadata are vanilla.
   ┌──────────────┐   POST /route          ┌──────────────────────────────────────────────┐
   │  build.sh /  │ ─────────────────────► │  buildd (Deployment, replicas: 2, HA)         │
   │  build CLI   │ ◄──── endpoint ─────── │   • controller-runtime manager (leader only)  │
-  └──────┬───────┘                        │   • HTTP API /route /prewarm /promote (all)   │
+  └──────┬───────┘                        │   • HTTP API /route /prewarm (all replicas)   │
          │ buildx remote (TCP + mTLS)     │   • Prometheus /metrics                        │
          ▼                                └───────────────────┬──────────────────────────┘
   ┌─────────────────────────┐  reconciles                     │ creates / scales / snapshots
@@ -64,9 +64,9 @@ controller-runtime loop. Per object it converges:
    snapshotted. Old snapshots are pruned to `--keep-snapshots`.
 4. **`reconcileFanout`** — when `spec.fanout > 0` (M5), materializes N **CoW clone** daemons
    (`CloneKey`) from the latest snapshot — vertical-first scaling for a saturated project.
-5. **Status** — `phase` (Pending/Warm/Idle/Scaling/Failed), `replicas`, `endpoint`, `lastSnapshot`,
-   `volumeGen`. Status is only written when it actually changes (a busy-loop guard learned the hard
-   way — unconditional status writes re-trigger reconcile forever).
+5. **Status** — `phase` (Pending/Warm/Idle/Scaling/Failed), `replicas`, `endpoint`, `lastSnapshot`.
+   Status is only written when it actually changes (a busy-loop guard learned the hard way —
+   unconditional status writes re-trigger reconcile forever).
 
 Metrics emitted: `buildcat_routes_total`, `buildcat_route_duration_seconds`,
 `buildcat_coldstarts_inflight`, `buildcat_scale_events_total`, `buildcat_snapshots_total`.

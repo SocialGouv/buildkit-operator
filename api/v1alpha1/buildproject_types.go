@@ -97,9 +97,6 @@ type BuildProjectStatus struct {
 	// Endpoint is the mTLS address clients dial (tcp://svc.ns.svc:1234).
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// VolumeGen is bumped on promote (M5). The canonical cache lineage.
-	VolumeGen int32 `json:"volumeGen,omitempty"`
-
 	// LastBuildTime is when a build last touched this daemon (drives idle).
 	LastBuildTime *metav1.Time `json:"lastBuildTime,omitempty"`
 
