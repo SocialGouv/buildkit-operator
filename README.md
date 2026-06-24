@@ -70,7 +70,7 @@ sits at the wrong layer and does not deliver shared cache mounts.
 
 | Path | What |
 |---|---|
-| [`api/v1alpha1`](api/v1alpha1) | CRDs: `BuildProject` (cache identity + daemon lifecycle) and `Build` |
+| [`api/v1alpha1`](api/v1alpha1) | CRD: `BuildProject` (cache identity + daemon lifecycle) |
 | [`internal/router`](internal/router) | the **stable routing key** — `ProjectKey(repo,target,arch)`; pure, shared by CLI and control plane |
 | [`internal/builder`](internal/builder) | renders the `buildkitd` `StatefulSet` + `Service` (gen2 PVC, security profiles) |
 | [`internal/controller`](internal/controller) | the `BuildProject` reconciler (scale, snapshot, fan-out, status) |

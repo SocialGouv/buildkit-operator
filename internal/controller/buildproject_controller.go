@@ -39,8 +39,6 @@ const projectKeyLabel = "buildcat.dev/project-key"
 
 // +kubebuilder:rbac:groups=buildcat.dev,resources=buildprojects,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=buildcat.dev,resources=buildprojects/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=buildcat.dev,resources=builds,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=buildcat.dev,resources=builds/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services;persistentvolumeclaims;configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch

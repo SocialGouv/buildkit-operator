@@ -49,7 +49,6 @@ rules:
   - buildcat.dev
   resources:
   - buildprojects
-  - builds
   verbs:
   - create
   - delete
@@ -62,7 +61,6 @@ rules:
   - buildcat.dev
   resources:
   - buildprojects/status
-  - builds/status
   verbs:
   - get
   - patch
