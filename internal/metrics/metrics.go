@@ -29,6 +29,15 @@ var (
 		Help: "Cold-start waits currently in flight (bounded by --max-cold-starts).",
 	})
 
+	// ColdStartSeconds isolates the time a cold /route spent waiting for a fresh daemon to become
+	// Ready (provision + Cinder attach), separate from warm route latency — the bench B/C signal to
+	// watch: if cold starts are frequent and slow, the per-project-daemon bet is under pressure.
+	ColdStartSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "buildcat_coldstart_seconds",
+		Help:    "Time a cold /route waited for a fresh daemon to become Ready (provision + attach).",
+		Buckets: []float64{1, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300},
+	})
+
 	// ScaleEvents counts daemon scale transitions by direction (up|down).
 	ScaleEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "buildcat_scale_events_total",
@@ -43,5 +52,5 @@ var (
 )
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(RoutesTotal, RouteDuration, ColdStartsInflight, ScaleEvents, SnapshotsTotal)
+	ctrlmetrics.Registry.MustRegister(RoutesTotal, RouteDuration, ColdStartsInflight, ColdStartSeconds, ScaleEvents, SnapshotsTotal)
 }

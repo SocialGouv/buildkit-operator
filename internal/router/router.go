@@ -46,14 +46,6 @@ type CacheConfig struct {
 	Name        string `json:"name"`                  // per-project cache prefix = the project key
 }
 
-// Heartbeat is the liveness payload a companion POSTs to buildd's /heartbeat — shared here so the
-// producer (companion) and consumer (buildd) can never drift on the wire shape.
-type Heartbeat struct {
-	Key   string `json:"key"`
-	Ready bool   `json:"ready"`
-	TS    string `json:"ts"`
-}
-
 // NormalizeRepo reduces a repository reference to a canonical host/path form so
 // that https://, ssh://, git@host: and trailing .git/slashes all collapse to the
 // same identity. Lowercased.

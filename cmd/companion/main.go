@@ -5,10 +5,8 @@
 // mounted at the buildkitd data dir. The companion does the housekeeping that
 // vanilla buildkitd does not:
 //
-//   - Health/readiness for the kubelet and the buildd controller (probes the
-//     daemon with `buildctl debug workers`).
-//   - A readiness heartbeat to buildd so the controller knows the daemon is
-//     serving and can route / scale it.
+//   - Health/readiness for the kubelet (probes the daemon with `buildctl debug
+//     workers`); /readyz flips to not-ready on drain so the Service drops it.
 //   - An inode GC backstop: statfs the cache dir and prune when inodes run low,
 //     which is the classic node_modules inode-exhaustion trap that bytes-based
 //     GC misses.
@@ -40,10 +38,7 @@ import (
 type config struct {
 	buildkitAddr       string
 	cacheDir           string
-	builddURL          string
-	projectKey         string
 	listen             string
-	heartbeatInterval  time.Duration
 	inodeCheckInterval time.Duration
 	inodeThreshold     float64
 	drainSeconds       time.Duration
@@ -62,7 +57,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "companion",
-		Short:         "buildcat buildkitd sidecar (health, heartbeat, inode GC backstop, graceful drain)",
+		Short:         "buildcat buildkitd sidecar (health, inode GC backstop, graceful drain)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -77,18 +72,9 @@ func newRootCmd() *cobra.Command {
 	f.StringVar(&cfg.cacheDir, "cache-dir",
 		envOr("BUILDCAT_CACHE_DIR", "/home/user/.local/share/buildkit"),
 		"buildkitd data dir on the Cinder PVC; statfs'd for the inode backstop")
-	f.StringVar(&cfg.builddURL, "buildd-url",
-		envOr("BUILDCAT_BUILDD_URL", ""),
-		"base URL of the buildd controller; heartbeats POST to <url>/heartbeat (empty = local-only)")
-	f.StringVar(&cfg.projectKey, "project-key",
-		envOr("BUILDCAT_PROJECT_KEY", ""),
-		"stable cache identity (BuildProject.Key) reported in heartbeats")
 	f.StringVar(&cfg.listen, "listen",
 		envOr("BUILDCAT_LISTEN", ":8080"),
 		"address for the health/metrics HTTP server")
-	f.DurationVar(&cfg.heartbeatInterval, "heartbeat-interval",
-		envDurationOr("BUILDCAT_HEARTBEAT_INTERVAL", 15*time.Second),
-		"interval between readiness heartbeats")
 	f.DurationVar(&cfg.inodeCheckInterval, "inode-check-interval",
 		envDurationOr("BUILDCAT_INODE_CHECK_INTERVAL", 60*time.Second),
 		"interval between inode usage checks on the cache dir")
@@ -114,8 +100,6 @@ func run(parent context.Context, cfg *config) error {
 	logger.Info("companion starting",
 		"buildkit_addr", cfg.buildkitAddr,
 		"cache_dir", cfg.cacheDir,
-		"buildd_url", cfg.builddURL,
-		"project_key", cfg.projectKey,
 		"listen", cfg.listen,
 	)
 
@@ -146,13 +130,7 @@ func run(parent context.Context, cfg *config) error {
 		}
 	}()
 
-	// Periodic loops. They stop when ctx is cancelled (first signal).
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		state.heartbeatLoop(ctx)
-	}()
-
+	// Inode GC backstop loop. Stops when ctx is cancelled (first signal).
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

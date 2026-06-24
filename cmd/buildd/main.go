@@ -1,6 +1,6 @@
 // Command buildd is the buildcat control plane: a controller-runtime manager that
 // reconciles BuildProject -> StatefulSet-of-1 vanilla buildkitd, plus an HTTP API
-// (/route, /heartbeat) the CLI and companion sidecars call.
+// (/route, /prewarm) the CLI calls.
 package main
 
 import (
@@ -53,14 +53,13 @@ func main() {
 	flag.StringVar(&cfg.CompanionImage, "companion-image", "ghcr.io/socialgouv/buildcat-companion:dev", "companion sidecar image")
 	flag.StringVar(&cfg.DaemonCertsSecret, "daemon-certs-secret", "buildkit-daemon-certs", "mTLS server certs secret")
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
-	flag.StringVar(&cfg.BuilddURL, "buildd-url", "http://buildd.buildcat.svc:8080", "companion heartbeat target")
 	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
 	flag.StringVar(&gatewayHost, "gateway-host", "", "gateway domain for off-cluster CI: /route returns tcp://<daemon>.<gateway-host>:<port> (empty = in-cluster ClusterIP DNS)")
 	flag.StringVar(&cfg.SnapshotClass, "snapshot-class", "", "VolumeSnapshotClass for durability snapshots (empty = disabled)")
 	keepSnaps := flag.Int("keep-snapshots", 3, "durability snapshots retained per project")
 	maxCold := flag.Int("max-cold-starts", 8, "max concurrent cold-start attaches (bench C backpressure)")
 	metricsAddr := flag.String("metrics-addr", ":8081", "Prometheus metrics bind address")
-	flag.StringVar(&apiListen, "api-listen", ":8080", "address for the /route + /heartbeat HTTP API")
+	flag.StringVar(&apiListen, "api-listen", ":8080", "address for the /route HTTP API")
 	port := flag.Int("port", 1234, "buildkitd mTLS port")
 	healthPort := flag.Int("health-port", 8080, "companion health port")
 	flag.DurationVar(&routeWait, "route-wait", 180*time.Second, "max wait for a daemon to become Ready on /route")
@@ -121,7 +120,7 @@ func main() {
 	}
 }
 
-// routeServer is the synchronous routing + heartbeat API, run as a manager Runnable
+// routeServer is the synchronous routing API (/route, /prewarm), run as a manager Runnable
 // so it shares the manager's lifecycle and (started) client cache.
 type routeServer struct {
 	c            client.Client
@@ -162,7 +161,6 @@ func (s *routeServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/route", s.handleRoute)
 	mux.HandleFunc("/prewarm", s.handlePrewarm)
-	mux.HandleFunc("/heartbeat", s.handleHeartbeat)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	srv := &http.Server{Addr: s.addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -262,11 +260,13 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	metrics.ColdStartsInflight.Inc()
 	defer metrics.ColdStartsInflight.Dec()
 
+	coldStart := time.Now()
 	if err := s.waitReady(ctx, key); err != nil {
 		metrics.RoutesTotal.WithLabelValues("error").Inc()
 		http.Error(w, "daemon not ready: "+err.Error(), http.StatusGatewayTimeout)
 		return
 	}
+	metrics.ColdStartSeconds.Observe(time.Since(coldStart).Seconds())
 	respond()
 }
 
@@ -340,16 +340,6 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 	s.touchLastBuild(r.Context(), key)
 	w.WriteHeader(http.StatusAccepted)
 	writeJSON(w, router.RouteResponse{Key: key, Endpoint: router.Endpoint(key, s.cfg.Namespace, s.cfg.Port), Namespace: s.cfg.Namespace, Cache: s.cacheFor(key)})
-}
-
-// handleHeartbeat is a liveness ack from a companion. It deliberately does NOT bump
-// LastBuildTime: heartbeats fire continuously and would defeat idle scale-to-zero. Build
-// activity is signalled by /route and /prewarm. (Long builds exceeding IdleTimeoutSec would need
-// true in-flight tracking via status.inflightBuilds; until then keep IdleTimeoutSec generous.)
-func (s *routeServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
-	var hb router.Heartbeat
-	_ = json.NewDecoder(r.Body).Decode(&hb)
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // touchLastBuild marks the project active now, which keeps/brings desiredReplicas to 1.

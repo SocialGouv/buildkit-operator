@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -11,17 +10,14 @@ import (
 	"os/exec"
 	"sync/atomic"
 	"time"
-
-	"github.com/socialgouv/buildcat/internal/router"
 )
 
 // state is the shared, concurrency-safe runtime state for the companion: the
 // readiness/draining flags and the last observed inode usage exposed on
-// /metrics. It also owns the buildctl probe used by /readyz and the heartbeat.
+// /metrics. It also owns the buildctl probe used by /readyz.
 type state struct {
 	cfg    *config
 	logger *slog.Logger
-	client *http.Client
 
 	// draining is set once on SIGTERM and never cleared; once draining we
 	// always report not-ready so no new work is scheduled onto us.
@@ -38,7 +34,6 @@ func newState(cfg *config, logger *slog.Logger) *state {
 	return &state{
 		cfg:    cfg,
 		logger: logger,
-		client: &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
@@ -103,65 +98,4 @@ func (s *state) mux() http.Handler {
 	})
 
 	return mux
-}
-
-// heartbeatLoop periodically reports readiness to buildd (or logs locally when
-// no buildd URL is configured). It never crashes the process on failure: a
-// flaky controller connection must not take down a serving daemon.
-func (s *state) heartbeatLoop(ctx context.Context) {
-	ticker := time.NewTicker(s.cfg.heartbeatInterval)
-	defer ticker.Stop()
-
-	// Emit one immediately so the controller learns about us promptly rather
-	// than after a full interval.
-	s.heartbeatOnce(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.heartbeatOnce(ctx)
-		}
-	}
-}
-
-func (s *state) heartbeatOnce(ctx context.Context) {
-	ready := s.ready(ctx)
-
-	if s.cfg.builddURL == "" {
-		s.logger.Info("readiness (local-only)", "key", s.cfg.projectKey, "ready", ready)
-		return
-	}
-
-	body, err := json.Marshal(router.Heartbeat{
-		Key:   s.cfg.projectKey,
-		Ready: ready,
-		TS:    time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		s.logger.Error("heartbeat marshal failed", "err", err)
-		return
-	}
-
-	url := s.cfg.builddURL + "/heartbeat"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		s.logger.Error("heartbeat request build failed", "err", err, "url", url)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		s.logger.Warn("heartbeat POST failed", "err", err, "url", url, "ready", ready)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		s.logger.Warn("heartbeat rejected", "status", resp.StatusCode, "url", url, "ready", ready)
-		return
-	}
-	s.logger.Debug("heartbeat sent", "url", url, "ready", ready)
 }

@@ -24,7 +24,6 @@ type Config struct {
 	DaemonCertsSecret  string // mTLS server certs (wildcard SAN) shared by all daemons
 	BuildkitdConfigMap string // ConfigMap holding buildkitd.toml (gc config)
 	SnapshotClass      string // VolumeSnapshotClass for durability snapshots (M3)
-	BuilddURL          string // companion heartbeat target
 	Port               int32  // TCP mTLS port (1234)
 	HealthPort         int32  // companion health port (8080)
 	Companion          bool   // include the companion sidecar (default true; off needs no custom image)
@@ -122,8 +121,6 @@ func StatefulSet(bp *buildcatv1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			Args: []string{
 				"--buildkit-addr=" + sockAddr,
 				"--cache-dir=" + dataDir,
-				"--buildd-url=" + cfg.BuilddURL,
-				"--project-key=" + bp.Spec.Key,
 				fmt.Sprintf("--listen=:%d", cfg.HealthPort),
 			},
 			SecurityContext: daemonSec,
