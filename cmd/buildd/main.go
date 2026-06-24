@@ -24,6 +24,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
@@ -37,16 +38,19 @@ func init() {
 
 func main() {
 	var (
-		cfg       builder.Config
-		apiListen string
-		routeWait time.Duration
+		cfg         builder.Config
+		apiListen   string
+		routeWait   time.Duration
+		kubeContext string
 	)
+	flag.StringVar(&kubeContext, "context", "", "kubeconfig context to target (empty = current-context)")
 	flag.StringVar(&cfg.Namespace, "namespace", "buildcat", "namespace the daemons run in")
 	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.18.2-rootless", "buildkitd image (vanilla)")
 	flag.StringVar(&cfg.CompanionImage, "companion-image", "ovh-registry/buildcat-companion:dev", "companion sidecar image")
 	flag.StringVar(&cfg.DaemonCertsSecret, "daemon-certs-secret", "buildkit-daemon-certs", "mTLS server certs secret")
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
 	flag.StringVar(&cfg.BuilddURL, "buildd-url", "http://buildd.buildcat.svc:8080", "companion heartbeat target")
+	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
 	flag.StringVar(&apiListen, "api-listen", ":8080", "address for the /route + /heartbeat HTTP API")
 	port := flag.Int("port", 1234, "buildkitd mTLS port")
 	healthPort := flag.Int("health-port", 8080, "companion health port")
@@ -58,7 +62,12 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	log := ctrl.Log.WithName("buildd")
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	restCfg, err := crconfig.GetConfigWithContext(kubeContext)
+	if err != nil {
+		log.Error(err, "unable to load kubeconfig")
+		panic(err)
+	}
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:  scheme,
 		Metrics: metricsserver.Options{BindAddress: "0"}, // off in M1; obs lands in M4
 	})

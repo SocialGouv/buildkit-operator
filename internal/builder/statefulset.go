@@ -26,6 +26,7 @@ type Config struct {
 	BuilddURL          string // companion heartbeat target
 	Port               int32  // TCP mTLS port (1234)
 	HealthPort         int32  // companion health port (8080)
+	Companion          bool   // include the companion sidecar (default true; off needs no custom image)
 }
 
 const (
@@ -102,26 +103,30 @@ func StatefulSet(bp *buildcatv1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			corev1.VolumeMount{Name: "config", MountPath: rootlessConfig})
 	}
 
-	companion := corev1.Container{
-		Name:  "companion",
-		Image: cfg.CompanionImage,
-		Args: []string{
-			"--buildkit-addr=" + sockAddr,
-			"--cache-dir=" + dataDir,
-			"--buildd-url=" + cfg.BuilddURL,
-			"--project-key=" + bp.Spec.Key,
-			fmt.Sprintf("--listen=:%d", cfg.HealthPort),
-		},
-		SecurityContext: daemonSec,
-		Ports:           []corev1.ContainerPort{{Name: "health", ContainerPort: cfg.HealthPort, Protocol: corev1.ProtocolTCP}},
-		ReadinessProbe: &corev1.Probe{
-			ProbeHandler:        corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromInt32(cfg.HealthPort)}},
-			InitialDelaySeconds: 5, PeriodSeconds: 15,
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: cacheVolName, MountPath: dataDir, ReadOnly: true}, // statfs for inode backstop
-			{Name: "run", MountPath: rootlessRunDir},
-		},
+	containers := []corev1.Container{daemon}
+	if cfg.Companion {
+		companion := corev1.Container{
+			Name:  "companion",
+			Image: cfg.CompanionImage,
+			Args: []string{
+				"--buildkit-addr=" + sockAddr,
+				"--cache-dir=" + dataDir,
+				"--buildd-url=" + cfg.BuilddURL,
+				"--project-key=" + bp.Spec.Key,
+				fmt.Sprintf("--listen=:%d", cfg.HealthPort),
+			},
+			SecurityContext: daemonSec,
+			Ports:           []corev1.ContainerPort{{Name: "health", ContainerPort: cfg.HealthPort, Protocol: corev1.ProtocolTCP}},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler:        corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromInt32(cfg.HealthPort)}},
+				InitialDelaySeconds: 5, PeriodSeconds: 15,
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: cacheVolName, MountPath: dataDir, ReadOnly: true}, // statfs for inode backstop
+				{Name: "run", MountPath: rootlessRunDir},
+			},
+		}
+		containers = append(containers, companion)
 	}
 
 	volumes := []corev1.Volume{
@@ -150,7 +155,7 @@ func StatefulSet(bp *buildcatv1.BuildProject, cfg Config) *appsv1.StatefulSet {
 				ObjectMeta: metav1.ObjectMeta{Labels: l},
 				Spec: corev1.PodSpec{
 					SecurityContext:               podSec,
-					Containers:                    []corev1.Container{daemon, companion},
+					Containers:                    containers,
 					TerminationGracePeriodSeconds: ptr[int64](120),
 					Volumes:                       volumes,
 				},
@@ -224,10 +229,14 @@ func securityContexts(profile string) (*corev1.PodSecurityContext, *corev1.Secur
 			SeccompProfile:      &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined},
 			AppArmorProfile:     &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined},
 		}
+		// allowPrivilegeEscalation is intentionally LEFT UNSET (not false): rootlesskit's
+		// setuid `newuidmap` needs no_new_privs OFF to set up the user namespace. Setting it
+		// false crash-loops rootless buildkitd ("newuidmap: Could not set caps") — verified on
+		// OVH ovh-dev. The cluster's Kyverno mutate is the reason the daemon namespace must be
+		// excluded (it would otherwise force this to false). See [[kyverno-buildkit-constraint]].
 		ctr := &corev1.SecurityContext{
-			RunAsNonRoot:             ptr(true),
-			RunAsUser:                ptr[int64](1000),
-			AllowPrivilegeEscalation: ptr(false),
+			RunAsNonRoot: ptr(true),
+			RunAsUser:    ptr[int64](1000),
 		}
 		return pod, ctr
 	}
