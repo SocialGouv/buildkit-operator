@@ -1,0 +1,3 @@
+# Generated mTLS material — never commit. create-certs.sh regenerates everything.
+*
+!.gitignore

@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "buildcat.fullname" . }}-buildd
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildcat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildd
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "buildcat.buildd.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "buildcat.buildd.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the Deployment when the buildkitd.toml ConfigMap content changes.
+        checksum/config: {{ .Files.Get "files/buildkitd.toml" | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "buildcat.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: buildd
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --health-probe-bind-address=:8080
+            - --route-bind-address=:8080
+          env:
+            # Namespace buildd watches and creates per-project daemons in.
+            - name: BUILDCAT_NAMESPACE
+              value: {{ .Values.namespace | quote }}
+            # Default per-project buildkitd image (pinned release, rootless).
+            - name: BUILDCAT_BUILDKIT_IMAGE
+              value: {{ .Values.buildkit.image | quote }}
+            # Companion sidecar image the controller injects into each daemon pod.
+            - name: BUILDCAT_COMPANION_IMAGE
+              value: "{{ .Values.companion.image.repository }}:{{ .Values.companion.image.tag }}"
+            # Default StorageClass for per-project cache PVCs.
+            - name: BUILDCAT_STORAGE_CLASS
+              value: {{ .Values.defaults.storageClass | quote }}
+            # Default cache volume size (GiB).
+            - name: BUILDCAT_CACHE_VOLUME_GI
+              value: {{ .Values.defaults.cacheVolumeGi | quote }}
+            # Security profile for per-project daemon pods.
+            - name: BUILDCAT_SECURITY_PROFILE
+              value: {{ .Values.securityProfile | quote }}
+            # VolumeSnapshotClass for cache durability/seed.
+            - name: BUILDCAT_SNAPSHOT_CLASS
+              value: {{ .Values.snapshotClassName | quote }}
+            # Names of the mTLS Secrets the controller wires into daemons.
+            - name: BUILDCAT_DAEMON_CERTS_SECRET
+              value: {{ .Values.certs.daemonSecretName | quote }}
+            - name: BUILDCAT_CLIENT_CERTS_SECRET
+              value: {{ .Values.certs.clientSecretName | quote }}
+            # gRPC port each per-project Service exposes.
+            - name: BUILDCAT_BUILDKIT_PORT
+              value: {{ .Values.buildkit.port | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            # The buildkitd.toml the controller propagates to per-project daemons.
+            - name: buildkitd-config
+              mountPath: /etc/buildcat/buildkit
+              readOnly: true
+            # Client mTLS material so buildd can dial the daemons.
+            - name: client-certs
+              mountPath: /certs/client
+              readOnly: true
+            # Daemon mTLS material (CA) for verifying daemon serving certs.
+            - name: daemon-certs
+              mountPath: /certs/daemon
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: buildkitd-config
+          configMap:
+            name: {{ include "buildcat.fullname" . }}-buildkitd-config
+        - name: client-certs
+          secret:
+            secretName: {{ .Values.certs.clientSecretName }}
+        - name: daemon-certs
+          secret:
+            secretName: {{ .Values.certs.daemonSecretName }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,52 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "buildcat.fullname" . }}-buildd
+  labels:
+    {{- include "buildcat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildd
+rules:
+  # --- buildcat custom resources -------------------------------------------
+  # Full lifecycle over the CRs the controller reconciles.
+  - apiGroups: ["buildcat.dev"]
+    resources: ["buildprojects", "builds"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Status subresources (write-back of observed state / conditions).
+  - apiGroups: ["buildcat.dev"]
+    resources: ["buildprojects/status", "builds/status"]
+    verbs: ["get", "update", "patch"]
+  # Finalizers (clean teardown of per-project daemons on CR deletion).
+  - apiGroups: ["buildcat.dev"]
+    resources: ["buildprojects/finalizers", "builds/finalizers"]
+    verbs: ["update"]
+
+  # --- apps: the per-project StatefulSet-of-1 the controller creates --------
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # --- core: per-project Service / Pods / PVC, plus mounted config ----------
+  # Services (one per project, TCP+mTLS :1234) and PVCs (the warm cache) are
+  # created/owned by the controller.
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Pods: read-only (status/readiness of the daemons; the StatefulSet owns them).
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # ConfigMaps and Secrets are mounted into the daemons (buildkitd.toml, certs):
+  # read-only is enough — the chart ships the ConfigMap, create-certs.sh the
+  # Secrets.
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  # Events: emit reconcile events on the CRs/daemons.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+
+  # --- snapshot.storage.k8s.io: cache durability / seed (M3) ----------------
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

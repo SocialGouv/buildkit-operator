@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "buildcat.fullname" . }}-buildd
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildcat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildd
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "buildcat.buildd.selectorLabels" . | nindent 4 }}
+  ports:
+    # buildd HTTP /route API + /healthz.
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: 8080
+      protocol: TCP

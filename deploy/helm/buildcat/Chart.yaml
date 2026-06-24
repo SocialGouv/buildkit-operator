@@ -1,0 +1,17 @@
+apiVersion: v2
+name: buildcat
+description: >-
+  Control plane for one hot, vanilla buildkitd per (project, arch) on Kubernetes.
+  Installs the buildd controller, its RBAC, the shared buildkitd GC config, and
+  references the generated CRDs. Per-project StatefulSets/Services/PVCs are
+  created by the buildd controller at runtime — they are NOT part of this chart.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - buildkit
+  - ci
+  - build-cache
+home: https://github.com/devthejo/buildcat
+maintainers:
+  - name: devthejo

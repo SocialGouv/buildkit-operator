@@ -1,0 +1,86 @@
+package router
+
+import "testing"
+
+// The single most important correctness property of buildcat: all references to
+// the SAME logical project must collapse to the SAME ProjectKey, so concurrent
+// and later builds converge on one daemon and share its cache. A regression here
+// silently fragments the cache.
+func TestProjectKey_SameProjectConverges(t *testing.T) {
+	want := ProjectKey("https://github.com/Org/Repo.git", "", "amd64")
+	same := []string{
+		"https://github.com/org/repo",
+		"https://github.com/org/repo/",
+		"https://github.com/org/repo.git",
+		"git@github.com:Org/Repo.git",
+		"http://github.com/org/repo",
+		"ssh://github.com/org/repo.git",
+		"  https://GitHub.com/ORG/repo  ",
+	}
+	for _, r := range same {
+		if got := ProjectKey(r, "", "amd64"); got != want {
+			t.Errorf("ProjectKey(%q) = %s, want %s (must converge)", r, got, want)
+		}
+	}
+}
+
+func TestProjectKey_DistinctWhenItShould(t *testing.T) {
+	base := ProjectKey("github.com/org/repo", "", "amd64")
+	cases := map[string]string{
+		"diff arch":   ProjectKey("github.com/org/repo", "", "arm64"),
+		"diff target": ProjectKey("github.com/org/repo", "builder", "amd64"),
+		"diff repo":   ProjectKey("github.com/org/other", "", "amd64"),
+	}
+	for name, k := range cases {
+		if k == base {
+			t.Errorf("%s: key %s collides with base (must differ)", name, k)
+		}
+	}
+}
+
+func TestProjectKey_TargetAndArchNormalized(t *testing.T) {
+	if ProjectKey("r", "", "amd64") != ProjectKey("r", "default", "x86_64") {
+		t.Error("empty target must equal 'default'; x86_64 must equal amd64")
+	}
+	if ProjectKey("r", "T", "ARM64") != ProjectKey("r", "t", "aarch64") {
+		t.Error("target/arch must be case- and alias-normalized")
+	}
+}
+
+func TestProjectKey_FormatAndDeterministic(t *testing.T) {
+	k := ProjectKey("github.com/org/repo", "", "amd64")
+	if len(k) != 17 || k[0] != 'p' {
+		t.Errorf("key %q: want 'p'+16 hex (len 17)", k)
+	}
+	if k != ProjectKey("github.com/org/repo", "", "amd64") {
+		t.Error("ProjectKey must be deterministic")
+	}
+}
+
+func TestNormalizeRepo(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/Org/Repo.git": "github.com/org/repo",
+		"git@github.com:Org/Repo.git":     "github.com/org/repo",
+		"https://github.com/org/repo/":    "github.com/org/repo",
+		"ssh://git@gitlab.com/g/p.git":    "gitlab.com/g/p",
+	}
+	for in, want := range cases {
+		if got := NormalizeRepo(in); got != want {
+			t.Errorf("NormalizeRepo(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDaemonNameAndEndpoint(t *testing.T) {
+	k := ProjectKey("github.com/org/repo", "", "amd64")
+	name := DaemonName(k)
+	if name != "buildkitd-"+k {
+		t.Errorf("DaemonName = %q", name)
+	}
+	if len(name) > 63 {
+		t.Errorf("DaemonName %q exceeds DNS-1123 limit (63)", name)
+	}
+	if got, want := Endpoint(k, "buildcat", 1234), "tcp://"+name+".buildcat.svc:1234"; got != want {
+		t.Errorf("Endpoint = %q, want %q", got, want)
+	}
+}

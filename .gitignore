@@ -1,0 +1,7 @@
+/bin/
+/dist/
+*.test
+*.out
+cover.out
+__debug_bin*
+.DS_Store

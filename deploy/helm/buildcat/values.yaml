@@ -1,0 +1,90 @@
+# Default values for the buildcat chart.
+# This installs the CLUSTER-WIDE control plane only. The per-project buildkitd
+# StatefulSets, their Services and cache PVCs are reconciled by the buildd
+# controller at runtime from BuildProject custom resources — they are never
+# templated here.
+
+# Namespace the control plane runs in. Used for resource metadata and as the
+# value of the BUILDCAT_NAMESPACE env handed to buildd (the namespace it watches
+# and creates per-project daemons in). Create it with --create-namespace, or
+# point at an existing one.
+namespace: buildcat
+
+replicaCount: 1
+
+# --- buildd: the controller-runtime manager + HTTP /route API on :8080 -------
+image:
+  repository: ovh-registry/buildcat-buildd
+  tag: dev
+  pullPolicy: IfNotPresent
+
+# --- companion: the inode-GC backstop sidecar -------------------------------
+# buildd injects this image as a sidecar into every per-project buildkitd pod it
+# creates. It is surfaced here so the controller can read it from its env and so
+# the whole fleet is pinned to one digest/tag.
+companion:
+  image:
+    repository: ovh-registry/buildcat-companion
+    tag: dev
+    pullPolicy: IfNotPresent
+
+# --- buildkitd: the per-project daemon image --------------------------------
+# Pinned to a release (NOT master) for reproducible builds across the fleet.
+# Rootless variant by default to minimise breakout surface.
+buildkit:
+  image: moby/buildkit:v0.18.2-rootless
+  # gRPC port each per-project Service exposes (TCP + mTLS).
+  port: 1234
+
+# --- Per-project daemon defaults --------------------------------------------
+# These seed the BuildProject defaults the controller applies when a project
+# does not override them. They mirror the +kubebuilder:default markers on
+# BuildProjectSpec so chart and CRD stay in agreement.
+defaults:
+  # OVH Managed Kubernetes gen2 high-speed Cinder class. On gen2, throughput
+  # scales with size, so size cache volumes for bandwidth, not just capacity.
+  storageClass: csi-cinder-high-speed-gen2
+  # Default cache volume size in GiB for a (project, arch).
+  cacheVolumeGi: 60
+
+# securityProfile for the per-project buildkitd pods:
+#   rootless   — non-root UID 1000, needs seccompProfile: Unconfined (default).
+#   userns     — kubelet-assigned UID via UserNamespacesSupport feature gate.
+#   privileged — last resort if admission policy blocks the above.
+# See deploy/README.md for the Kyverno caveat around seccompProfile: Unconfined.
+securityProfile: rootless
+
+# Snapshot class used by the controller for VolumeSnapshot-based cache seed/
+# durability (M3). OVH ships this CSI snapshot class on gen2.
+snapshotClassName: csi-cinder-snapclass-v1
+
+serviceAccount:
+  # Name of the ServiceAccount buildd runs as. If empty, the chart fullname is
+  # used. The ClusterRoleBinding binds the buildd ClusterRole to this SA.
+  name: buildcat-buildd
+
+# Resources for the buildd controller pod (NOT the per-project daemons — those
+# are sized per BuildProject.spec.resources).
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# buildd Service (exposes the /route API and /healthz on :8080).
+service:
+  port: 8080
+
+# Names of the mTLS Secrets minted by deploy/cert/create-certs.sh. The daemon
+# Secret is mounted by per-project daemons (the controller wires it in); the
+# client Secret is mounted by buildd so it can dial daemons over mTLS.
+certs:
+  daemonSecretName: buildkit-daemon-certs
+  clientSecretName: buildkit-client-certs
+
+# Optional node scheduling controls for the buildd pod.
+nodeSelector: {}
+tolerations: []
+affinity: {}

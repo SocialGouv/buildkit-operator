@@ -1,0 +1,72 @@
+# buildkitd.toml — GC configuration for the per-project buildkitd daemons.
+#
+# This file is shipped cluster-wide as a ConfigMap (see the Helm chart) and is
+# mounted read-only at /etc/buildkit/buildkitd.toml inside *every* per-project
+# StatefulSet-of-1 that the buildd controller creates. It is intentionally
+# generic: it carries no project/arch specifics, only the cache GC policy that
+# keeps a long-lived "warm" daemon from filling its Cinder gen2 cache volume.
+#
+# IMPORTANT — division of labour with the companion sidecar:
+#   * buildkitd's own GC (configured here) is BYTE-budget based. It reclaims
+#     cache when the volume approaches a size threshold.
+#   * It is blind to INODE exhaustion. A cache full of tiny files (the
+#     node_modules trap) can run a Cinder volume out of inodes long before the
+#     byte budget fires, and an inode-exhausted filesystem fails every build
+#     with ENOSPC even though `df` shows free bytes.
+#   * The companion sidecar (cmd/companion) is the INODE backstop: it statfs's
+#     the cache dir and runs `buildctl prune --all` once the inode ratio crosses
+#     its threshold. So: bytes here, inodes in the sidecar.
+
+# Quiet by default; the controller/companion provide operational logging.
+debug = false
+
+# Bind addresses and the gRPC TLS material are injected by the buildd controller
+# as daemon args (--addr / --tlscacert / --tlscert / --tlskey), mirroring the
+# upstream rootless example, so they are deliberately NOT set here.
+
+[worker.oci]
+  # The OCI worker is the rootless worker used by moby/buildkit:*-rootless.
+  enabled = true
+
+  # gc = true turns on buildkitd's background garbage collector. Without this,
+  # the cache grows unbounded until the volume is full and builds start failing.
+  gc = true
+
+  # reservedSpace: buildkitd keeps AT LEAST this much cache around and will not
+  # GC below it. It is the floor that protects warm-cache value — a daemon that
+  # GCs down to nothing on every idle period is not "hot". 10GB is a sane warm
+  # floor for a single (project, arch) cache.
+  reservedSpace = "10GB"
+
+  # maxUsedSpace: the ceiling. buildkitd starts reclaiming once cache usage
+  # exceeds 85% of the volume. Expressed as a percentage so it tracks whatever
+  # cacheVolumeGi the BuildProject was sized at (default 60Gi).
+  maxUsedSpace = "85%"
+
+  # minFreeSpace: the safety margin. buildkitd ensures at least 15% of the
+  # volume stays free, GCing harder if free space dips below it. This is the
+  # byte-side guard against ENOSPC; the inode-side guard lives in the companion.
+  minFreeSpace = "15%"
+
+  # ---- GC policies (evaluated top to bottom) -------------------------------
+  # Each policy is a rule the GC applies in order. Earlier policies win, so the
+  # first policy PROTECTS the records we most want to keep, and the last is the
+  # catch-all that enforces the global floor.
+
+  # Policy 1 — protect exec cache mounts (RUN --mount=type=cache ...).
+  # These are the crown jewels of a warm daemon: package-manager caches
+  # (apt/npm/pip/go/cargo) that make incremental builds fast. Keep them for a
+  # full week of inactivity before they are eligible for reclamation.
+  [[worker.oci.gcpolicy]]
+    filters = ["type==exec.cachemount"]
+    keepDuration = "168h" # 7 days
+    # No reservedSpace here: this policy only sets the retention window for
+    # cache-mount records; the global floor is enforced by the fallback below.
+
+  # Policy 2 — fallback / catch-all for everything else (layers, sources,
+  # intermediate results). all=true matches all remaining records; the GC may
+  # reclaim them down to reservedSpace to honour the ceiling and free-space
+  # guards above. This is what actually keeps the volume from filling up.
+  [[worker.oci.gcpolicy]]
+    all = true
+    reservedSpace = "10GB"
