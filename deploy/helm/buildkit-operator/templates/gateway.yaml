@@ -23,6 +23,9 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: gateway
     spec:
+      # Give in-flight builds time to drain on rollout/scale-down (the gateway stops accepting on
+      # SIGTERM and waits ~115s for open connections).
+      terminationGracePeriodSeconds: 120
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -34,6 +37,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - --listen=:{{ .Values.buildkit.port }}
+            - --health-listen=:8081
             - --domain={{ .Values.gateway.host }}
             - --namespace={{ .Values.namespace }}
             - --daemon-port={{ .Values.buildkit.port }}
@@ -41,6 +45,17 @@ spec:
             - name: sni
               containerPort: {{ .Values.buildkit.port }}
               protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            initialDelaySeconds: 10
+            periodSeconds: 20
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

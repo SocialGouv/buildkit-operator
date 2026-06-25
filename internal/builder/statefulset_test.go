@@ -55,6 +55,40 @@ func TestStatefulSet_UntrustedPodLabel(t *testing.T) {
 	}
 }
 
+// Regression (B3): in the privileged profile the daemon socket lives under /run/buildkit, so the
+// shared `run` emptyDir must be mounted at that SAME path in both the daemon and the companion —
+// otherwise the companion's buildctl probe can't reach the socket and /readyz never goes ready.
+func TestStatefulSet_PrivilegedCompanionSharesSocketDir(t *testing.T) {
+	bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "p1", Arch: "amd64", SecurityProfile: bkov1.ProfilePrivileged}}
+	sts := StatefulSet(bp, Config{Namespace: "ns", Port: 1234, HealthPort: 8080, Companion: true})
+	containers := sts.Spec.Template.Spec.Containers
+	if len(containers) != 2 {
+		t.Fatalf("want daemon + companion, got %d containers", len(containers))
+	}
+	runPath := func(c corev1.Container) string {
+		for _, m := range c.VolumeMounts {
+			if m.Name == "run" {
+				return m.MountPath
+			}
+		}
+		return ""
+	}
+	daemonRun, companionRun := runPath(containers[0]), runPath(containers[1])
+	if daemonRun != "/run/buildkit" || companionRun != "/run/buildkit" {
+		t.Errorf("run mount: daemon=%q companion=%q, want both /run/buildkit", daemonRun, companionRun)
+	}
+	// The companion must probe the privileged socket that lives under the shared run dir.
+	var addr string
+	for _, a := range containers[1].Args {
+		if len(a) > len("--buildkit-addr=") && a[:len("--buildkit-addr=")] == "--buildkit-addr=" {
+			addr = a[len("--buildkit-addr="):]
+		}
+	}
+	if addr != "unix:///run/buildkit/buildkitd.sock" {
+		t.Errorf("companion --buildkit-addr = %q, want the privileged socket under /run/buildkit", addr)
+	}
+}
+
 // Daemon pods carry the configured nodeSelector/tolerations (to pin them to a dedicated build
 // nodepool); with nothing configured they carry none. Parsing uses the JSON the chart renders.
 func TestStatefulSet_DaemonScheduling(t *testing.T) {

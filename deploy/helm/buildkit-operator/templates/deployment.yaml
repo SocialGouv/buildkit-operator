@@ -59,6 +59,15 @@ spec:
             - --s3-endpoint={{ .Values.s3.endpoint }}
             - --s3-creds-secret={{ .Values.s3.credsSecret }}
             {{- end }}
+          {{- if .Values.auth.tokenSecret }}
+          # Bearer-token auth for /route (read from a Secret, not a flag, so it isn't in the pod spec).
+          env:
+            - name: BUILDKIT_OPERATOR_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.tokenSecret }}
+                  key: token
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

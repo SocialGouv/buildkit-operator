@@ -7,11 +7,13 @@
 # Inputs come from the environment (the Action maps its inputs to these):
 #   BUILDKIT_OPERATOR_BUILDD_URL   buildd /route API           (required)
 #   BUILDKIT_OPERATOR_CA/CERT/KEY  client mTLS material, PEM   (required)
+#   BUILDKIT_OPERATOR_TOKEN        bearer token for /route     (when buildd requires auth)
 #   REPO                           project identity            (default: git origin)
 #   NAME                           optional monorepo component
 #   ARCH                           amd64 | arm64               (default amd64)
 #   BUILD_CONTEXT                  build context               (default .)
 #   DOCKERFILE / TARGET            optional
+#   UNTRUSTED                      true | false                (default false; fork-PR isolation)
 #   TAGS                           image tag(s), whitespace-separated (required)
 #   PUSH                           true | false                (default false)
 set -eu
@@ -20,7 +22,19 @@ set -eu
 REPO="${REPO:-$(git config --get remote.origin.url 2>/dev/null || basename "$PWD")}"
 ARCH="${ARCH:-amd64}"
 NAME="${NAME:-}"
+TARGET="${TARGET:-}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
+case "${UNTRUSTED:-false}" in true | 1 | yes) UNTRUSTED=true ;; *) UNTRUSTED=false ;; esac
+
+# api POSTs $2 (JSON) to the buildd path $1, adding the bearer token when one is configured.
+api() {
+  if [ -n "${BUILDKIT_OPERATOR_TOKEN:-}" ]; then
+    curl -fsS -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" -H 'content-type: application/json' \
+      -H "authorization: Bearer $BUILDKIT_OPERATOR_TOKEN" -d "$2"
+  else
+    curl -fsS -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" -H 'content-type: application/json' -d "$2"
+  fi
+}
 
 # Client mTLS material → a private temp dir (buildx reads the files at create time).
 certs="$(mktemp -d)"
@@ -29,12 +43,16 @@ printf '%s' "${BUILDKIT_OPERATOR_CA:?}"   > "$certs/ca.pem"
 printf '%s' "${BUILDKIT_OPERATOR_CERT:?}" > "$certs/cert.pem"
 printf '%s' "${BUILDKIT_OPERATOR_KEY:?}"  > "$certs/key.pem"
 
-# 1. Route: ask buildd for this project's daemon endpoint (+ optional cold-cache reference).
-resp="$(curl -fsS -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/route" \
-  -H 'content-type: application/json' \
-  -d "{\"repo\":\"$REPO\",\"name\":\"$NAME\",\"arch\":\"$ARCH\"}")"
+# 1. Route: ask buildd for this project's daemon endpoint (+ optional cold-cache reference). target is
+# part of the cache identity, so it MUST be sent (else two targets of one repo collide on one daemon).
+resp="$(api /route "{\"repo\":\"$REPO\",\"name\":\"$NAME\",\"target\":\"$TARGET\",\"arch\":\"$ARCH\",\"untrusted\":$UNTRUSTED}")"
 endpoint="$(printf '%s' "$resp" | jq -r .endpoint)"
-echo "buildkit-operator: routed $REPO${NAME:+/$NAME} ($ARCH) -> $endpoint"
+key="$(printf '%s' "$resp" | jq -r .key)"
+echo "buildkit-operator: routed $REPO${NAME:+/$NAME} ($ARCH${UNTRUSTED:+, untrusted=$UNTRUSTED}) -> $endpoint"
+
+# Release the inflight build buildd counted on /route so the daemon can scale to zero once idle
+# (best-effort; buildd's safety net bounds a missed release). Fires on any exit after routing.
+trap 'rm -rf "$certs"; [ -n "${key:-}" ] && [ "$key" != null ] && api /complete "{\"key\":\"$key\"}" >/dev/null 2>&1 || true' EXIT
 
 # Optional: when there is no wildcard DNS for the gateway yet, map this build's gateway hostname to
 # the gateway LoadBalancer IP for the duration of the run (testing/bootstrap escape hatch).
@@ -71,4 +89,7 @@ if [ "$(printf '%s' "$resp" | jq -r '.cache.type // empty')" = "s3" ]; then
   echo "buildkit-operator: S3 cold cache (project-managed) ON"
 fi
 
-exec docker "$@" "$BUILD_CONTEXT"
+# Run the build (not exec'd, so the EXIT trap can release the inflight build afterwards).
+status=0
+docker "$@" "$BUILD_CONTEXT" || status=$?
+exit "$status"

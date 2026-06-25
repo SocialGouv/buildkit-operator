@@ -18,6 +18,9 @@ inputs:
   key:
     description: "Client mTLS private key (PEM)."
     required: true
+  token:
+    description: "Bearer token for the buildd /route API (required if buildd is exposed off-cluster with auth)."
+    default: ""
   tags:
     description: "Image tag(s), whitespace-separated (e.g. ghcr.io/org/app:sha)."
     required: true
@@ -39,6 +42,9 @@ inputs:
   target:
     description: "Dockerfile target stage."
     default: ""
+  untrusted:
+    description: "Untrusted (fork-PR) build: route to an ephemeral daemon, no write-back to the shared cache (anti cache-poisoning)."
+    default: "false"
   push:
     description: "Push the result to the registry."
     default: "false"
@@ -65,12 +71,14 @@ runs:
         BUILDKIT_OPERATOR_CA: ${{ inputs.ca }}
         BUILDKIT_OPERATOR_CERT: ${{ inputs.cert }}
         BUILDKIT_OPERATOR_KEY: ${{ inputs.key }}
+        BUILDKIT_OPERATOR_TOKEN: ${{ inputs.token }}
         REPO: ${{ inputs.repo }}
         NAME: ${{ inputs.name }}
         ARCH: ${{ inputs.arch }}
         BUILD_CONTEXT: ${{ inputs.context }}
         DOCKERFILE: ${{ inputs.file }}
         TARGET: ${{ inputs.target }}
+        UNTRUSTED: ${{ inputs.untrusted }}
         TAGS: ${{ inputs.tags }}
         PUSH: ${{ inputs.push }}
         GATEWAY_IP: ${{ inputs.gateway-ip }}

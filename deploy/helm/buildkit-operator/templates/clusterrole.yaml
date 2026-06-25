@@ -7,18 +7,15 @@ metadata:
     app.kubernetes.io/component: buildd
 rules:
   # --- buildkit-operator custom resources -------------------------------------------
-  # Full lifecycle over the CRs the controller reconciles.
+  # Full lifecycle over the BuildProjects the controller reconciles (incl. creating fork/clone
+  # children and reaping idle forks).
   - apiGroups: ["buildkit-operator.socialgouv.github.io"]
-    resources: ["buildprojects", "builds"]
+    resources: ["buildprojects"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Status subresources (write-back of observed state / conditions).
+  # Status subresource (write-back of observed state / conditions / inflight count).
   - apiGroups: ["buildkit-operator.socialgouv.github.io"]
-    resources: ["buildprojects/status", "builds/status"]
+    resources: ["buildprojects/status"]
     verbs: ["get", "update", "patch"]
-  # Finalizers (clean teardown of per-project daemons on CR deletion).
-  - apiGroups: ["buildkit-operator.socialgouv.github.io"]
-    resources: ["buildprojects/finalizers", "builds/finalizers"]
-    verbs: ["update"]
 
   # --- apps: the per-project StatefulSet-of-1 the controller creates --------
   - apiGroups: ["apps"]

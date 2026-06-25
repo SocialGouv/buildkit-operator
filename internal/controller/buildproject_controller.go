@@ -34,12 +34,16 @@ import (
 // BuildProjectReconciler reconciles BuildProject objects.
 type BuildProjectReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	Cfg           builder.Config
-	KeepSnapshots int // durability snapshots retained per project (default 3)
+	Scheme          *runtime.Scheme
+	Cfg             builder.Config
+	KeepSnapshots   int // durability snapshots retained per project (default 3)
+	MaxBuildSeconds int // inflight builds older than this stop pinning a daemon warm (default 7200)
 }
 
-const projectKeyLabel = "buildkit-operator.socialgouv.github.io/project-key"
+const (
+	projectKeyLabel = "buildkit-operator.socialgouv.github.io/project-key"
+	cloneOfLabel    = "buildkit-operator.socialgouv.github.io/clone-of"
+)
 
 // +kubebuilder:rbac:groups=buildkit-operator.socialgouv.github.io,resources=buildprojects,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=buildkit-operator.socialgouv.github.io,resources=buildprojects/status,verbs=get;update;patch
@@ -60,10 +64,17 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	applyDefaults(&bp)
 
+	desired := desiredReplicas(&bp, time.Now(), r.maxBuildAge())
+	// Reap an idle ephemeral fork daemon: delete its cache PVC + the fork BuildProject (the owner-ref
+	// cascade removes the STS/Service). Forks are one-shot — nothing warm to keep — so this stops their
+	// retained PVCs and CRs from accumulating.
+	if router.IsForkKey(bp.Spec.Key) && desired == 0 {
+		return ctrl.Result{}, r.reapFork(ctx, &bp)
+	}
+
 	if err := r.ensureService(ctx, &bp); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure service: %w", err)
 	}
-	desired := desiredReplicas(&bp, time.Now())
 	if err := r.ensureStatefulSet(ctx, &bp, desired); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure statefulset: %w", err)
 	}
@@ -210,11 +221,11 @@ func templateHash(t corev1.PodTemplateSpec) string {
 // 1 while a build is in flight or the project was active within IdleTimeoutSec, else 0
 // (scale-to-zero — the PVC is retained via volumeClaimTemplates, so the next build just
 // reattaches the warm cache; no restore). Idle timeout default seeded from bench B.
-func desiredReplicas(bp *bkov1.BuildProject, now time.Time) int32 {
+func desiredReplicas(bp *bkov1.BuildProject, now time.Time, maxBuild time.Duration) int32 {
 	if bp.Spec.Tier == bkov1.TierHot {
 		return 1
 	}
-	if bp.Status.InflightBuilds > 0 {
+	if bp.Status.InflightBuilds > 0 && !inflightStale(bp, now, maxBuild) {
 		return 1
 	}
 	if bp.Status.LastBuildTime != nil && bp.Spec.IdleTimeoutSec > 0 {
@@ -223,6 +234,36 @@ func desiredReplicas(bp *bkov1.BuildProject, now time.Time) int32 {
 		}
 	}
 	return 0
+}
+
+// inflightStale reports whether the inflight counter is too old to trust — a client almost certainly
+// missed its /complete call. It bounds the blast radius of a leaked counter to maxBuild, so a crashed
+// build can't pin a hot daemon forever (buildd increments inflight on /route, decrements on /complete).
+func inflightStale(bp *bkov1.BuildProject, now time.Time, maxBuild time.Duration) bool {
+	return bp.Status.LastBuildTime == nil || now.Sub(bp.Status.LastBuildTime.Time) > maxBuild
+}
+
+// maxBuildAge is the staleness window for the inflight safety net (default 2h).
+func (r *BuildProjectReconciler) maxBuildAge() time.Duration {
+	if r.MaxBuildSeconds <= 0 {
+		return 2 * time.Hour
+	}
+	return time.Duration(r.MaxBuildSeconds) * time.Second
+}
+
+// reapFork tears down an idle ephemeral fork daemon: its retained cache PVC (no warm value to keep)
+// then the fork BuildProject itself (the owner-ref cascade removes the STS + Service).
+func (r *BuildProjectReconciler) reapFork(ctx context.Context, bp *bkov1.BuildProject) error {
+	var pvc corev1.PersistentVolumeClaim
+	err := r.Get(ctx, types.NamespacedName{Name: router.CachePVCName(bp.Spec.Key), Namespace: r.Cfg.Namespace}, &pvc)
+	if err == nil {
+		if derr := r.Delete(ctx, &pvc); derr != nil && !apierrors.IsNotFound(derr) {
+			return derr
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	return client.IgnoreNotFound(r.Delete(ctx, bp))
 }
 
 // idleRecheckInterval requeues a warm project often enough to scale it down promptly
@@ -299,7 +340,8 @@ func (r *BuildProjectReconciler) maybeSnapshot(ctx context.Context, bp *bkov1.Bu
 			return cadence - age, nil
 		}
 	}
-	name := fmt.Sprintf("snap-%s-%d", bp.Spec.Key, time.Now().Unix())
+	// UnixNano (not Unix) so two reconciles within the same second can't collide on the snapshot name.
+	name := fmt.Sprintf("snap-%s-%d", bp.Spec.Key, time.Now().UnixNano())
 	snap := &volumesnapshotv1.VolumeSnapshot{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Cfg.Namespace, Labels: map[string]string{projectKeyLabel: bp.Spec.Key}},
 		Spec: volumesnapshotv1.VolumeSnapshotSpec{
@@ -352,6 +394,24 @@ func (r *BuildProjectReconciler) pruneSnapshots(ctx context.Context, items []vol
 // GC), and don't fan out themselves; layers converge via shared S3, cache mounts stay per-daemon.
 // Vertical scaling (Resources / CacheVolumeGi) remains the first resort.
 func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.BuildProject) error {
+	// Prune clones beyond the desired Fanout FIRST, so lowering or disabling Fanout removes orphan hot
+	// clones instead of leaking them. This runs even when Fanout==0 (full teardown of fan-out).
+	want := map[string]bool{}
+	for i := int32(1); i <= bp.Spec.Fanout; i++ {
+		want[router.CloneKey(bp.Spec.Key, int(i))] = true
+	}
+	var clones bkov1.BuildProjectList
+	if err := r.List(ctx, &clones, client.InNamespace(r.Cfg.Namespace), client.MatchingLabels{cloneOfLabel: bp.Spec.Key}); err != nil {
+		return err
+	}
+	for i := range clones.Items {
+		if !want[clones.Items[i].Name] {
+			if err := r.Delete(ctx, &clones.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+				return err
+			}
+		}
+	}
+
 	if bp.Spec.Fanout <= 0 || bp.Status.LastSnapshot == "" {
 		return nil // disabled, or no snapshot to clone from yet
 	}
@@ -366,7 +426,7 @@ func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.
 		clone = bkov1.BuildProject{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: ckey, Namespace: r.Cfg.Namespace,
-				Labels: map[string]string{projectKeyLabel: bp.Spec.Key, "buildkit-operator.socialgouv.github.io/clone-of": bp.Spec.Key},
+				Labels: map[string]string{projectKeyLabel: bp.Spec.Key, cloneOfLabel: bp.Spec.Key},
 			},
 			Spec: bkov1.DeriveChild(bp.Spec, bp.Status.LastSnapshot, bkov1.CloneChild, ckey),
 		}

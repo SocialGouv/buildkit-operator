@@ -9,7 +9,6 @@ import (
 const (
 	TierHot  = "hot"  // never scaled to zero
 	TierWarm = "warm" // scaled to zero after IdleTimeoutSec
-	TierCold = "cold" // long tail; aggressive scale-to-zero + S3 seed
 )
 
 // SecurityProfile selects how the buildkitd pod is hardened. The default is
@@ -55,8 +54,8 @@ type BuildProjectSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	CacheVolumeGi int32 `json:"cacheVolumeGi,omitempty"`
 
-	// Tier controls scale-to-zero. hot is never scaled to zero.
-	// +kubebuilder:validation:Enum=hot;warm;cold
+	// Tier controls scale-to-zero. hot is never scaled to zero; warm scales to zero after IdleTimeoutSec.
+	// +kubebuilder:validation:Enum=hot;warm
 	// +kubebuilder:default=warm
 	Tier string `json:"tier,omitempty"`
 

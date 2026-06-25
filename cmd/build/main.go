@@ -70,6 +70,9 @@ type config struct {
 	builddURL   string
 	clientCerts string
 	dryRun      bool
+	untrusted   bool
+	token       string
+	routeWait   time.Duration
 }
 
 func main() {
@@ -127,6 +130,13 @@ func newRootCmd() *cobra.Command {
 		"directory holding ca.pem, cert.pem and key.pem for the remote driver mTLS")
 	f.BoolVar(&cfg.dryRun, "dry-run", false,
 		"resolve + route, then print the buildx argv without creating the builder or building")
+	f.BoolVar(&cfg.untrusted, "untrusted", envBool("BUILDKIT_OPERATOR_UNTRUSTED"),
+		"untrusted (fork-PR) build: route to an ephemeral daemon seeded read-only from the canonical "+
+			"snapshot, with NO write-back to the shared cache (anti cache-poisoning)")
+	f.StringVar(&cfg.token, "token", os.Getenv("BUILDKIT_OPERATOR_TOKEN"),
+		"bearer token for the buildd /route API (when buildd requires auth)")
+	f.DurationVar(&cfg.routeWait, "route-wait", durationOr("BUILDKIT_OPERATOR_ROUTE_WAIT", 5*time.Minute),
+		"max time to wait for buildd to route the build (must cover a cold-start daemon attach)")
 
 	return cmd
 }
@@ -164,14 +174,20 @@ func run(ctx context.Context, cfg *config) error {
 	)
 
 	// 2. ROUTE.
-	resp, err := routeBuild(ctx, cfg.builddURL, router.RouteRequest{
-		Repo:   repo,
-		Name:   cfg.name,
-		Target: cfg.target,
-		Arch:   arch,
+	resp, err := routeBuild(ctx, cfg, router.RouteRequest{
+		Repo:      repo,
+		Name:      cfg.name,
+		Target:    cfg.target,
+		Arch:      arch,
+		Untrusted: cfg.untrusted,
 	})
 	if err != nil {
 		return err
+	}
+	// Release the inflight build buildd counted on /route so the daemon can scale to zero promptly
+	// (best-effort; buildd's safety net bounds a missed release). Skipped on dry-run (no route side effect).
+	if !cfg.dryRun {
+		defer completeBuild(cfg, resp.Key, logger)
 	}
 	if resp.Key != localKey {
 		// Not fatal — buildd owns the authoritative key — but worth a loud log:
@@ -237,9 +253,11 @@ func gitRemoteURL(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// routeBuild POSTs the RouteRequest to <builddURL>/route and decodes the
-// RouteResponse. A non-200 prints the response body and returns an error.
-func routeBuild(ctx context.Context, builddURL string, req router.RouteRequest) (router.RouteResponse, error) {
+// routeBuild POSTs the RouteRequest to <builddURL>/route and decodes the RouteResponse. A non-200
+// prints the response body and returns an error. The timeout is cfg.routeWait, which must cover a
+// cold-start daemon attach (buildd holds the request open until the daemon is Ready) — a too-short
+// client timeout would abort an otherwise-successful cold start.
+func routeBuild(ctx context.Context, cfg *config, req router.RouteRequest) (router.RouteResponse, error) {
 	var zero router.RouteResponse
 
 	body, err := json.Marshal(req)
@@ -247,8 +265,8 @@ func routeBuild(ctx context.Context, builddURL string, req router.RouteRequest) 
 		return zero, fmt.Errorf("encode route request: %w", err)
 	}
 
-	url := strings.TrimRight(builddURL, "/") + "/route"
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	url := strings.TrimRight(cfg.builddURL, "/") + "/route"
+	ctx, cancel := context.WithTimeout(ctx, cfg.routeWait)
 	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -256,6 +274,9 @@ func routeBuild(ctx context.Context, builddURL string, req router.RouteRequest) 
 		return zero, fmt.Errorf("build route request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if cfg.token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+cfg.token)
+	}
 
 	res, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
@@ -279,6 +300,30 @@ func routeBuild(ctx context.Context, builddURL string, req router.RouteRequest) 
 	return resp, nil
 }
 
+// completeBuild best-effort releases the inflight build buildd counted on /route, so the daemon can
+// scale to zero once idle. Failures are logged and ignored — buildd's --max-build-seconds safety net
+// bounds a missed release.
+func completeBuild(cfg *config, key string, logger *slog.Logger) {
+	body, _ := json.Marshal(map[string]string{"key": key})
+	url := strings.TrimRight(cfg.builddURL, "/") + "/complete"
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if cfg.token != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.token)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logger.Debug("release inflight build failed (non-fatal)", "err", err)
+		return
+	}
+	_ = res.Body.Close()
+}
+
 // ensureBuilder idempotently creates the per-project buildx remote builder
 // pointed at the daemon endpoint, wiring in the client mTLS material. buildx
 // errors when the named instance already exists; that is the steady state for a
@@ -300,15 +345,38 @@ func ensureBuilder(ctx context.Context, builder, certsDir, endpoint string, logg
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if isExistingBuilder(stderr.String()) {
-			logger.Info("buildx builder already exists (idempotent)", "builder", builder)
-			return nil
-		}
+	if err := cmd.Run(); err == nil {
+		logger.Info("created buildx builder", "builder", builder, "endpoint", endpoint)
+		return nil
+	} else if !isExistingBuilder(stderr.String()) {
 		return fmt.Errorf("buildx create failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	logger.Info("created buildx builder", "builder", builder, "endpoint", endpoint)
+	// The builder already exists. Keep it only if its endpoint still matches — otherwise a changed
+	// endpoint (gateway host added, namespace change) would silently route builds to a stale address.
+	if builderHasEndpoint(ctx, builder, endpoint) {
+		logger.Info("buildx builder already exists (idempotent)", "builder", builder)
+		return nil
+	}
+	logger.Info("buildx builder endpoint changed, recreating", "builder", builder, "endpoint", endpoint)
+	_ = exec.CommandContext(ctx, "docker", "buildx", "rm", builder).Run()
+	cmd = exec.CommandContext(ctx, "docker", args...)
+	stderr.Reset()
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("buildx recreate failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	logger.Info("recreated buildx builder", "builder", builder, "endpoint", endpoint)
 	return nil
+}
+
+// builderHasEndpoint reports whether the named buildx builder is configured for endpoint (parsed from
+// `docker buildx inspect`). A failure to inspect is treated as "not matching" so we recreate safely.
+func builderHasEndpoint(ctx context.Context, builder, endpoint string) bool {
+	out, err := exec.CommandContext(ctx, "docker", "buildx", "inspect", builder).Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), endpoint)
 }
 
 // isExistingBuilder reports whether a buildx create error is the benign
@@ -414,4 +482,23 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool reports whether an env var is set to a truthy value (1/true/yes, case-insensitive).
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
+// durationOr parses an env var as a Go duration, falling back to def on unset/unparseable input.
+func durationOr(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
 }

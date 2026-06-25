@@ -11,7 +11,7 @@ metadata:
     app.kubernetes.io/component: mirror
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: {{ .Values.storageClass | default "csi-cinder-high-speed-gen2" }}
+  storageClassName: {{ .Values.mirror.storageClass | default "csi-cinder-high-speed-gen2" }}
   resources:
     requests:
       storage: {{ .Values.mirror.storage }}

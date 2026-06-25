@@ -59,9 +59,9 @@ controller-runtime loop. Per object it converges:
 1. **StatefulSet-of-1 + Service + PVC** — rendered by [`internal/builder`](../internal/builder) with
    the rootless security profile and the gen2 `volumeClaimTemplate`. The Service is the stable mTLS
    endpoint `:1234`.
-2. **`desiredReplicas`** — tier- and idle-aware **scale-to-zero**. When a `warm`/`cold` project
-   goes idle past `idleTimeoutSec`, it scales the StatefulSet to 0 **but keeps the PVC** — so waking
-   up is an attach, not a restore. `hot` never scales to zero.
+2. **`desiredReplicas`** — tier- and idle-aware **scale-to-zero**. When a `warm` project
+   goes idle past `idleTimeoutSec` (and no build is in flight), it scales the StatefulSet to 0 **but
+   keeps the PVC** — so waking up is an attach, not a restore. `hot` never scales to zero.
 3. **`maybeSnapshot`** — periodic **in-use** `VolumeSnapshot` on the `snapshotEverySec`
    cadence, using OVH's in-use snapclass so the daemon does **not** need to scale to zero to be
    snapshotted. Old snapshots are pruned to `--keep-snapshots`.

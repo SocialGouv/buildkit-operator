@@ -201,11 +201,11 @@ spec:
                 type: string
               tier:
                 default: warm
-                description: Tier controls scale-to-zero. hot is never scaled to zero.
+                description: Tier controls scale-to-zero. hot is never scaled to zero;
+                  warm scales to zero after IdleTimeoutSec.
                 enum:
                 - hot
                 - warm
-                - cold
                 type: string
             required:
             - arch

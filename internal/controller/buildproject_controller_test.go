@@ -155,6 +155,7 @@ func TestDesiredReplicas(t *testing.T) {
 		}
 		return bp
 	}
+	const maxBuild = 2 * time.Hour
 	cases := []struct {
 		name string
 		bp   *bkov1.BuildProject
@@ -164,12 +165,76 @@ func TestDesiredReplicas(t *testing.T) {
 		{"warm recent build", mk(bkov1.TierWarm, 900, time.Minute, true, 0), 1},
 		{"warm idle -> zero", mk(bkov1.TierWarm, 900, time.Hour, true, 0), 0},
 		{"warm never built -> zero", mk(bkov1.TierWarm, 900, 0, false, 0), 0},
-		{"warm in-flight -> one", mk(bkov1.TierWarm, 900, time.Hour, true, 2), 1},
+		// In-flight keeps it warm even past the idle window — until the inflight counter goes stale
+		// (a client that missed its /complete can't pin a daemon forever).
+		{"warm in-flight (fresh) -> one", mk(bkov1.TierWarm, 900, time.Hour, true, 2), 1},
+		{"warm in-flight (stale) -> zero", mk(bkov1.TierWarm, 900, 3*time.Hour, true, 2), 0},
 	}
 	for _, c := range cases {
-		if got := desiredReplicas(c.bp, now); got != c.want {
+		if got := desiredReplicas(c.bp, now, maxBuild); got != c.want {
 			t.Errorf("%s: desiredReplicas = %d, want %d", c.name, got, c.want)
 		}
+	}
+}
+
+// B4: lowering Fanout (or disabling it) must delete the orphan clone BuildProjects, not leak them.
+func TestReconcile_FanoutScalesDown(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildkit-operator", "fandown"
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot, Fanout: 1},
+	}
+	bp.Status.LastSnapshot = "snap-fandown-1"
+	// Pre-existing clone #2 from a previous higher Fanout — must be pruned now that Fanout=1.
+	c2key := router.CloneKey(key, 2)
+	orphan := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: c2key, Namespace: ns, Labels: map[string]string{cloneOfLabel: key}},
+		Spec:       bkov1.BuildProjectSpec{Key: c2key, Arch: "amd64", Tier: bkov1.TierHot},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp, orphan).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var gone bkov1.BuildProject
+	if err := c.Get(context.Background(), types.NamespacedName{Name: c2key, Namespace: ns}, &gone); err == nil {
+		t.Errorf("orphan clone %s should have been pruned (Fanout=1)", c2key)
+	}
+	var kept bkov1.BuildProject
+	if err := c.Get(context.Background(), types.NamespacedName{Name: router.CloneKey(key, 1), Namespace: ns}, &kept); err != nil {
+		t.Errorf("clone #1 should exist (Fanout=1): %v", err)
+	}
+}
+
+// Q6/B2: an idle ephemeral fork daemon must be reaped — its cache PVC and the fork BuildProject
+// deleted — so forks don't accumulate retained PVCs/CRs.
+func TestReconcile_ReapsIdleFork(t *testing.T) {
+	s := testScheme(t)
+	ns := "buildkit-operator"
+	canonical := router.ProjectKey("github.com/org/repo", "", "", "amd64")
+	fork := router.ForkKey(canonical)
+	old := metav1.NewTime(time.Now().Add(-time.Hour)) // idle past the fork window, inflight released
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: fork, Namespace: ns},
+		Spec:       bkov1.BuildProjectSpec{Key: fork, Arch: "amd64", Tier: bkov1.TierWarm, IdleTimeoutSec: bkov1.ForkIdleTimeoutSec},
+	}
+	bp.Status.LastBuildTime = &old
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: router.CachePVCName(fork), Namespace: ns}}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp, pvc).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: fork, Namespace: ns}}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var goneBP bkov1.BuildProject
+	if err := c.Get(context.Background(), types.NamespacedName{Name: fork, Namespace: ns}, &goneBP); err == nil {
+		t.Errorf("idle fork BuildProject should have been reaped")
+	}
+	var gonePVC corev1.PersistentVolumeClaim
+	if err := c.Get(context.Background(), types.NamespacedName{Name: router.CachePVCName(fork), Namespace: ns}, &gonePVC); err == nil {
+		t.Errorf("idle fork cache PVC should have been deleted")
 	}
 }
 

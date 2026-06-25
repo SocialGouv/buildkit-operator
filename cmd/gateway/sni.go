@@ -11,6 +11,10 @@ var errTruncated = errors.New("clienthello truncated")
 // peekClientHelloSNI reads exactly the first TLS handshake record (the ClientHello) from r and
 // returns the SNI host_name plus the raw bytes consumed. The gateway never decrypts: it replays
 // these raw bytes to the backend so mTLS stays end-to-end to the daemon (client-cert auth intact).
+//
+// It assumes the ClientHello fits in a single TLS record (up to ~16KB), which holds for every
+// practical client (buildx/Go/OpenSSL emit one record). A ClientHello deliberately fragmented across
+// records — legal but not produced by real clients — would be rejected rather than reassembled.
 func peekClientHelloSNI(r io.Reader) (sni string, raw []byte, err error) {
 	hdr := make([]byte, 5) // record: type(1) | version(2) | length(2)
 	if _, err = io.ReadFull(r, hdr); err != nil {
