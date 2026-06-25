@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       increment:
-        description: "Semver increment"
-        default: patch
+        description: "Release the version in package.json as-is (none), or bump it first"
+        default: none
         type: choice
-        options: [patch, minor, major]
+        options: [none, patch, minor, major]
 
 permissions:
   contents: write # tag + GitHub release
@@ -32,6 +32,11 @@ jobs:
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-      - run: npx release-it ${{ inputs.increment }} --ci
+      - run: |
+          if [ "${{ inputs.increment }}" = "none" ]; then
+            npx release-it --no-increment --ci
+          else
+            npx release-it "${{ inputs.increment }}" --ci
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
