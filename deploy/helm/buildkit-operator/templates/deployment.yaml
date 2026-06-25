@@ -44,6 +44,9 @@ spec:
             {{- if .Values.gateway.host }}
             - --gateway-host={{ .Values.gateway.host }}
             {{- end }}
+            {{- if .Values.sandbox.runtimeClass }}
+            - --sandbox-runtime-class={{ .Values.sandbox.runtimeClass }}
+            {{- end }}
             - --port={{ .Values.buildkit.port }}
             - --api-listen=:{{ .Values.service.port }}
             - --metrics-addr=:{{ .Values.metrics.port }}

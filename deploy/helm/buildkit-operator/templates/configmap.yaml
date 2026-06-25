@@ -12,3 +12,12 @@ data:
   # deploy/config/buildkitd.toml (mirrored into the chart at files/buildkitd.toml).
   buildkitd.toml: |-
     {{- .Files.Get "files/buildkitd.toml" | nindent 4 }}
+    {{- if .Values.mirror.host }}
+
+    # Pull-through cache: base-image (FROM) pulls resolve via an in-cluster mirror — LAN-speed,
+    # immune to Docker Hub rate limits, resilient to upstream outages.
+    [registry."docker.io"]
+      mirrors = ["{{ .Values.mirror.host }}"]
+    [registry."{{ .Values.mirror.host }}"]
+      http = true
+    {{- end }}

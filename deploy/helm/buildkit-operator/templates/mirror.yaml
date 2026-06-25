@@ -1,0 +1,84 @@
+{{- if .Values.mirror.enabled }}
+# Bundled pull-through cache (registry:2 in proxy mode) for base-image FROM pulls. Point the daemons
+# at it with mirror.host (it injects the buildkitd.toml mirror entry). One upstream per registry.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-mirror
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mirror
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.storageClass | default "csi-cinder-high-speed-gen2" }}
+  resources:
+    requests:
+      storage: {{ .Values.mirror.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-mirror
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mirror
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
+      app.kubernetes.io/component: mirror
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
+        app.kubernetes.io/component: mirror
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: registry
+          image: {{ .Values.mirror.image }}
+          env:
+            - { name: REGISTRY_PROXY_REMOTEURL, value: {{ .Values.mirror.upstream | quote }} }
+            - { name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY, value: /var/lib/registry }
+          ports:
+            - { name: http, containerPort: 5000 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/registry }
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.mirror.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "buildkit-operator.fullname" . }}-mirror
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-mirror
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mirror
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
+    app.kubernetes.io/component: mirror
+  ports:
+    - { name: http, port: 5000, targetPort: 5000, protocol: TCP }
+{{- end }}

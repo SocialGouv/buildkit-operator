@@ -89,6 +89,27 @@ networkPolicy:
   enabled: true
   extraEgress: []
 
+# Pull-through cache for base-image (FROM) pulls: LAN-speed, immune to Docker Hub rate limits,
+# resilient to upstream outages. `enabled` bundles a registry:2 proxy; `host` is the mirror the
+# daemons use in buildkitd.toml (point it at the bundled Service, or an external mirror). One upstream
+# per registry. NB: with networkPolicy on, allowlist `host` under networkPolicy.extraEgress.
+mirror:
+  enabled: false
+  host: "" # e.g. buildkit-operator-mirror:5000
+  upstream: https://registry-1.docker.io
+  image: registry:2
+  storage: 20Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+# Sandboxed runtime for UNTRUSTED fork daemons only (trusted daemons keep the default runtime for
+# speed). The build runs attacker-controlled code, so isolate forks harder than runc. Point at an
+# installed RuntimeClass: `sysbox-runc` keeps no_new_privs ON (lets you drop the Kyverno exemption);
+# `gvisor`/`kata` are alternatives. Requires the runtime installed on the nodes + the RuntimeClass.
+sandbox:
+  runtimeClass: ""
+
 # Max concurrent cold-start attaches buildd allows (M4 backpressure; seed from bench C so a
 # CI burst does not serialize Cinder attaches into minutes).
 maxColdStarts: 8

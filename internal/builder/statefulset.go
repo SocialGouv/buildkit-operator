@@ -18,16 +18,17 @@ import (
 
 // Config holds the cluster-wide defaults injected by buildd.
 type Config struct {
-	Namespace          string // namespace the daemons run in
-	BuildkitImage      string // rootless image, e.g. moby/buildkit:v0.18.2-rootless
-	CompanionImage     string // our sidecar image (must bundle buildctl)
-	DaemonCertsSecret  string // mTLS server certs (wildcard SAN) shared by all daemons
-	BuildkitdConfigMap string // ConfigMap holding buildkitd.toml (gc config)
-	SnapshotClass      string // VolumeSnapshotClass for durability snapshots (M3)
-	Port               int32  // TCP mTLS port (1234)
-	HealthPort         int32  // companion health port (8080)
-	Companion          bool   // include the companion sidecar (default true; off needs no custom image)
-	S3CredsSecret      string // Secret with AWS_ACCESS_KEY_ID/SECRET for the s3 cold cache (env on the daemon)
+	Namespace           string // namespace the daemons run in
+	BuildkitImage       string // rootless image, e.g. moby/buildkit:v0.18.2-rootless
+	CompanionImage      string // our sidecar image (must bundle buildctl)
+	DaemonCertsSecret   string // mTLS server certs (wildcard SAN) shared by all daemons
+	BuildkitdConfigMap  string // ConfigMap holding buildkitd.toml (gc config)
+	SnapshotClass       string // VolumeSnapshotClass for durability snapshots (M3)
+	Port                int32  // TCP mTLS port (1234)
+	HealthPort          int32  // companion health port (8080)
+	Companion           bool   // include the companion sidecar (default true; off needs no custom image)
+	S3CredsSecret       string // Secret with AWS_ACCESS_KEY_ID/SECRET for the s3 cold cache (env on the daemon)
+	SandboxRuntimeClass string // RuntimeClass for UNTRUSTED (fork) daemons only (e.g. sysbox-runc / gvisor); empty = runc
 }
 
 const (
@@ -43,8 +44,8 @@ const (
 // Labels returns the canonical label set for a project's objects.
 func Labels(bp *bkov1.BuildProject) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":           "buildkit-operator",
-		"app.kubernetes.io/component":      "buildkitd",
+		"app.kubernetes.io/name":                             "buildkit-operator",
+		"app.kubernetes.io/component":                        "buildkitd",
 		"buildkit-operator.socialgouv.github.io/project-key": bp.Spec.Key,
 		"buildkit-operator.socialgouv.github.io/arch":        router.NormalizeArch(bp.Spec.Arch),
 	}
@@ -174,7 +175,10 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: l},
 				Spec: corev1.PodSpec{
-					SecurityContext:               podSec,
+					SecurityContext: podSec,
+					// Untrusted fork daemons run under a sandboxed runtime when one is configured —
+					// the build executes attacker-controlled code, so isolate it harder than runc.
+					RuntimeClassName:              runtimeClassFor(bp, cfg),
 					Containers:                    containers,
 					TerminationGracePeriodSeconds: ptr[int64](120),
 					Volumes:                       volumes,
@@ -252,6 +256,15 @@ func securityContexts(profile string) (*corev1.PodSecurityContext, *corev1.Secur
 		}
 		return pod, ctr
 	}
+}
+
+// runtimeClassFor returns the sandboxed RuntimeClass for UNTRUSTED (fork) daemons when one is
+// configured, else nil (trusted daemons use the cluster default runtime — runc — for full speed).
+func runtimeClassFor(bp *bkov1.BuildProject, cfg Config) *string {
+	if cfg.SandboxRuntimeClass != "" && router.IsForkKey(bp.Spec.Key) {
+		return ptr(cfg.SandboxRuntimeClass)
+	}
+	return nil
 }
 
 func ptr[T any](v T) *T { return &v }

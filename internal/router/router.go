@@ -126,6 +126,12 @@ func ForkKey(canonicalKey string) string {
 	return "fork" + canonicalKey
 }
 
+// IsForkKey reports whether a key belongs to an untrusted fork daemon (built by ForkKey). Used to
+// apply tighter isolation (e.g. a sandboxed runtime) to untrusted builds only.
+func IsForkKey(key string) bool {
+	return strings.HasPrefix(key, "fork")
+}
+
 // CloneKey is the key of the i-th fan-out clone of a project (M5). Distinct from the canonical
 // and fork keys, so each clone is an independent sibling daemon seeded from the snapshot.
 func CloneKey(canonicalKey string, i int) string {
