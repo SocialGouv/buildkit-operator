@@ -5,10 +5,12 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"flag"
 	"net/http"
+	"os"
 	"time"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
@@ -50,7 +52,7 @@ func main() {
 	)
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context to target (empty = current-context)")
 	flag.StringVar(&cfg.Namespace, "namespace", "buildkit-operator", "namespace the daemons run in")
-	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.18.2-rootless", "buildkitd image (vanilla)")
+	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.22.0-rootless", "buildkitd image (vanilla)")
 	flag.StringVar(&cfg.CompanionImage, "companion-image", "ghcr.io/socialgouv/buildkit-operator-companion:dev", "companion sidecar image")
 	flag.StringVar(&cfg.DaemonCertsSecret, "daemon-certs-secret", "buildkit-daemon-certs", "mTLS server certs secret")
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
@@ -67,6 +69,10 @@ func main() {
 	healthPort := flag.Int("health-port", 8080, "companion health port")
 	flag.DurationVar(&routeWait, "route-wait", 180*time.Second, "max wait for a daemon to become Ready on /route")
 	leaderElect := flag.Bool("leader-elect", false, "enable leader election for HA (run >1 replica; only the leader reconciles)")
+	// Bearer-token auth for the /route API. Sourced from an env var (not a flag default visible in the
+	// pod spec / process list) so it can come from a mounted Secret. Empty = no auth (in-cluster only).
+	authToken := os.Getenv("BUILDKIT_OPERATOR_AUTH_TOKEN")
+	maxBuildSec := flag.Int("max-build-seconds", 7200, "safety net: inflight builds older than this stop pinning a daemon warm (a missed /complete won't leak a hot daemon forever)")
 	// S3 cold cache as a PROJECT policy: buildd hands the per-project cache reference to clients on
 	// /route (no creds on the wire); the creds live on the daemons via --s3-creds-secret.
 	flag.StringVar(&cfg.S3CredsSecret, "s3-creds-secret", "", "Secret with AWS_ACCESS_KEY_ID/SECRET, mounted as env on the daemons for the s3 cold cache")
@@ -103,10 +109,11 @@ func main() {
 	}
 
 	if err := (&controller.BuildProjectReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		Cfg:           cfg,
-		KeepSnapshots: *keepSnaps,
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		Cfg:             cfg,
+		KeepSnapshots:   *keepSnaps,
+		MaxBuildSeconds: *maxBuildSec,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller")
 		panic(err)
@@ -116,6 +123,7 @@ func main() {
 		c: mgr.GetClient(), cfg: cfg, addr: apiListen, wait: routeWait,
 		coldStartSem: make(chan struct{}, *maxCold), gatewayHost: gatewayHost,
 		s3Bucket: *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
+		authToken: authToken,
 	}); err != nil {
 		log.Error(err, "unable to add route server")
 		panic(err)
@@ -144,6 +152,23 @@ type routeServer struct {
 	s3Bucket   string
 	s3Region   string
 	s3Endpoint string
+	// authToken, when non-empty, is required as `Authorization: Bearer <token>` on every API call.
+	// Empty = no auth (in-cluster only; do NOT expose /route off-cluster without a token).
+	authToken string
+}
+
+// authorized reports whether a request carries the configured bearer token (constant-time compare).
+// When no token is configured, every request is allowed (in-cluster default).
+func (s *routeServer) authorized(r *http.Request) bool {
+	if s.authToken == "" {
+		return true
+	}
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if len(h) <= len(prefix) || h[:len(prefix)] != prefix {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(h[len(prefix):]), []byte(s.authToken)) == 1
 }
 
 // cacheFor returns the project's cold-cache reference (prefix = the key) when an S3 bucket is
@@ -169,6 +194,7 @@ func (s *routeServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/route", s.handleRoute)
 	mux.HandleFunc("/prewarm", s.handlePrewarm)
+	mux.HandleFunc("/complete", s.handleComplete)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	srv := &http.Server{Addr: s.addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -184,9 +210,13 @@ func (s *routeServer) Start(ctx context.Context) error {
 	return nil
 }
 
-// decodeReq enforces POST and decodes a RouteRequest, writing the HTTP error itself. Returns
+// decodeReq enforces auth + POST and decodes a RouteRequest, writing the HTTP error itself. Returns
 // ok=false when the caller should return immediately — the shared preamble for the POST handlers.
-func decodeReq(w http.ResponseWriter, r *http.Request) (router.RouteRequest, bool) {
+func (s *routeServer) decodeReq(w http.ResponseWriter, r *http.Request) (router.RouteRequest, bool) {
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return router.RouteRequest{}, false
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return router.RouteRequest{}, false
@@ -214,7 +244,7 @@ func canonicalSpec(req router.RouteRequest) bkov1.BuildProjectSpec {
 // handleRoute resolves the project key, ensures a BuildProject exists, waits for the
 // daemon to be Ready, and returns the mTLS endpoint to build against.
 func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeReq(w, r)
+	req, ok := s.decodeReq(w, r)
 	if !ok {
 		return
 	}
@@ -247,7 +277,10 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.touchLastBuild(ctx, key)
+	// Mark a build in flight: keeps the daemon pinned warm for the whole build (not just IdleTimeoutSec
+	// from now), and is released by the client's /complete call. The reconciler ignores inflight older
+	// than --max-build-seconds, so a missed /complete can't leak a hot daemon forever.
+	s.addInflight(ctx, key, +1)
 
 	if s.ready(ctx, key) { // warm: no cold-start gating
 		respond()
@@ -335,7 +368,7 @@ func (s *routeServer) waitReady(ctx context.Context, key string) error {
 // returns immediately — it does NOT wait for readiness; it just masks the future attach latency
 // (bench: isolated attach ~19s p50, so pre-warming on push hides it for the CI build that follows).
 func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeReq(w, r)
+	req, ok := s.decodeReq(w, r)
 	if !ok {
 		return
 	}
@@ -345,20 +378,49 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.touchLastBuild(r.Context(), key)
+	s.addInflight(r.Context(), key, 0) // touch LastBuildTime without counting an inflight build
 	w.WriteHeader(http.StatusAccepted)
-	writeJSON(w, router.RouteResponse{Key: key, Endpoint: router.Endpoint(key, s.cfg.Namespace, s.cfg.Port), Namespace: s.cfg.Namespace, Cache: s.cacheFor(key)})
+	writeJSON(w, router.RouteResponse{Key: key, Endpoint: s.endpointFor(key), Namespace: s.cfg.Namespace, Cache: s.cacheFor(key)})
 }
 
-// touchLastBuild marks the project active now, which keeps/brings desiredReplicas to 1. It re-Gets
-// and retries on conflict: an earlier version did a single Status().Update and ignored the 409 when
-// it raced the reconciler, leaving LastBuildTime unset so the project scaled straight back to 0.
-func (s *routeServer) touchLastBuild(ctx context.Context, key string) {
+// handleComplete releases an inflight build counted by /route (the client calls it when buildx exits,
+// success or fail), keyed by the resolved key /route returned. It is best-effort: a missed call is
+// bounded by the reconciler's --max-build-seconds safety net, which stops stale inflight from pinning
+// a daemon warm forever.
+func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Key == "" {
+		http.Error(w, "bad request: need {\"key\":\"...\"}", http.StatusBadRequest)
+		return
+	}
+	s.addInflight(r.Context(), req.Key, -1)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// addInflight adjusts Status.InflightBuilds by delta (floored at 0) and stamps LastBuildTime now. It
+// re-Gets and retries on conflict: a single Status().Update that lost a 409 race with the reconciler
+// would leave the count wrong, so the project could scale down mid-build (or never scale down).
+func (s *routeServer) addInflight(ctx context.Context, key string, delta int32) {
 	_ = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var bp bkov1.BuildProject
 		if err := s.c.Get(ctx, types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp); err != nil {
 			return err
 		}
+		n := bp.Status.InflightBuilds + delta
+		if n < 0 {
+			n = 0
+		}
+		bp.Status.InflightBuilds = n
 		now := metav1.Now()
 		bp.Status.LastBuildTime = &now
 		return s.c.Status().Update(ctx, &bp)

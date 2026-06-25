@@ -38,27 +38,15 @@ companion:
 # Pinned to a release (NOT master) for reproducible builds across the fleet.
 # Rootless variant by default to minimise breakout surface.
 buildkit:
-  image: moby/buildkit:v0.18.2-rootless
+  image: moby/buildkit:v0.22.0-rootless
   # gRPC port each per-project Service exposes (TCP + mTLS).
   port: 1234
 
 # --- Per-project daemon defaults --------------------------------------------
-# These seed the BuildProject defaults the controller applies when a project
-# does not override them. They mirror the +kubebuilder:default markers on
-# BuildProjectSpec so chart and CRD stay in agreement.
-defaults:
-  # OVH Managed Kubernetes gen2 high-speed Cinder class. On gen2, throughput
-  # scales with size, so size cache volumes for bandwidth, not just capacity.
-  storageClass: csi-cinder-high-speed-gen2
-  # Default cache volume size in GiB for a (project, arch).
-  cacheVolumeGi: 60
-
-# securityProfile for the per-project buildkitd pods:
-#   rootless   — non-root UID 1000, needs seccompProfile: Unconfined (default).
-#   userns     — kubelet-assigned UID via UserNamespacesSupport feature gate.
-#   privileged — last resort if admission policy blocks the above.
-# See deploy/README.md for the Kyverno caveat around seccompProfile: Unconfined.
-securityProfile: rootless
+# NOTE: the per-project defaults (storageClass, cacheVolumeGi, tier, idleTimeoutSec, securityProfile)
+# are NOT set here — buildd has no flags for them. They are enforced by the CRD's +kubebuilder:default
+# markers (and mirrored by applyDefaults in the controller). To change a default, edit the CRD/BuildProject,
+# or set the field per-project on the BuildProject CR. Putting them here would be silently ignored.
 
 # Snapshot class used by the controller for VolumeSnapshot-based cache seed/durability (M3).
 # OVH ships csi-cinder-snapclass-v1 (at-rest) and csi-cinder-snapclass-in-use-v1 (in-use); the
@@ -104,6 +92,7 @@ mirror:
   upstream: https://registry-1.docker.io
   image: registry:2
   storage: 20Gi
+  storageClass: "" # empty = csi-cinder-high-speed-gen2
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
@@ -173,12 +162,20 @@ service:
   port: 8080
   type: ClusterIP
 
-# Names of the mTLS Secrets minted by deploy/cert/create-certs.sh. The daemon
-# Secret is mounted by per-project daemons (the controller wires it in); the
-# client Secret is mounted by buildd so it can dial daemons over mTLS.
+# Names of the mTLS Secrets minted by deploy/cert/create-certs.sh. The daemon Secret is mounted by
+# per-project daemons (the controller wires its NAME into each StatefulSet). buildd itself does NOT
+# dial daemons (it only reads StatefulSet status via the API), so it mounts no client cert; the client
+# Secret is distributed to CI runners (the `build` CLI / Action), not to buildd.
 certs:
   daemonSecretName: buildkit-daemon-certs
   clientSecretName: buildkit-client-certs
+
+# Optional bearer-token auth for the buildd /route API. REQUIRED if you expose the buildd Service
+# off-cluster (service.type: LoadBalancer) — otherwise anyone reaching /route can spin up daemons.
+# Create a Secret with key `token`, set its name here; buildd reads it as $BUILDKIT_OPERATOR_AUTH_TOKEN
+# and CI passes the same value (build --token / BUILDKIT_OPERATOR_TOKEN). Empty = no auth (in-cluster only).
+auth:
+  tokenSecret: "" # k8s Secret name holding key `token`
 
 # Optional node scheduling controls for the buildd pod.
 nodeSelector: {}

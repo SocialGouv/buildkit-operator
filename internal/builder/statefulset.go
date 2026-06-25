@@ -20,7 +20,7 @@ import (
 // Config holds the cluster-wide defaults injected by buildd.
 type Config struct {
 	Namespace           string // namespace the daemons run in
-	BuildkitImage       string // rootless image, e.g. moby/buildkit:v0.18.2-rootless
+	BuildkitImage       string // rootless image, e.g. moby/buildkit:v0.22.0-rootless
 	CompanionImage      string // our sidecar image (must bundle buildctl)
 	DaemonCertsSecret   string // mTLS server certs (wildcard SAN) shared by all daemons
 	BuildkitdConfigMap  string // ConfigMap holding buildkitd.toml (gc config)
@@ -67,6 +67,7 @@ const (
 	rootlessRunDir  = "/run/user/1000"
 	privilegedData  = "/var/lib/buildkit"
 	privilegedSock  = "unix:///run/buildkit/buildkitd.sock"
+	privilegedRun   = "/run/buildkit"
 	cacheVolName    = "cache"
 )
 
@@ -124,9 +125,12 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 	name := router.DaemonName(bp.Spec.Key)
 	replicas := int32(1)
 
-	dataDir, sockAddr := rootlessDataDir, rootlessSock
+	dataDir, sockAddr, runDir := rootlessDataDir, rootlessSock, rootlessRunDir
 	if bp.Spec.SecurityProfile == bkov1.ProfilePrivileged {
-		dataDir, sockAddr = privilegedData, privilegedSock
+		// The privileged daemon writes its socket under /run/buildkit, not /run/user/1000 — the
+		// shared `run` emptyDir must be mounted there in BOTH containers so the companion's buildctl
+		// probe can reach the socket (otherwise /readyz never goes ready and the pod never becomes Ready).
+		dataDir, sockAddr, runDir = privilegedData, privilegedSock, privilegedRun
 	}
 
 	podSec, daemonSec := securityContexts(bp.Spec.SecurityProfile)
@@ -143,7 +147,7 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: cacheVolName, MountPath: dataDir},
 			{Name: "certs", MountPath: "/certs", ReadOnly: true},
-			{Name: "run", MountPath: rootlessRunDir},
+			{Name: "run", MountPath: runDir},
 		},
 	}
 	if bp.Spec.SecurityProfile != bkov1.ProfilePrivileged {
@@ -176,7 +180,7 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: cacheVolName, MountPath: dataDir, ReadOnly: true}, // statfs for inode backstop
-				{Name: "run", MountPath: rootlessRunDir},
+				{Name: "run", MountPath: runDir},
 			},
 		}
 		containers = append(containers, companion)

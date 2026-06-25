@@ -112,7 +112,7 @@ helm install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operato
 ## Security profile & the Kyverno caveat
 
 The per-project daemons default to **rootless** buildkit
-(`securityProfile: rootless`, image `moby/buildkit:v0.18.2-rootless`). Rootless
+(`securityProfile: rootless`, image `moby/buildkit:v0.22.0-rootless`). Rootless
 buildkit needs `seccompProfile: Unconfined` on the daemon pod (it manages its own
 user-namespaced sandbox).
 
