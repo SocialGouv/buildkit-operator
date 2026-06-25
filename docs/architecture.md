@@ -7,7 +7,7 @@ the daemon's content store, snapshots, and bbolt metadata are vanilla.
 
 ```mermaid
 flowchart LR
-    ci["CI runner<br/>build.sh / build CLI"]
+    ci["CI runner<br/>GitHub Action / build CLI"]
     subgraph ns["Kubernetes namespace: buildkit-operator"]
         buildd["buildd (Deployment ×2, HA)<br/>reconciler (leader) + /route /prewarm (all)"]
         gw["gateway<br/>shared SNI router (1 LB)"]
@@ -29,11 +29,11 @@ as a **pure function**, shared verbatim by the CLI and the control plane so they
 |---|---|---|
 | `ProjectKey(repo, name, target, arch)` | `"p" + sha256(normRepo [\x00 n:name] \x00 normTarget \x00 normArch)[:16]` | the canonical cache identity |
 | `ForkKey(canonicalKey)` | `"fork" + key` | an **ephemeral, isolated** daemon for untrusted/fork PRs |
-| `CloneKey(canonicalKey, i)` | `"c" + i + key` | the i-th **CoW clone** for fan-out (M5) |
+| `CloneKey(canonicalKey, i)` | `"c" + i + key` | the i-th **CoW clone** for fan-out |
 | `CachePVCName(key)` | `"cache-buildkitd-" + key + "-0"` | the StatefulSet's `volumeClaimTemplate` PVC |
 | `EndpointHost(host, port)` | `tcp://host:port` | the deterministic `<daemon>.<gateway-host>` endpoint for off-cluster CI via the shared SNI gateway |
 
-Design points proven out in this session:
+Design points:
 
 - **The key is coarse on purpose** — no branch, no commit, no build context. Two concurrent builds
   and a build an hour later all converge to the same daemon, so they share layers and cache mounts.
@@ -59,21 +59,21 @@ controller-runtime loop. Per object it converges:
 1. **StatefulSet-of-1 + Service + PVC** — rendered by [`internal/builder`](../internal/builder) with
    the rootless security profile and the gen2 `volumeClaimTemplate`. The Service is the stable mTLS
    endpoint `:1234`.
-2. **`desiredReplicas`** — tier- and idle-aware **scale-to-zero** (M2). When a `warm`/`cold` project
+2. **`desiredReplicas`** — tier- and idle-aware **scale-to-zero**. When a `warm`/`cold` project
    goes idle past `idleTimeoutSec`, it scales the StatefulSet to 0 **but keeps the PVC** — so waking
    up is an attach, not a restore. `hot` never scales to zero.
-3. **`maybeSnapshot`** — periodic **in-use** `VolumeSnapshot` (M3) on the `snapshotEverySec`
+3. **`maybeSnapshot`** — periodic **in-use** `VolumeSnapshot` on the `snapshotEverySec`
    cadence, using OVH's in-use snapclass so the daemon does **not** need to scale to zero to be
    snapshotted. Old snapshots are pruned to `--keep-snapshots`.
-4. **`reconcileFanout`** — when `spec.fanout > 0` (M5), materializes N **CoW clone** daemons
+4. **`reconcileFanout`** — when `spec.fanout > 0`, materializes N **CoW clone** daemons
    (`CloneKey`) from the latest snapshot — vertical-first scaling for a saturated project. The clone
-   spec comes from the **shared derivation policy** `buildkit-operatorv1.DeriveChild(parent, parentSnapshot,
+   spec comes from the **shared derivation policy** `bkov1.DeriveChild(parent, parentSnapshot,
    CloneChild, key)` — the *same* function the `/route` fork path uses (with `ForkChild`), so a
    fan-out clone and a fork daemon can never drift in how they inherit storage/security and seed
    from the parent snapshot.
 5. **Status** — `phase` (Pending/Warm/Idle/Scaling/Failed), `replicas`, `endpoint`, `lastSnapshot`.
-   Status is only written when it actually changes (a busy-loop guard learned the hard way —
-   unconditional status writes re-trigger reconcile forever).
+   Status is only written when it actually changes — unconditional status writes would re-trigger
+   reconcile in a loop.
 
 Metrics emitted: `buildkit_operator_routes_total`, `buildkit_operator_route_duration_seconds`,
 `buildkit_operator_coldstarts_inflight`, `buildkit_operator_scale_events_total`, `buildkit_operator_snapshots_total`.
@@ -89,9 +89,9 @@ Lease). Two roles, split deliberately:
   `NeedLeaderElection() = false`, so a routing request is served whether it lands on the leader or a
   follower. Routing is read-mostly (ensure-or-wait); only the leader mutates.
 
-Verified live: `buildkit-operator-buildd` reports `2/2` ready and the `buildkit-operator-buildd.buildkit-operator.socialgouv.github.io` Lease is
-held by one of the two pods. Kill the leader and the follower takes the Lease; `/route` never stops
-serving.
+`buildkit-operator-buildd` reports `2/2` ready and the
+`buildkit-operator-buildd.buildkit-operator.socialgouv.github.io` Lease is held by one of the two
+pods. Kill the leader and the follower takes the Lease; `/route` never stops serving.
 
 ## The shared SNI gateway (off-cluster CI)
 

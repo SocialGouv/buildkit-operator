@@ -9,8 +9,8 @@ fast path is local; durability and cold-start resilience are added without slowi
 | **Durable** | `VolumeSnapshot` (in-use snapclass) | per project | restore = an attach | point-in-time copies of the warm PVC, for DR / new cluster / CoW fan-out |
 | **Cold / distributed** | **S3** (buildx `type=s3`) | shared across daemons & clusters | network | **layers only** (build-step results) — the cross-daemon sharing BuildKit otherwise can't do |
 
-The warm PVC is **retained across scale-to-zero** (M2), so an idle project wakes by re-attaching its
-own cache, not by rebuilding. Snapshots (M3) make that cache survive the PVC itself. S3 is the layer
+The warm PVC is **retained across scale-to-zero**, so an idle project wakes by re-attaching its
+own cache, not by rebuilding. Snapshots make that cache survive the PVC itself. S3 is the layer
 that lets a **brand-new or wiped** daemon avoid a from-scratch build.
 
 ## The S3 cold cache
@@ -31,8 +31,8 @@ flowchart LR
 
 buildkit-operator does **not** deploy or bundle an object store. It **consumes** an S3-compatible bucket the
 same way it consumes a container registry — you provide it. In production that is **OVH Object
-Storage** (`s3.<region>.io.cloud.ovh.net`); for the autonomous proof in this session it was a
-throwaway MinIO. There is no MinIO in the architecture; it was a test backend.
+Storage** (`s3.<region>.io.cloud.ovh.net`). The validation used a throwaway in-cluster MinIO as a
+test backend; there is no MinIO in the architecture.
 
 ### S3 is a **project policy**, configured once on buildd — not on every CI caller
 
@@ -50,7 +50,7 @@ flags, no env, no secrets on the client side):
 - **The AWS credentials live on the daemon pods**, not on the wire and not on the runner: a k8s
   Secret (`--s3-creds-secret`, Helm `s3.credsSecret`) holding `AWS_ACCESS_KEY_ID` /
   `AWS_SECRET_ACCESS_KEY`, mounted as env on the daemons. buildkit's s3 backend falls back to the
-  daemon's AWS env when the client passes no creds — which it now never does.
+  daemon's AWS env when the client passes no creds — which the client never does.
 
 ```
 # on buildd / the Helm chart (the bucket config + creds for the cold cache)
@@ -63,13 +63,12 @@ flags, no env, no secrets on the client side):
 ### The daemon does the S3 I/O — the runner never touches S3
 
 With the `buildx` **remote** driver, cache export/import for `type=s3` runs **inside `buildkitd`**,
-not in the client. The client only passes the (credential-free) reference through. Consequences
-proven this session:
+not in the client. The client only passes the (credential-free) reference through. Consequences:
 
 - The S3 endpoint is resolved **daemon-side**, so it can be an **in-cluster** address
-  (`minio.buildkit-operator.svc:9000`) that the external GitHub-hosted runner cannot even reach. The runner
-  never opens an S3 connection. In the example CI log:
-  `#8 importing cache manifest from s3:12475883348330026593` — the in-cluster daemon did it.
+  (`minio.buildkit-operator.svc:9000`) that an external GitHub-hosted runner cannot even reach. The runner
+  never opens an S3 connection — the example CI log shows the in-cluster daemon doing it:
+  `#8 importing cache manifest from s3:…`.
 - S3 credentials live on the **daemon pods** (a k8s Secret mounted as AWS env), never on the runner
   and never on the wire; rotating them is a Secret change in the cluster, not a CI-secret change.
 
@@ -107,12 +106,13 @@ Reading:
   a cache eviction. buildkit-operator **retains the PVC across scale-to-zero**, so cold is *rarer* than on a
   service that drops local cache on rebalancing — and S3 covers the rest.
 
-End-to-end proof: `socialgouv/buildkit-operator-example` CI run `28126430796` (green) on a stock
-GitHub-hosted runner exported and imported its layer cache through the in-cluster daemon to S3.
+The [`socialgouv/buildkit-operator-example`](https://github.com/SocialGouv/buildkit-operator-example)
+CI exercises this on a stock GitHub-hosted runner: it exports and imports its layer cache through the
+in-cluster daemon to S3.
 
 ## Why this matters versus the shared service
 
-The existing `buildkit-service` has **no** S3 (and no registry) cache layer — verified by grepping
-its chart. Every cold pod there (HPA scale-up, consistent-hash rebalance, restart) pays the full
-from-scratch path. S3 is precisely the cold-start answer it lacks. See
+The existing `buildkit-service` has **no** S3 (and no registry) cache layer. Every cold pod there
+(HPA scale-up, consistent-hash rebalance, restart) pays the full from-scratch path. S3 is precisely
+the cold-start answer it lacks. See
 [comparison-buildkit-service.md](comparison-buildkit-service.md) and [performance.md](performance.md).

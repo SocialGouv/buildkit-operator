@@ -20,7 +20,7 @@ securityContext:
   appArmorProfile: { type: Unconfined }   # without this: "failed to share mount point: permission denied"
 ```
 
-Symptoms when this is wrong (both hit and fixed during bring-up):
+Symptoms when this is wrong:
 
 - `allowPrivilegeEscalation: false` ⇒ `newuidmap: Could not set caps` ⇒ crash-loop.
 - missing `appArmorProfile: Unconfined` ⇒ `failed to share mount point: permission denied`.
@@ -42,9 +42,8 @@ The fabrique OVH platform ships a Kyverno `ClusterPolicy` (`add-custom-mas-secur
    fix: the exemption is scoped to a dedicated build namespace, and the pods are still non-root.
 2. Switch `securityProfile` to `userns`/`privileged` (worse — a genuine privilege increase).
 
-> Operational note: during this session the exemption was applied **live** to unblock testing (an
-> explicitly-authorized one-off). The **durable** fix is to add the namespace to the policy's
-> exclude list **through GitOps**, not a live `kubectl edit`. See
+> Operational note: apply the exemption **through GitOps** — add the namespace to the policy's
+> exclude list, not via a live `kubectl edit` (an undocumented live edit is config drift). See
 > [operations.md](operations.md#kyverno-exemption).
 
 The buildkit-operator memory captures this as a reusable platform fact: *Kyverno blocks rootless buildkit;
@@ -87,7 +86,7 @@ isolation**, which a single shared `buildkitd` cannot offer:
 | Risk on a shared daemon | buildkit-operator |
 |---|---|
 | **Cross-project cache poisoning** — any project's build can write cache that another project reads. | Each `(project, arch)` gets its **own daemon and its own PVC**. There is no shared writable cache to poison across projects. |
-| **Untrusted fork PRs** run with the same cache-write access as trusted builds. | `untrusted: true` routes to a `ForkKey` daemon: **ephemeral, seeded read-only from the project snapshot, with no write-back**. A malicious fork cannot poison the project's warm cache. The fork spec comes from the shared `DeriveChild(parent, snapshot, ForkChild, key)` policy — the *same* derivation the M5 fan-out uses (`CloneChild`), so isolation behaviour can't silently diverge between the two paths. |
+| **Untrusted fork PRs** run with the same cache-write access as trusted builds. | `untrusted: true` routes to a `ForkKey` daemon: **ephemeral, seeded read-only from the project snapshot, with no write-back**. A malicious fork cannot poison the project's warm cache. The fork spec comes from the shared `DeriveChild(parent, snapshot, ForkChild, key)` policy — the *same* derivation the fan-out uses (`CloneChild`), so isolation behaviour can't silently diverge between the two paths. |
 | **Noisy-neighbour / contention** — one heavy build starves others sharing the daemon. | Dedicated daemon per project; no sharing of CPU/store with unrelated builds. |
 | **mTLS endpoint is a single shared trust domain.** | Per-daemon Service; the daemon cert can be scoped, and fork daemons are separate endpoints. |
 

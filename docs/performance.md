@@ -24,7 +24,7 @@ route successive builds to different pods (cache miss).
 
 **Context:** a heavier Node build (`npm install` of express/lodash/typescript/webpack/react/axios/
 commander/jest **as a layer**, plus `apk add build-base git python3 make g++`), on **fresh** daemons
-so "cold" means an empty local store. The S3 backend was an in-cluster MinIO; layers exported with
+so "cold" means an empty local store. The S3 backend is an in-cluster MinIO; layers exported with
 `--cache-to type=s3,mode=max`, imported with `--cache-from type=s3`.
 
 | Daemon state | without S3 | with S3 | delta |
@@ -50,7 +50,7 @@ One-time seed (first cold build that fills the bucket): ≈ 60–76 s. Full anal
 
 - Single-cluster, single-run, shared test cluster — treat as order-of-magnitude, not SLA.
 - The S3 numbers depend on bucket locality and object size; OVH Object Storage in-region will differ
-  from the in-cluster MinIO used for the proof.
+  from the in-cluster MinIO test backend.
 - buildkit-operator carries a **cold-start** cost the always-on shared service does not: provisioning a fresh
   daemon is ≈ 90 s (image pull + rootless init + PVC attach). That is mitigated by the warm pool,
   `/prewarm`, PVC retention across scale-to-zero, and S3 — see [benchmarks-phase0.md](benchmarks-phase0.md).

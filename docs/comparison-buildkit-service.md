@@ -1,8 +1,8 @@
 # buildkit-operator vs the shared `buildkit-service`
 
 A side-by-side with the existing BuildKit service running in the fabrique infra (namespace
-`buildkit-service` on `ovh-prod`), gathered by read-only inspection of its live workloads and chart.
-The goal is an honest accounting — what each design wins, and where they are simply the same.
+`buildkit-service` on `ovh-prod`), based on its live workloads and chart. The goal is an honest
+accounting — what each design wins, and where they are simply the same.
 
 ## What `buildkit-service` is
 
@@ -53,9 +53,8 @@ A **shared pool** of rootless buildkit pods:
   this (warm pool, `/prewarm`, PVC retention, S3) but does not eliminate it.
 - **Simplicity** — a StatefulSet + HPA + consistent-hash is less machinery than a CRD + reconciler +
   snapshots + fan-out + a gateway.
-- **Fixed, known surface** — a stable set of endpoints. (buildkit-operator is now also fixed and small — 2
-  LBs via the shared SNI gateway — so this gap has largely closed; the remaining edge is just less
-  moving infrastructure.)
+- **Fixed, known surface** — a stable set of endpoints. (buildkit-operator is also fixed and small — 2
+  LBs via the shared SNI gateway — so the remaining edge here is just less moving infrastructure.)
 
 ## What is the same (don't oversell)
 

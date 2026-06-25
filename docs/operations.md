@@ -89,7 +89,7 @@ warm-pool/idle-timeout tuning); `buildkit_operator_coldstart_seconds` isolates t
 
 ```bash
 kubectl -n buildkit-operator get buildproject          # PHASE (Warm/Idle/...), REPLICAS, ENDPOINT per project
-kubectl -n buildkit-operator get volumesnapshot        # durability snapshots (M3)
+kubectl -n buildkit-operator get volumesnapshot        # durability snapshots
 kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd -f
 ```
 
@@ -107,7 +107,7 @@ kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd -f
 ## S3 cold cache (optional, external) — a buildd policy
 
 buildkit-operator does **not** deploy an object store; point it at OVH Object Storage (prod) or any
-S3-compatible endpoint. The cold cache is now configured **once on buildd**, not per build job:
+S3-compatible endpoint. The cold cache is configured **once on buildd**, not per build job:
 
 ```bash
 # the bucket Secret (AWS creds) the DAEMONS use for the s3 backend
@@ -124,9 +124,8 @@ helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operato
 `/route` then returns the per-project cache reference (bucket/region/endpoint, prefix = the project
 key, **no credentials**) and the client applies it automatically — CI callers configure **zero** S3.
 The daemons do the S3 I/O and read the AWS creds from `credsSecret` (mounted as env). For a
-self-hosted proof backend you can run MinIO in-cluster (Deployment + PVC + a `buildcache` bucket) —
-that is what the validation used; it is not part of the chart. See
-[storage-and-cold-cache.md](storage-and-cold-cache.md).
+self-hosted test backend you can run MinIO in-cluster (Deployment + PVC + a `buildcache` bucket); it
+is not part of the chart. See [storage-and-cold-cache.md](storage-and-cold-cache.md).
 
 ## Tear down cleanly (shared cluster hygiene)
 

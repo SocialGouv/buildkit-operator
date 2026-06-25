@@ -5,66 +5,81 @@ to build, then point `docker buildx` there over mTLS.* Anything that can run `do
 reach the buildkit-operator endpoints works the same — a GitHub-hosted runner, a GitLab runner, Jenkins, or a
 laptop. There is **nothing** GitHub/ARC-specific.
 
-## The contract: `build.sh`
+## GitHub Action (recommended path)
 
-The reference integration is a ~40-line POSIX script
-([`buildkit-operator-example/build.sh`](https://github.com/SocialGouv/buildkit-operator-example)):
+On GitHub, the integration is one step — `setup-buildx`, routing, mTLS, the warm cache, and the S3
+cold cache are all handled by the Action:
 
-```sh
-# 1. route: ask buildd for this project's daemon endpoint
-endpoint=$(curl -fsS -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/route" \
-  -H 'content-type: application/json' \
-  -d "{\"repo\":\"$REPO\",\"arch\":\"$ARCH\"}" | jq -r .endpoint)
-
-# 2. point buildx at it over mTLS (absolute cert paths — buildx reads them at create time)
-docker buildx create --name buildkit-operator --driver remote \
-  --driver-opt "cacert=$certs/ca.pem,cert=$certs/cert.pem,key=$certs/key.pem" "$endpoint" --use
-
-# 3. build — the S3 cold cache (if any) comes back in the /route response and is applied automatically
-exec docker buildx build --builder buildkit-operator $extra "$@"
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest        # stock hosted runner — no self-hosted runner, no ARC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: socialgouv/buildkit-operator@v1
+        with:
+          buildd-url: ${{ vars.BUILDKIT_OPERATOR_BUILDD_URL }}
+          ca:   ${{ secrets.BUILDKIT_OPERATOR_CA }}
+          cert: ${{ secrets.BUILDKIT_OPERATOR_CERT }}
+          key:  ${{ secrets.BUILDKIT_OPERATOR_KEY }}
+          tags: ghcr.io/org/app:${{ github.sha }}
+          push: "true"
 ```
 
-Environment:
+Inputs:
 
-| Var | Meaning |
+| Input | Meaning |
 |---|---|
-| `BUILDKIT_OPERATOR_BUILDD_URL` | external buildd `/route` endpoint (LB/Ingress) |
-| `BUILDKIT_OPERATOR_CERTS_DIR` | dir holding `ca.pem cert.pem key.pem` (client mTLS material) |
-| `REPO` / `ARCH` | project identity (defaults: git origin / `amd64`) |
-| `NAME` | optional monorepo component (segments the repo into per-image daemons; empty = whole repo) |
+| `buildd-url` | external buildd `/route` endpoint (LoadBalancer/Ingress) — **required** |
+| `ca` / `cert` / `key` | client mTLS material, PEM — **required** |
+| `tags` | image tag(s), whitespace-separated — **required** |
+| `repo` | project identity = the cache key (default: the GitHub repository) |
+| `name` | optional monorepo component (per-image daemon + cache; empty = whole repo) |
+| `arch` | `amd64` \| `arm64` (default `amd64`) |
+| `context` / `file` / `target` | build context, Dockerfile path, target stage |
+| `push` | push the result to the registry (default `false`) |
 
 The cold cache needs **no** client config: it is a project policy on buildd, returned by `/route`
 and applied automatically (see [the S3 section below](#s3-from-ci--zero-client-config) and
 [storage-and-cold-cache.md](storage-and-cold-cache.md)).
 
-## Worked example: GitHub-hosted runner
+## The CI-agnostic core: `scripts/build.sh`
 
-[`socialgouv/buildkit-operator-example`](https://github.com/SocialGouv/buildkit-operator-example) runs on a **stock
-`ubuntu-latest` runner** — no self-hosted runner, no ARC:
+The Action is a thin wrapper around `scripts/build.sh` — a ~40-line POSIX script that any CI able to
+run `docker buildx` + `curl` + `jq` can call directly:
 
-```yaml
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    env:
-      BUILDKIT_OPERATOR_BUILDD_URL: ${{ vars.BUILDKIT_OPERATOR_BUILDD_URL }}
-      BUILDKIT_OPERATOR_CERTS_DIR: certs
-      REPO: ${{ github.repository }}
-      # no S3 config here — the cold cache is a buildd policy, returned by /route and applied automatically
-    steps:
-      - uses: actions/checkout@v4
-      - run: |                                   # client mTLS material from repo secrets (base64)
-          mkdir -p certs
-          printf '%s' "${{ secrets.BUILDKIT_OPERATOR_CA }}"   | base64 -d > certs/ca.pem
-          printf '%s' "${{ secrets.BUILDKIT_OPERATOR_CERT }}" | base64 -d > certs/cert.pem
-          printf '%s' "${{ secrets.BUILDKIT_OPERATOR_KEY }}"  | base64 -d > certs/key.pem
-      - uses: docker/setup-buildx-action@v3
-      - run: sh build.sh -t buildkit-operator-example:${{ github.sha }} .
+```sh
+# 1. route: ask buildd for this project's daemon endpoint
+endpoint=$(curl -fsS -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/route" \
+  -H 'content-type: application/json' \
+  -d "{\"repo\":\"$REPO\",\"name\":\"$NAME\",\"arch\":\"$ARCH\"}" | jq -r .endpoint)
+
+# 2. point buildx at it over mTLS (cert files written from BUILDKIT_OPERATOR_CA/CERT/KEY)
+docker buildx create --name buildkit-operator --driver remote \
+  --driver-opt "cacert=$certs/ca.pem,cert=$certs/cert.pem,key=$certs/key.pem" "$endpoint" --use
+
+# 3. build — the S3 cold cache (if any) comes back in the /route response and is applied automatically
+exec docker buildx build --builder buildkit-operator …
 ```
 
-The repo also carries a `.gitlab-ci.yml` calling the **same** `build.sh` — the proof the integration
-is CI-agnostic. A green run on the hosted runner (`28126430796`) routed to the example daemon, built,
-and exercised the S3 cache.
+It reads its inputs from the environment (the Action maps its inputs to these):
+
+| Var | Meaning |
+|---|---|
+| `BUILDKIT_OPERATOR_BUILDD_URL` | external buildd `/route` endpoint (LB/Ingress) |
+| `BUILDKIT_OPERATOR_CA` / `_CERT` / `_KEY` | client mTLS material, PEM |
+| `REPO` / `ARCH` | project identity (defaults: git origin / `amd64`) |
+| `NAME` | optional monorepo component (segments the repo into per-image daemons; empty = whole repo) |
+| `TAGS` / `PUSH` | image tag(s), whitespace-separated / push the result |
+| `BUILD_CONTEXT` / `DOCKERFILE` / `TARGET` | build context, Dockerfile path, target stage |
+
+## CI-agnostic by construction
+
+The same `scripts/build.sh` runs unchanged on a GitLab runner, Jenkins, or a laptop — only the way
+the mTLS material reaches the job differs. The
+[`socialgouv/buildkit-operator-example`](https://github.com/SocialGouv/buildkit-operator-example)
+repo demonstrates both a stock GitHub-hosted `ubuntu-latest` job and a `.gitlab-ci.yml` calling the
+same script, routing to the example daemon and exercising the S3 cache.
 
 ## Public exposure (why and how)
 
@@ -108,10 +123,15 @@ client adds `--cache-from/--cache-to type=s3` automatically. The **daemon** perf
 The example CI log shows the daemon doing it: `importing cache manifest from s3:…`. See
 [storage-and-cold-cache.md](storage-and-cold-cache.md).
 
-## Live endpoints (this deployment, `ovh-dev`)
+## Endpoint shape
 
-- buildd `/route`: `http://57.128.55.102:8080`
-- shared SNI gateway LB `:1234` — fronts every daemon; `/route` returns
+A deployment exposes exactly two endpoints, regardless of project count:
+
+- buildd `/route`: the `buildkit-operator-buildd` LoadBalancer on `:8080` (set as
+  `BUILDKIT_OPERATOR_BUILDD_URL`).
+- shared SNI gateway LB on `:1234` — fronts every daemon; `/route` returns
   `tcp://<daemon>.<gateway-host>:1234` (e.g. `buildkitd-pa081c22c974da132.<gateway-host>` for
-  `SocialGouv/buildkit-operator-example` → key `pa081c22c974da132`)
-- S3 (in-cluster MinIO, proof backend): `http://minio.buildkit-operator.svc:9000`, bucket `buildcache`
+  `SocialGouv/buildkit-operator-example` → key `pa081c22c974da132`).
+
+The S3 cold cache, when enabled, is a buildd-side policy pointing at an S3-compatible endpoint (OVH
+Object Storage in production); CI callers never address it.
