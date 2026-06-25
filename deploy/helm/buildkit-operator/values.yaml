@@ -227,6 +227,14 @@ certManager:
 auth:
   tokenSecret: "" # k8s Secret name holding key `token`
 
+# Routing-API rate limit (token bucket shared across /route, /prewarm, /complete) — caps how fast a
+# single caller / compromised token can churn BuildProjects + Cinder attaches. Both keys are passed
+# through only when set; omit them to keep buildd's built-in defaults (50 req/s, burst 100). Set
+# rateLimit to 0 to disable (NOT recommended once /route is on a public LoadBalancer).
+api:
+  rateLimit: 50
+  rateBurst: 100
+
 # Optional node scheduling controls for the buildd pod.
 nodeSelector: {}
 tolerations: []

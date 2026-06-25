@@ -62,7 +62,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.Get(ctx, req.NamespacedName, &bp); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	applyDefaults(&bp)
+	bp.ApplyDefaults()
 
 	desired := desiredReplicas(&bp, time.Now(), r.maxBuildAge())
 	// Reap an idle ephemeral fork daemon: delete its cache PVC + the fork BuildProject (the owner-ref
@@ -84,6 +84,17 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	ready := live.Status.ReadyReplicas
 
 	newPhase := phaseFrom(desired, ready)
+	condMsg := fmt.Sprintf("replicas desired=%d ready=%d", desired, ready)
+	// A daemon that wants to be up (desired=1) but isn't ready is normally just Scaling — but if its
+	// pod is wedged (CrashLoopBackOff, image pull error, OOM, Failed) it would sit in Scaling forever
+	// and never surface the failure. Promote that to Failed so `kubectl get bp` shows it; we keep
+	// requeuing below so it self-heals once the pod recovers.
+	if newPhase == "Scaling" {
+		if reason := r.daemonFailure(ctx, bp.Spec.Key); reason != "" {
+			newPhase = "Failed"
+			condMsg = "daemon pod unhealthy: " + reason
+		}
+	}
 	newEndpoint := router.Endpoint(bp.Spec.Key, r.Cfg.Namespace, r.Cfg.Port)
 	readyCond := boolToCond(ready >= 1)
 	prev := meta.FindStatusCondition(bp.Status.Conditions, "Ready")
@@ -100,7 +111,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		Type:    "Ready",
 		Status:  readyCond,
 		Reason:  newPhase,
-		Message: fmt.Sprintf("replicas desired=%d ready=%d", desired, ready),
+		Message: condMsg,
 	})
 	if changed {
 		if err := r.Status().Update(ctx, &bp); err != nil {
@@ -120,6 +131,13 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	requeue := time.Duration(0)
 	if desired == 1 && bp.Spec.Tier != bkov1.TierHot {
 		requeue = idleRecheckInterval(&bp)
+	}
+	// While a daemon is coming up or wedged (Scaling/Failed), poll so readiness/recovery is observed
+	// even on the hot tier — the controller doesn't watch Pods, so a CrashLoop wouldn't re-trigger us.
+	if desired == 1 && ready < 1 {
+		if requeue == 0 || scalingRecheckInterval < requeue {
+			requeue = scalingRecheckInterval
+		}
 	}
 	if snapAfter > 0 && (requeue == 0 || snapAfter < requeue) {
 		requeue = snapAfter
@@ -287,28 +305,40 @@ func phaseFrom(desired, ready int32) string {
 	}
 }
 
-// applyDefaults guards against BuildProjects created without CRD/apiserver defaulting (the fake
-// client in tests, or objects built in-process). It MUST mirror the +kubebuilder:default markers in
-// api/v1alpha1/buildproject_types.go — keep the two in sync.
-func applyDefaults(bp *bkov1.BuildProject) {
-	if bp.Spec.StorageClass == "" {
-		bp.Spec.StorageClass = "csi-cinder-high-speed-gen2"
+// scalingRecheckInterval is how often a not-yet-ready daemon is re-reconciled so readiness (or a stuck
+// pod transitioning into Failed, then recovering) is observed even without a Pod watch.
+const scalingRecheckInterval = 30 * time.Second
+
+// daemonFailure returns a short reason when the project's daemon pod is wedged (so the phase can go
+// Failed instead of an indefinite Scaling), or "" when it's merely still starting. It inspects the
+// pod the StatefulSet manages: terminal pod phase, or a container blocked in a back-off / pull / OOM
+// waiting reason. Best-effort — a list error just yields "" (treated as "still scaling").
+func (r *BuildProjectReconciler) daemonFailure(ctx context.Context, key string) string {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.InNamespace(r.Cfg.Namespace), client.MatchingLabels{projectKeyLabel: key}); err != nil {
+		return ""
 	}
-	if bp.Spec.CacheVolumeGi == 0 {
-		bp.Spec.CacheVolumeGi = 60
+	// blockedReasons are container waiting states that won't clear on their own (vs the transient
+	// ContainerCreating / PodInitializing that a healthy cold start passes through).
+	blockedReasons := map[string]bool{
+		"CrashLoopBackOff": true, "ImagePullBackOff": true, "ErrImagePull": true,
+		"CreateContainerError": true, "CreateContainerConfigError": true, "InvalidImageName": true,
 	}
-	if bp.Spec.Tier == "" {
-		bp.Spec.Tier = bkov1.TierWarm
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.Status.Phase == corev1.PodFailed {
+			return "pod " + p.Name + " phase=Failed"
+		}
+		for _, cs := range p.Status.ContainerStatuses {
+			if w := cs.State.Waiting; w != nil && blockedReasons[w.Reason] {
+				return cs.Name + ": " + w.Reason
+			}
+			if t := cs.LastTerminationState.Terminated; t != nil && t.Reason == "OOMKilled" {
+				return cs.Name + ": OOMKilled"
+			}
+		}
 	}
-	if bp.Spec.IdleTimeoutSec == 0 {
-		// Mirrors +kubebuilder:default=900 (bench B). Without this, an undefaulted warm project
-		// scales to zero immediately after every build (desiredReplicas skips the LastBuildTime
-		// window when IdleTimeoutSec==0). 0 is unreachable via the API (omitempty => defaulted).
-		bp.Spec.IdleTimeoutSec = 900
-	}
-	if bp.Spec.SecurityProfile == "" {
-		bp.Spec.SecurityProfile = bkov1.ProfileRootless
-	}
+	return ""
 }
 
 func boolToCond(b bool) metav1.ConditionStatus {

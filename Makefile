@@ -50,10 +50,12 @@ test:
 tidy:
 	go mod tidy
 
-## fmt/vet
-.PHONY: fmt vet
+## fmt/vet/lint
+.PHONY: fmt vet lint
 fmt:; go fmt ./...
 vet:; go vet ./...
+## lint: golangci-lint (config .golangci.yml); same gate as CI.
+lint:; go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...
 
 ## install: apply CRDs to the current kube context.
 .PHONY: install

@@ -1,0 +1,34 @@
+version: "2"
+
+# Standard linter set (errcheck, govet, ineffassign, staticcheck, unused) plus misspell. Tuned so the
+# gate stays meaningful without flagging idiomatic patterns (best-effort Close/Fprint on already-failing
+# paths) or kubebuilder boilerplate.
+linters:
+  default: standard
+  enable:
+    - misspell
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (net.Conn).Close
+        - (*net.TCPConn).Close
+        - (*net.TCPConn).CloseWrite
+        - (io.WriteCloser).Close
+        - (*os.File).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    staticcheck:
+      # -ST1011: drainSeconds is a time.Duration with a unit suffix (kept: it mirrors the flag name).
+      # -QF1008: embedded-field selector style is a non-issue here.
+      checks:
+        - all
+        - -ST1011
+        - -QF1008
+  exclusions:
+    rules:
+      # scheme.Builder is the standard kubebuilder API-package registration helper (SA1019 deprecation
+      # is advisory; the replacement pulls heavier deps into the api package).
+      - path: api/v1alpha1/groupversion_info.go
+        text: "SA1019"

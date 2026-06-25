@@ -109,5 +109,14 @@ isolation**, which a single shared `buildkitd` cannot offer:
   when you don't need internet-facing builds.
 - **The live exemption is platform state.** The Kyverno exemption must be tracked in GitOps; an
   undocumented live edit is config drift.
+- **S3 cold-cache credentials live on the daemon as env vars.** When `s3.credsSecret` is set, the AWS
+  key/secret are injected as `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` on the buildkitd container (so
+  CI callers never carry them — see [storage-and-cold-cache.md](storage-and-cold-cache.md)). Any build
+  step that runs *inside that daemon* can read `/proc/1/environ` and exfiltrate them. For **trusted**
+  projects this is acceptable (the daemon is single-tenant). For **untrusted fork PRs** it is **not**:
+  do not point fork daemons at a writable/shared S3 bucket, and run them under `sandbox.runtimeClass`
+  (Kata), where the microVM hides the host's `/proc` and isolates the credentials. The fork-isolation
+  default (read-only seed, no write-back) already prevents cache poisoning; this note is specifically
+  about credential exposure when the cold cache is enabled.
 
 See [comparison-buildkit-service.md](comparison-buildkit-service.md) for the full side-by-side.

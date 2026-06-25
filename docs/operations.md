@@ -159,6 +159,17 @@ kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd -f
   cluster / migration). S3 cold cache covers the rebuild-avoidance side
   ([storage-and-cold-cache.md](storage-and-cold-cache.md)).
 
+## Troubleshooting — common failure modes
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| `BuildProject` PHASE stuck **`Failed`** | The daemon pod is wedged: `CrashLoopBackOff`, image pull error, OOMKilled, or pod `Failed`. The reconciler promotes a not-ready daemon to `Failed` (and keeps re-checking) so it surfaces instead of sitting in `Scaling`. | `kubectl -n buildkit-operator describe bp <key>` — the `Ready` condition message names the container + reason (e.g. `buildkitd: CrashLoopBackOff`). Then `kubectl -n buildkit-operator logs <pod> -c buildkitd --previous`. OOMKilled ⇒ raise `spec.resources`; ImagePullBackOff ⇒ check the image tag / pull secret. It self-heals to `Warm` once the pod recovers. |
+| PHASE stays **`Scaling`** for a while on first build | Normal cold start: provision + Cinder attach (~30 s, bench B). Not `Failed` because the pod is still legitimately starting. | Wait; watch `kubectl -n buildkit-operator get pod -l <project-key-label>`. If it never goes Ready and isn't `Failed`, inspect events — likely scheduling (no node matches `daemonScheduling`) or a stuck PVC attach. |
+| `/route` returns **504** to CI | The daemon didn't become Ready within `--route-wait` (cold start slower than the client/route timeout), or cold-start backpressure (`--max-cold-starts`) queued it. | Raise the client route timeout (Action `route-wait`) and/or `--max-cold-starts`; pre-warm on push (`/prewarm`) to hide attach latency. Check `buildkit_operator_coldstarts_inflight` near the cap. |
+| `/route` or `/prewarm` returns **429** | The routing-API rate limit tripped (`--api-rate-limit` / `--api-rate-burst`). A genuine CI burst or a misbehaving/compromised caller. | If legitimate, raise `--api-rate-limit`. If not, the audit log identifies the caller (below). Set `--api-rate-limit=0` to disable (not recommended on a public LB). |
+| Off-cluster builds fail TLS (cert error) right after enabling the gateway | The daemon cert has no `*.<gateway.host>` SAN. buildd logs a **`WARNING: daemon cert has no SAN covering the gateway domain`** at startup when `gateway.host` is set. | Regenerate the cert with the SAN and re-apply (see [Expose publicly](#expose-publicly-for-external-ci-runners) step 2), then `rollout restart` the daemons. Confirm the boot warning is gone. |
+| Want to know **who** built / called `/route` | Each `/route` logs the resolved key, repo, `untrusted` flag and caller IP (`X-Forwarded-For` first hop behind the LB, else peer); auth failures log as `unauthorized`. The bearer token is never logged. | `kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd | grep -E '"route"|unauthorized'`. |
+
 ## S3 cold cache (optional, external) — a buildd policy
 
 buildkit-operator does **not** deploy an object store; point it at OVH Object Storage (prod) or any

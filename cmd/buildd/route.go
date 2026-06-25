@@ -1,0 +1,169 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
+	"github.com/socialgouv/buildkit-operator/internal/metrics"
+	"github.com/socialgouv/buildkit-operator/internal/router"
+	"k8s.io/apimachinery/pkg/types"
+)
+
+// decodeReq enforces the rate limit, auth and POST, then decodes a RouteRequest, writing the HTTP
+// error itself. Returns ok=false when the caller should return immediately — the shared preamble for
+// the POST handlers.
+func (s *routeServer) decodeReq(w http.ResponseWriter, r *http.Request) (router.RouteRequest, bool) {
+	if !s.allow(w) {
+		return router.RouteRequest{}, false
+	}
+	if !s.authorized(r) {
+		s.log.Info("unauthorized", "path", r.URL.Path, "remote", clientIP(r))
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return router.RouteRequest{}, false
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return router.RouteRequest{}, false
+	}
+	var req router.RouteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return router.RouteRequest{}, false
+	}
+	return req, true
+}
+
+// handleRoute resolves the project key, ensures a BuildProject exists, waits for the
+// daemon to be Ready, and returns the mTLS endpoint to build against.
+func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.decodeReq(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	start := time.Now()
+	spec := canonicalSpec(req)
+	canonical := spec.Key
+	key, result := canonical, "warm"
+	if req.Untrusted {
+		// Fork PR: ephemeral daemon derived read-only from the canonical snapshot — distinct key, so
+		// it can never poison the canonical cache (anti cache-poisoning). Same derivation policy as
+		// fan-out clones, via bkov1.DeriveChild.
+		key, result = router.ForkKey(canonical), "untrusted"
+		seed := ""
+		var canon bkov1.BuildProject
+		if err := s.c.Get(ctx, types.NamespacedName{Name: canonical, Namespace: s.cfg.Namespace}, &canon); err == nil {
+			seed = canon.Status.LastSnapshot
+		}
+		spec = bkov1.DeriveChild(spec, seed, bkov1.ForkChild, key)
+	}
+	// Audit trail: every build access is logged with the resolved key + caller, so a security review
+	// can reconstruct who built what (the bearer token is never logged).
+	s.log.Info("route", "key", key, "repo", spec.Repo, "untrusted", req.Untrusted, "remote", clientIP(r))
+
+	respond := func() {
+		metrics.RoutesTotal.WithLabelValues(result).Inc()
+		metrics.RouteDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
+		writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.endpointFor(key), Namespace: s.cfg.Namespace, Cache: s.cacheFor(key)})
+	}
+
+	if err := s.ensureBuildProject(ctx, spec); err != nil {
+		metrics.RoutesTotal.WithLabelValues("error").Inc()
+		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Mark a build in flight: keeps the daemon pinned warm for the whole build (not just IdleTimeoutSec
+	// from now), and is released by the client's /complete call. The reconciler ignores inflight older
+	// than --max-build-seconds, so a missed /complete can't leak a hot daemon forever.
+	s.addInflight(ctx, key, +1)
+	// The client only calls /complete after a SUCCESSFUL /route, so on any error path below we must
+	// release the inflight here — otherwise a failed cold start (504/499) pins the daemon warm for up
+	// to --max-build-seconds. respond() (the success path) cancels this by setting routed=true; the
+	// release uses a fresh context because the request ctx is already cancelled on the 499 path.
+	routed := false
+	defer func() {
+		if !routed {
+			s.addInflight(context.Background(), key, -1)
+		}
+	}()
+
+	if s.ready(ctx, key) { // warm: no cold-start gating
+		routed = true
+		respond()
+		return
+	}
+	if result == "warm" {
+		result = "cold"
+	}
+	// Backpressure: cap concurrent Cinder attaches (bench C: bursts serialize into minutes).
+	select {
+	case s.coldStartSem <- struct{}{}:
+		defer func() { <-s.coldStartSem }()
+	case <-ctx.Done():
+		metrics.RoutesTotal.WithLabelValues("error").Inc()
+		http.Error(w, "client gone", 499)
+		return
+	}
+	metrics.ColdStartsInflight.Inc()
+	defer metrics.ColdStartsInflight.Dec()
+
+	coldStart := time.Now()
+	if err := s.waitReady(ctx, key); err != nil {
+		metrics.RoutesTotal.WithLabelValues("error").Inc()
+		http.Error(w, "daemon not ready: "+err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+	metrics.ColdStartSeconds.Observe(time.Since(coldStart).Seconds())
+	routed = true
+	respond()
+}
+
+// handlePrewarm scales a project toward warm in anticipation (git push / PR webhook) and
+// returns immediately — it does NOT wait for readiness; it just masks the future attach latency
+// (bench: isolated attach ~19s p50, so pre-warming on push hides it for the CI build that follows).
+func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.decodeReq(w, r)
+	if !ok {
+		return
+	}
+	spec := canonicalSpec(req)
+	key := spec.Key
+	if err := s.ensureBuildProject(r.Context(), spec); err != nil {
+		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.addInflight(r.Context(), key, 0) // touch LastBuildTime without counting an inflight build
+	w.WriteHeader(http.StatusAccepted)
+	writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.endpointFor(key), Namespace: s.cfg.Namespace, Cache: s.cacheFor(key)})
+}
+
+// handleComplete releases an inflight build counted by /route (the client calls it when buildx exits,
+// success or fail), keyed by the resolved key /route returned. It is best-effort: a missed call is
+// bounded by the reconciler's --max-build-seconds safety net, which stops stale inflight from pinning
+// a daemon warm forever.
+func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
+	if !s.allow(w) {
+		return
+	}
+	if !s.authorized(r) {
+		s.log.Info("unauthorized", "path", r.URL.Path, "remote", clientIP(r))
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Key == "" {
+		http.Error(w, "bad request: need {\"key\":\"...\"}", http.StatusBadRequest)
+		return
+	}
+	s.addInflight(r.Context(), req.Key, -1)
+	w.WriteHeader(http.StatusNoContent)
+}

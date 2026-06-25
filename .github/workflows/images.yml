@@ -22,9 +22,24 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write # keyless cosign signing via GitHub OIDC
 
 jobs:
+  # Gate: never push an image built from code that fails vet/tests. ci.yml covers PRs and main pushes,
+  # but NOT tag pushes (releases), so the gate has to live here too.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - run: go test -race ./... -count=1
+
   images:
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -50,7 +65,8 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
 
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: cmd/${{ matrix.component }}/Dockerfile
@@ -63,3 +79,15 @@ jobs:
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Keyless signature (Sigstore/Fulcio, GitHub OIDC identity) so consumers can verify the image is
+      # genuinely from this workflow — provenance/SBOM are tamper-evident only once the digest is signed.
+      # Verify: cosign verify ghcr.io/socialgouv/buildkit-operator-<component>@<digest> \
+      #   --certificate-identity-regexp 'https://github.com/SocialGouv/buildkit-operator/.+' \
+      #   --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: cosign sign
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/buildkit-operator-${{ matrix.component }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
