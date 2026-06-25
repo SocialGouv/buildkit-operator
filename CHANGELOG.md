@@ -1,5 +1,12 @@
 
 
+## [0.2.1](https://github.com/SocialGouv/buildkit-operator/compare/v0.2.0...v0.2.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* harden routing, lifecycle and gateway (full review remediation) ([1b22e91](https://github.com/SocialGouv/buildkit-operator/commit/1b22e91174e9b8f498818de7ef4bf979c67f54f7))
+
 ## [0.2.0](https://github.com/SocialGouv/buildkit-operator/compare/v1...v0.2.0) (2026-06-25)
 
 
