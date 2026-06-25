@@ -91,7 +91,7 @@ Lease). Two roles, split deliberately:
   `NeedLeaderElection() = false`, so a routing request is served whether it lands on the leader or a
   follower. Routing is read-mostly (ensure-or-wait); only the leader mutates.
 
-Verified live: `buildkit-operator-buildd` reports `2/2` ready and the `buildkit-operator-buildd.buildkit-operator.io` Lease is
+Verified live: `buildkit-operator-buildd` reports `2/2` ready and the `buildkit-operator-buildd.buildkit-operator.socialgouv.github.io` Lease is
 held by one of the two pods. Kill the leader and the follower takes the Lease; `/route` never stops
 serving.
 

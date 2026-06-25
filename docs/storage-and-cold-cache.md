@@ -15,6 +15,18 @@ that lets a **brand-new or wiped** daemon avoid a from-scratch build.
 
 ## The S3 cold cache
 
+A warm daemon **exports** its layers to S3; a cold daemon (new project, lost PVC, new cluster)
+**imports** them instead of rebuilding from scratch — the daemon does the I/O with its own creds, so
+the client (and CI) configure nothing.
+
+```mermaid
+flowchart LR
+    warm["warm daemon"] -- "export layers (cache-to)" --> s3[("S3 bucket<br/>OVH Object Storage")]
+    s3 -- "import layers (cache-from)<br/>≈ 4.5s vs 41.8s from scratch" --> cold["cold daemon<br/>(new / lost PVC / new cluster)"]
+    buildd["buildd"] -. "/route hands the bucket ref<br/>(prefix = project key, NO creds)" .-> warm
+    buildd -. "bucket ref (no creds)" .-> cold
+```
+
 ### It is external and opt-in — buildkit-operator is an S3 *client*, not an S3 *provider*
 
 buildkit-operator does **not** deploy or bundle an object store. It **consumes** an S3-compatible bucket the

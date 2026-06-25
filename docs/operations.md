@@ -71,7 +71,7 @@ Details: [ci-integration.md](ci-integration.md#the-certificate-san-requirement).
 
 ```bash
 kubectl -n buildkit-operator get deploy buildkit-operator-buildd          # want 2/2
-kubectl -n buildkit-operator get lease buildkit-operator-buildd.buildkit-operator.io -o jsonpath='{.spec.holderIdentity}'
+kubectl -n buildkit-operator get lease buildkit-operator-buildd.buildkit-operator.socialgouv.github.io -o jsonpath='{.spec.holderIdentity}'
 kubectl -n buildkit-operator delete pod <leader-pod>             # follower takes the Lease; /route keeps serving
 ```
 

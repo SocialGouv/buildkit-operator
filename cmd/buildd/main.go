@@ -86,7 +86,7 @@ func main() {
 		Scheme:                  scheme,
 		Metrics:                 metricsserver.Options{BindAddress: *metricsAddr}, // M4 observability
 		LeaderElection:          *leaderElect,                                     // HA: only the leader reconciles
-		LeaderElectionID:        "buildkit-operator-buildd.buildkit-operator.io",
+		LeaderElectionID:        "buildkit-operator-buildd.buildkit-operator.socialgouv.github.io",
 		LeaderElectionNamespace: cfg.Namespace,
 	})
 	if err != nil {

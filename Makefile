@@ -20,7 +20,7 @@ manifests:
 		paths="./api/...;./internal/..." \
 		output:crd:artifacts:config=deploy/crd \
 		output:rbac:artifacts:config=deploy/rbac
-	cp deploy/crd/buildkit-operator.io_*.yaml deploy/helm/buildkit-operator/crds/   # helm installs CRDs from chart crds/
+	cp deploy/crd/buildkit-operator.socialgouv.github.io_*.yaml deploy/helm/buildkit-operator/crds/   # helm installs CRDs from chart crds/
 
 ## docker-build: build the buildd + companion images.
 .PHONY: docker-build

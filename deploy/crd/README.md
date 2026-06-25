@@ -10,8 +10,8 @@ make manifests
 which runs `controller-gen crd ... output:crd:artifacts:config=deploy/crd`
 (see the project `Makefile`). Expect:
 
-- `buildkit-operator.io_buildprojects.yaml`
-- `buildkit-operator.io_builds.yaml`
+- `buildkit-operator.socialgouv.github.io_buildprojects.yaml`
+- `buildkit-operator.socialgouv.github.io_builds.yaml`
 
 Apply them directly with `kubectl apply -f deploy/crd`, or copy them into
 `deploy/helm/buildkit-operator/crds/` to have Helm install them with the chart (see that

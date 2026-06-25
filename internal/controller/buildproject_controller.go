@@ -39,10 +39,10 @@ type BuildProjectReconciler struct {
 	KeepSnapshots int // durability snapshots retained per project (default 3)
 }
 
-const projectKeyLabel = "buildkit-operator.io/project-key"
+const projectKeyLabel = "buildkit-operator.socialgouv.github.io/project-key"
 
-// +kubebuilder:rbac:groups=buildkit-operator.io,resources=buildprojects,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=buildkit-operator.io,resources=buildprojects/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=buildkit-operator.socialgouv.github.io,resources=buildprojects,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=buildkit-operator.socialgouv.github.io,resources=buildprojects/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services;persistentvolumeclaims;configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
@@ -143,7 +143,7 @@ func (r *BuildProjectReconciler) ensureService(ctx context.Context, bp *bkov1.Bu
 // templateHashAnnotation records the hash of the desired pod template on the StatefulSet, so the
 // reconciler can detect a real spec change (image/env/args/profile) without diffing against
 // server-defaulted fields (which would churn forever).
-const templateHashAnnotation = "buildkit-operator.io/template-hash"
+const templateHashAnnotation = "buildkit-operator.socialgouv.github.io/template-hash"
 
 // ensureStatefulSet creates the STS if absent, else converges the two things we drive: the replica
 // count, and the pod template when its desired hash changes (a buildkit-image bump, S3 creds, etc. —
@@ -364,7 +364,7 @@ func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.
 		clone = bkov1.BuildProject{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: ckey, Namespace: r.Cfg.Namespace,
-				Labels: map[string]string{projectKeyLabel: bp.Spec.Key, "buildkit-operator.io/clone-of": bp.Spec.Key},
+				Labels: map[string]string{projectKeyLabel: bp.Spec.Key, "buildkit-operator.socialgouv.github.io/clone-of": bp.Spec.Key},
 			},
 			Spec: bkov1.DeriveChild(bp.Spec, bp.Status.LastSnapshot, bkov1.CloneChild, ckey),
 		}

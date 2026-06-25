@@ -71,6 +71,16 @@ StatefulSet/Service/PVC/VolumeSnapshot/Lease verbs it actually uses.
 
 ## Where buildkit-operator is actually *more* secure than a shared daemon
 
+Fork-PR isolation in one picture — an untrusted build is seeded read-only from the project snapshot
+and can never write back:
+
+```mermaid
+flowchart TB
+    pr["untrusted fork PR<br/>(/route untrusted: true)"] --> fork["fork daemon · ForkKey<br/>ephemeral, distinct cache key"]
+    canon["canonical daemon<br/>(warm project cache)"] -. "read-only seed<br/>(latest snapshot)" .-> fork
+    fork -. "✗ NO write-back" .-x canon
+```
+
 The daemon posture is identical to a shared service; the improvement is in **blast radius and
 isolation**, which a single shared `buildkitd` cannot offer:
 

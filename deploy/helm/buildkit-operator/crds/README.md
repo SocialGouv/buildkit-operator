@@ -23,8 +23,8 @@ cp deploy/crd/*.yaml deploy/helm/buildkit-operator/crds/
 
 Expected CRDs:
 
-- `buildkit-operator.io_buildprojects.yaml`
-- `buildkit-operator.io_builds.yaml`
+- `buildkit-operator.socialgouv.github.io_buildprojects.yaml`
+- `buildkit-operator.socialgouv.github.io_builds.yaml`
 
 This directory intentionally ships only this README in version control; the
 generated CRD YAMLs are produced by the build, mirroring how `deploy/crd/` is

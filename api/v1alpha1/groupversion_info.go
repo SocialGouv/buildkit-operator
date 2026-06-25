@@ -4,7 +4,7 @@
 // A BuildProject is the cache identity + lifecycle handle for one such daemon.
 //
 // +kubebuilder:object:generate=true
-// +groupName=buildkit-operator.io
+// +groupName=buildkit-operator.socialgouv.github.io
 package v1alpha1
 
 import (
@@ -13,7 +13,7 @@ import (
 )
 
 // GroupVersion is the group/version used to register these objects.
-var GroupVersion = schema.GroupVersion{Group: "buildkit-operator.io", Version: "v1alpha1"}
+var GroupVersion = schema.GroupVersion{Group: "buildkit-operator.socialgouv.github.io", Version: "v1alpha1"}
 
 var (
 	// SchemeBuilder registers the API types with a runtime.Scheme.

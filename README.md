@@ -50,20 +50,24 @@ sits at the wrong layer and does not deliver shared cache mounts.
 
 ## Architecture
 
-```
-   client (CI)                          Kubernetes (one namespace)
-  ┌───────────┐   POST /route        ┌──────────────────────────────────────────┐
-  │  build    │ ───────────────────► │  buildd (Deployment)                      │
-  │  (CLI)    │ ◄─── endpoint ────── │   • controller-runtime manager            │
-  └─────┬─────┘                      │   • reconciles BuildProject -> daemon     │
-        │ buildx remote (mTLS)       │   • HTTP API: /route /prewarm             │
-        ▼                            │   • Prometheus /metrics                   │
-  ┌───────────────────────┐         └───────────────┬──────────────────────────┘
-  │ StatefulSet-of-1       │  reconciles            │ creates / scales
-  │  buildkitd (vanilla)   │ ◄──────────────────────┘
-  │  + companion (sidecar) │        one per (project, arch)
-  │  + gen2 PVC (warm cache)│       Service :1234 (TCP + mTLS)
-  └───────────────────────┘
+```mermaid
+flowchart LR
+    ci["CI runner<br/>build.sh / build CLI"]
+    s3[("S3 cold cache<br/>OVH Object Storage")]
+    subgraph ns["Kubernetes namespace: buildkit-operator"]
+        buildd["<b>buildd</b> — control plane (HA)<br/>reconciler + /route /prewarm API"]
+        gw["<b>gateway</b><br/>shared SNI router (1 LB)"]
+        da["<b>buildkitd</b> · project A<br/>+ companion + gen2 PVC"]
+        db["<b>buildkitd</b> · project B<br/>+ companion + gen2 PVC"]
+        buildd -- "reconciles<br/>STS + Service + PVC" --> da
+        buildd -- reconciles --> db
+        gw --> da
+        gw --> db
+    end
+    ci -- "1. POST /route" --> buildd
+    ci -- "2. buildx remote (mTLS)" --> gw
+    da -. "layers" .-> s3
+    db -. "layers" .-> s3
 ```
 
 **Components** (this repo is a Go monorepo):
@@ -89,6 +93,82 @@ omitted from the hash, so single-image repos keep the exact same key (migration-
 
 ---
 
+## How it works (flows)
+
+**Warm build** — the common path: the project's daemon is already up, so the build hits a hot cache.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CI as CI runner
+    participant B as buildd
+    participant D as buildkitd (project daemon)
+    CI->>B: POST /route {repo, name, arch}
+    B->>B: ProjectKey → ensure BuildProject
+    B-->>CI: endpoint + S3 cache ref (no creds)
+    CI->>D: buildx remote build (mTLS)
+    Note over D: shares the warm layer + cache-mount cache
+    D-->>CI: image built
+```
+
+**Cold start** — first build of a project (or after the cache was lost): buildd provisions a daemon,
+rate-limited so a CI burst can't stampede the Cinder attaches.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CI as CI runner
+    participant B as buildd
+    participant K as Kubernetes
+    participant D as new daemon
+    CI->>B: POST /route
+    B->>K: create StatefulSet + Service + gen2 PVC
+    Note over B: cold-start rate-limited (--max-cold-starts)
+    K->>D: schedule pod, attach PVC (~20–30s)
+    D-->>B: Ready
+    B-->>CI: endpoint
+    CI->>D: build — rehydrate layers from S3 if configured (≈9× vs from scratch)
+    D-->>CI: image built
+```
+
+**Off-cluster CI via the gateway** — one shared SNI router fronts every daemon; mTLS stays
+end-to-end (the gateway never decrypts).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CI as External CI runner
+    participant B as buildd
+    participant G as gateway (SNI)
+    participant D as buildkitd (ClusterIP)
+    CI->>B: POST /route
+    B-->>CI: tcp://&lt;daemon&gt;.&lt;gateway-host&gt;:1234 (deterministic)
+    CI->>G: TLS ClientHello (SNI = &lt;daemon&gt;.&lt;gateway-host&gt;)
+    G->>G: peek SNI (no TLS termination)
+    G->>D: pipe to &lt;daemon&gt;.svc:1234
+    Note over CI,D: mTLS end-to-end — client-cert auth at the daemon
+    D-->>CI: image built
+```
+
+**Daemon lifecycle** — tier-aware scale-to-zero with the PVC retained, plus in-use durability
+snapshots.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: BuildProject created
+    Pending --> Warm: daemon Ready
+    Warm --> Idle: idle > IdleTimeoutSec (warm/cold tier)
+    Idle --> Warm: new build (/route or /prewarm)
+    Warm --> Warm: in-use VolumeSnapshot (durability)
+    note right of Idle
+        scaled to 0 replicas,
+        gen2 PVC retained →
+        warm cache survives the wake
+    end note
+```
+
+---
+
 ## Features (by milestone)
 
 | | Feature | Notes |
@@ -104,7 +184,7 @@ omitted from the hash, so single-image repos keep the exact same key (migration-
 ## The `BuildProject` resource
 
 ```yaml
-apiVersion: buildkit-operator.io/v1alpha1
+apiVersion: buildkit-operator.socialgouv.github.io/v1alpha1
 kind: BuildProject
 metadata:
   name: p1a2b3c4d5e6f7a8        # = spec.key

@@ -45,8 +45,8 @@ func Labels(bp *bkov1.BuildProject) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":           "buildkit-operator",
 		"app.kubernetes.io/component":      "buildkitd",
-		"buildkit-operator.io/project-key": bp.Spec.Key,
-		"buildkit-operator.io/arch":        router.NormalizeArch(bp.Spec.Arch),
+		"buildkit-operator.socialgouv.github.io/project-key": bp.Spec.Key,
+		"buildkit-operator.socialgouv.github.io/arch":        router.NormalizeArch(bp.Spec.Arch),
 	}
 }
 

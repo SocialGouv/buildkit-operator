@@ -8,15 +8,15 @@ metadata:
 rules:
   # --- buildkit-operator custom resources -------------------------------------------
   # Full lifecycle over the CRs the controller reconciles.
-  - apiGroups: ["buildkit-operator.io"]
+  - apiGroups: ["buildkit-operator.socialgouv.github.io"]
     resources: ["buildprojects", "builds"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Status subresources (write-back of observed state / conditions).
-  - apiGroups: ["buildkit-operator.io"]
+  - apiGroups: ["buildkit-operator.socialgouv.github.io"]
     resources: ["buildprojects/status", "builds/status"]
     verbs: ["get", "update", "patch"]
   # Finalizers (clean teardown of per-project daemons on CR deletion).
-  - apiGroups: ["buildkit-operator.io"]
+  - apiGroups: ["buildkit-operator.socialgouv.github.io"]
     resources: ["buildprojects/finalizers", "builds/finalizers"]
     verbs: ["update"]
 

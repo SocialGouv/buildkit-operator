@@ -46,7 +46,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - buildkit-operator.io
+  - buildkit-operator.socialgouv.github.io
   resources:
   - buildprojects
   verbs:
@@ -58,7 +58,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - buildkit-operator.io
+  - buildkit-operator.socialgouv.github.io
   resources:
   - buildprojects/status
   verbs:
