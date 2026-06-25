@@ -6,6 +6,9 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -126,20 +129,34 @@ func (r *BuildProjectReconciler) ensureService(ctx context.Context, bp *buildcat
 	} else if err != nil {
 		return err
 	}
-	if reflect.DeepEqual(existing.Spec.Ports, want.Spec.Ports) && reflect.DeepEqual(existing.Spec.Selector, want.Spec.Selector) {
+	if existing.Spec.Type == want.Spec.Type &&
+		reflect.DeepEqual(existing.Spec.Ports, want.Spec.Ports) &&
+		reflect.DeepEqual(existing.Spec.Selector, want.Spec.Selector) {
 		return nil // already in the desired state — skip the no-op write (a needless API round-trip + Service watch event every reconcile)
 	}
+	existing.Spec.Type = want.Spec.Type // converge an old per-daemon LoadBalancer down to ClusterIP (the gateway is the external path now)
 	existing.Spec.Ports = want.Spec.Ports
 	existing.Spec.Selector = want.Spec.Selector
 	return r.Update(ctx, &existing)
 }
 
-// ensureStatefulSet creates the STS if absent, else patches only the mutable bit
-// we drive (replicas). Immutable fields (volumeClaimTemplates, selector) are never
-// updated in place — that's a create-time contract.
+// templateHashAnnotation records the hash of the desired pod template on the StatefulSet, so the
+// reconciler can detect a real spec change (image/env/args/profile) without diffing against
+// server-defaulted fields (which would churn forever).
+const templateHashAnnotation = "buildcat.dev/template-hash"
+
+// ensureStatefulSet creates the STS if absent, else converges the two things we drive: the replica
+// count, and the pod template when its desired hash changes (a buildkit-image bump, S3 creds, etc. —
+// rolled onto the daemon; the retained PVC survives the restart). The immutable volumeClaimTemplates
+// and selector are never touched (k8s forbids it).
 func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *buildcatv1.BuildProject, desired int32) error {
 	want := builder.StatefulSet(bp, r.Cfg)
 	want.Spec.Replicas = &desired
+	hash := templateHash(want.Spec.Template)
+	if want.Annotations == nil {
+		want.Annotations = map[string]string{}
+	}
+	want.Annotations[templateHashAnnotation] = hash
 	if err := ctrl.SetControllerReference(bp, want, r.Scheme); err != nil {
 		return err
 	}
@@ -150,23 +167,41 @@ func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *buil
 	} else if err != nil {
 		return err
 	}
-	old := int32(0)
+
+	old := int32(1)
 	if existing.Spec.Replicas != nil {
 		old = *existing.Spec.Replicas
 	}
-	if old != desired {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Spec.Replicas = &desired
-		if err := r.Patch(ctx, &existing, patch); err != nil {
-			return err
+	templateChanged := existing.Annotations[templateHashAnnotation] != hash
+	if old == desired && !templateChanged {
+		return nil
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Spec.Replicas = &desired
+	if templateChanged {
+		existing.Spec.Template = want.Spec.Template
+		if existing.Annotations == nil {
+			existing.Annotations = map[string]string{}
 		}
-		if desired > old {
-			metrics.ScaleEvents.WithLabelValues("up").Inc()
-		} else {
-			metrics.ScaleEvents.WithLabelValues("down").Inc()
-		}
+		existing.Annotations[templateHashAnnotation] = hash
+	}
+	if err := r.Patch(ctx, &existing, patch); err != nil {
+		return err
+	}
+	if old > desired {
+		metrics.ScaleEvents.WithLabelValues("down").Inc()
+	} else if desired > old {
+		metrics.ScaleEvents.WithLabelValues("up").Inc()
 	}
 	return nil
+}
+
+// templateHash is a stable fingerprint of the DESIRED pod template (recomputed identically each
+// reconcile), so it changes only when buildcat's rendered spec changes — not on apiserver defaulting.
+func templateHash(t corev1.PodTemplateSpec) string {
+	b, _ := json.Marshal(t)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
 }
 
 // desiredReplicas is the M2 elasticity decision: the hot tier stays at 1; otherwise

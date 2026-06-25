@@ -113,6 +113,36 @@ func TestReconcile_Idempotent(t *testing.T) {
 	}
 }
 
+// A change to the rendered daemon spec (here the buildkit image) must roll the EXISTING daemon: the
+// reconciler converges the pod template, not just replicas. (Hash-gated, so unchanged reconciles
+// don't churn — the idempotent test above covers that side.)
+func TestReconcile_RollsTemplateOnChange(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildcat", "rolltest"
+	bp := &buildcatv1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierHot},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, BuildkitImage: "buildkit:v1", Port: 1234, HealthPort: 8080}}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}
+
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	r.Cfg.BuildkitImage = "buildkit:v2" // a buildkit-image bump, e.g. a chart upgrade
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	var sts appsv1.StatefulSet
+	if err := c.Get(context.Background(), types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}, &sts); err != nil {
+		t.Fatal(err)
+	}
+	if got := sts.Spec.Template.Spec.Containers[0].Image; got != "buildkit:v2" {
+		t.Errorf("daemon image = %q, want buildkit:v2 (template must converge on the existing STS)", got)
+	}
+}
+
 // M2 elasticity: the scale decision must honor tier + idle window + in-flight.
 func TestDesiredReplicas(t *testing.T) {
 	now := time.Now()
