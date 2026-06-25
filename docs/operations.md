@@ -28,6 +28,17 @@ off), `gateway.host: ""` (gateway off), images `ghcr.io/socialgouv/buildkit-oper
 Images are built and pushed by the [`images`](../.github/workflows/images.yml) workflow; a private
 registry needs a pull secret on the `default` and `buildkit-operator-buildd` ServiceAccounts.
 
+### mTLS via cert-manager (instead of mkcert)
+
+To have **cert-manager** issue and auto-renew the mTLS material instead of `create-certs.sh` (step 2),
+set `certManager.enabled=true`. The chart renders the daemon + client `Certificate`s into the same
+`certs.{daemon,client}SecretName` Secrets, and buildd is started with `--cert-manager-certs` so it
+remaps cert-manager's `tls.crt`/`tls.key`/`ca.crt` onto the `cert.pem`/`key.pem`/`ca.pem` filenames the
+daemon reads (no daemon change). With no PKI, `certManager.ca.create=true` bootstraps a self-signed CA
+(a namespaced Issuer) in the operator namespace; otherwise point `certManager.issuerRef` at your own CA
+issuer. The daemon cert covers `*.<namespace>.svc` + (when set) `*.<gateway.host>`. Distribute the
+generated **client** Secret's `tls.crt`/`tls.key`/`ca.crt` to CI (the Action's `cert`/`key`/`ca`).
+
 ## Kyverno exemption
 
 On a platform that mutates pods to `allowPrivilegeEscalation: false` (fabrique's Kyverno

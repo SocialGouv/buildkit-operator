@@ -36,6 +36,9 @@ spec:
             - --companion={{ .Values.companion.enabled }}
             - --companion-image={{ .Values.companion.image.repository }}:{{ .Values.companion.image.tag }}
             - --daemon-certs-secret={{ .Values.certs.daemonSecretName }}
+            {{- if .Values.certManager.enabled }}
+            - --cert-manager-certs=true
+            {{- end }}
             - --buildkitd-configmap={{ include "buildkit-operator.fullname" . }}-buildkitd-config
             - --snapshot-class={{ .Values.snapshotClassName }}
             - --keep-snapshots={{ .Values.snapshots.keep }}

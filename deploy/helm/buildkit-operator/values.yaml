@@ -190,6 +190,26 @@ certs:
   daemonSecretName: buildkit-daemon-certs
   clientSecretName: buildkit-client-certs
 
+# Optional: let cert-manager issue the mTLS material instead of deploy/cert/create-certs.sh (mkcert).
+# When enabled, the chart renders Certificate resources for the daemon + client Secrets above and buildd
+# remaps the daemon Secret's tls.crt/tls.key/ca.crt onto the cert.pem/key.pem/ca.pem the daemon reads
+# (--cert-manager-certs). Needs cert-manager in the cluster and a CA issuer — `ca.create` bootstraps a
+# self-signed one in this namespace if you have no PKI (the platform's only issuer is public Let's
+# Encrypt, which cannot sign a private mTLS chain).
+certManager:
+  enabled: false
+  # The issuer that signs the daemon + client certs. Empty + ca.create=true uses the bootstrapped CA.
+  issuerRef:
+    name: "" # e.g. buildkit-operator-ca (the bootstrapped Issuer) or your own CA (Cluster)Issuer
+    kind: Issuer # Issuer | ClusterIssuer
+    group: cert-manager.io
+  duration: 8760h # 1y leaf certs
+  renewBefore: 720h # 30d
+  # Bootstrap a self-signed CA (namespaced Issuer) in this namespace; mTLS then trusts that CA.
+  ca:
+    create: false
+    duration: 87600h # 10y CA root
+
 # Optional bearer-token auth for the buildd /route API. REQUIRED if you expose the buildd Service
 # off-cluster (service.type: LoadBalancer) — otherwise anyone reaching /route can spin up daemons.
 # Create a Secret with key `token`, set its name here; buildd reads it as $BUILDKIT_OPERATOR_AUTH_TOKEN

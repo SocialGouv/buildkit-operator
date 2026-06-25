@@ -1,0 +1,90 @@
+{{- if .Values.certManager.enabled }}
+{{- $fullname := include "buildkit-operator.fullname" . }}
+{{- $cm := .Values.certManager }}
+{{- /* Leaf certs use the bootstrapped CA when ca.create and no explicit issuer is given. */ -}}
+{{- $useCA := and $cm.ca.create (not $cm.issuerRef.name) }}
+{{- if and (not $useCA) (not $cm.issuerRef.name) }}
+  {{- fail "certManager.enabled: set certManager.issuerRef.name, or certManager.ca.create=true to bootstrap one" }}
+{{- end }}
+{{- $issuerName := ternary (printf "%s-ca" $fullname) $cm.issuerRef.name $useCA }}
+{{- $issuerKind := ternary "Issuer" ($cm.issuerRef.kind | default "Issuer") $useCA }}
+{{- if $cm.ca.create }}
+# --- self-signed CA bootstrapped in this namespace (use when you have no PKI) --------------------
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $fullname }}-selfsign
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-ca
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ $fullname }}-ca
+  secretName: {{ $fullname }}-ca
+  duration: {{ $cm.ca.duration }}
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: {{ $fullname }}-selfsign, kind: Issuer, group: cert-manager.io }
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $fullname }}-ca
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+spec:
+  ca: { secretName: {{ $fullname }}-ca }
+---
+{{- end }}
+# --- daemon (server) cert — mounted by every per-project daemon over mTLS ------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-daemon
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.certs.daemonSecretName }}
+  duration: {{ $cm.duration }}
+  renewBefore: {{ $cm.renewBefore }}
+  privateKey: { algorithm: ECDSA, size: 256 }
+  usages: [server auth, key encipherment, digital signature]
+  dnsNames:
+    - "*.{{ .Values.namespace }}.svc"
+    - "*.{{ .Values.namespace }}.svc.cluster.local"
+    - localhost
+    {{- if .Values.gateway.host }}
+    - "*.{{ .Values.gateway.host }}" # SNI host through the shared gateway
+    {{- end }}
+  ipAddresses: [127.0.0.1]
+  issuerRef: { name: {{ $issuerName }}, kind: {{ $issuerKind }}, group: cert-manager.io }
+---
+# --- client cert — distributed to CI runners (build CLI / Action) -------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-client
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.certs.clientSecretName }}
+  duration: {{ $cm.duration }}
+  renewBefore: {{ $cm.renewBefore }}
+  commonName: client
+  privateKey: { algorithm: ECDSA, size: 256 }
+  usages: [client auth, key encipherment, digital signature]
+  dnsNames: [client]
+  issuerRef: { name: {{ $issuerName }}, kind: {{ $issuerKind }}, group: cert-manager.io }
+{{- end }}

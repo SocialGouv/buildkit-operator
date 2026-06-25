@@ -20,16 +20,17 @@ import (
 
 // Config holds the cluster-wide defaults injected by buildd.
 type Config struct {
-	Namespace           string // namespace the daemons run in
-	BuildkitImage       string // rootless image, e.g. moby/buildkit:v0.22.0-rootless
-	CompanionImage      string // our sidecar image (must bundle buildctl)
-	DaemonCertsSecret   string // mTLS server certs (wildcard SAN) shared by all daemons
-	BuildkitdConfigMap  string // ConfigMap holding buildkitd.toml (gc config)
-	SnapshotClass       string // VolumeSnapshotClass for durability snapshots (M3)
-	Port                int32  // TCP mTLS port (1234)
-	HealthPort          int32  // companion health port (8080)
-	Companion           bool   // include the companion sidecar (default true; off needs no custom image)
-	S3CredsSecret       string // Secret with AWS_ACCESS_KEY_ID/SECRET for the s3 cold cache (env on the daemon)
+	Namespace            string // namespace the daemons run in
+	BuildkitImage        string // rootless image, e.g. moby/buildkit:v0.22.0-rootless
+	CompanionImage       string // our sidecar image (must bundle buildctl)
+	DaemonCertsSecret    string // mTLS server certs (wildcard SAN) shared by all daemons
+	CertManagerCerts     bool   // daemon certs Secret is cert-manager-issued (keys tls.crt/tls.key/ca.crt) → remap at mount to the .pem filenames buildkitd reads
+	BuildkitdConfigMap   string // ConfigMap holding buildkitd.toml (gc config)
+	SnapshotClass        string // VolumeSnapshotClass for durability snapshots (M3)
+	Port                 int32  // TCP mTLS port (1234)
+	HealthPort           int32  // companion health port (8080)
+	Companion            bool   // include the companion sidecar (default true; off needs no custom image)
+	S3CredsSecret        string // Secret with AWS_ACCESS_KEY_ID/SECRET for the s3 cold cache (env on the daemon)
 	SandboxRuntimeClass  string // RuntimeClass for UNTRUSTED (fork) daemons only (e.g. kata-clh / sysbox-runc); empty = runc
 	SandboxBuildkitImage string // NON-rootless buildkit image for sandboxed (Kata) forks; empty = derived from BuildkitImage by stripping "-rootless"
 
@@ -199,9 +200,19 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 		containers = append(containers, companion)
 	}
 
+	certsVol := corev1.SecretVolumeSource{SecretName: cfg.DaemonCertsSecret}
+	if cfg.CertManagerCerts {
+		// cert-manager only ever emits tls.crt/tls.key/ca.crt; project them onto the .pem filenames
+		// buildkitd is pointed at (--tlscert /certs/cert.pem, ...), so the daemon code stays unchanged.
+		certsVol.Items = []corev1.KeyToPath{
+			{Key: "tls.crt", Path: "cert.pem"},
+			{Key: "tls.key", Path: "key.pem"},
+			{Key: "ca.crt", Path: "ca.pem"},
+		}
+	}
 	volumes := []corev1.Volume{
 		{Name: "run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-		{Name: "certs", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: cfg.DaemonCertsSecret}}},
+		{Name: "certs", VolumeSource: corev1.VolumeSource{Secret: &certsVol}},
 	}
 	if profile != bkov1.ProfilePrivileged {
 		volumes = append(volumes, corev1.Volume{
