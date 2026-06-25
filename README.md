@@ -19,11 +19,13 @@ shared pool), a **cold daemon rehydrates ≈ 9× faster** from S3 (4.5 s vs 41.8
 - ❄️ **Scale-to-zero** — idle projects drop to 0 replicas while the gen2 PVC is **retained**, so waking up is an attach, not a rebuild. [storage →](docs/storage-and-cold-cache.md)
 - ♻️ **S3 cold cache** — a fresh or wiped daemon rehydrates layers from S3, **≈ 9× faster** than building from scratch. External and opt-in. [cold cache →](docs/storage-and-cold-cache.md)
 - 💾 **Durable snapshots** — periodic **in-use** `VolumeSnapshot`s let a project's cache survive the PVC, the pod, and the cluster (DR / migration). [storage →](docs/storage-and-cold-cache.md)
-- 🛡️ **Fork-PR isolation** — untrusted builds get an ephemeral daemon seeded **read-only**, with no write-back: anti cache-poisoning by construction. [security →](docs/security.md)
+- 🛡️ **Fork-PR isolation** — untrusted builds get an ephemeral daemon seeded **read-only** with no write-back (anti cache-poisoning), optionally inside a **Kata microVM** (`sandbox.runtimeClass`) for kernel-level isolation. [security →](docs/security.md) · [sandboxed builds →](docs/sandboxed-builds.md)
 - 🔀 **Monorepo-aware routing** — an optional component name segments one repo into per-image daemons + caches, so unrelated components never thrash a shared cache. [architecture →](docs/architecture.md)
 - 🌐 **One shared SNI gateway** — a single LoadBalancer fronts every daemon by SNI; **mTLS stays end-to-end** (the gateway terminates no TLS), instead of a public LB per daemon. [gateway →](docs/architecture.md#the-shared-sni-gateway-off-cluster-ci)
 - 📈 **Prometheus observability** — routes, route latency, cold-starts in flight, scale events, snapshots. [operations →](docs/operations.md#observe)
 - 🔌 **Zero-config CI** — drop in the [GitHub Action](#quick-start) and you are building; any CI that runs `docker buildx` works the same. [CI integration →](docs/ci-integration.md)
+- 🔏 **Supply-chain attestations** — opt into SLSA provenance + SBOM + **cosign** keyless signing; the *daemon* generates them, so it is one flag each on the CI side, verifiable against the job's OIDC identity. [CI integration →](docs/ci-integration.md#supply-chain-attestations-slsa-provenance-sbom-cosign)
+- 🔑 **Authenticated exposure** — the public `/route` API is bearer-token gated and the build path is mTLS end-to-end, so an internet-exposed control plane stays locked down. [CI integration →](docs/ci-integration.md#bearer-token-auth-for-route)
 - 🔒 **Vanilla rootless buildkit** — no fork of BuildKit, containerd, or the snapshotter; the daemon runs non-root and unprivileged. [security →](docs/security.md)
 - 🧱 **HA control plane** — `buildd` runs 2 replicas with leader election; routing is served by every replica. [architecture →](docs/architecture.md#control-plane-ha)
 
@@ -173,7 +175,10 @@ Use the GitHub Action — route, mTLS, warm cache, and the S3 cold cache are all
 
 The Action defaults `repo` to the GitHub repository (your cache key); set `name` for a monorepo
 component, `arch`, `file`, `target`, or `context` as needed. The cold cache needs **no** client
-config — it is a buildd-side policy, returned by `/route` and applied automatically.
+config — it is a buildd-side policy, returned by `/route` and applied automatically. When buildd is
+exposed off-cluster, add `token` (bearer auth); add `provenance: mode=max` / `sbom: "true"` /
+`sign: "true"` for SLSA provenance + SBOM + cosign keyless signing. Full example:
+[ci-integration.md](docs/ci-integration.md).
 
 **Any CI works.** The Action wraps `scripts/build.sh`, a CI-agnostic POSIX script (route → `buildx
 remote` over mTLS) that runs unchanged on a GitLab runner, Jenkins, or a laptop. See

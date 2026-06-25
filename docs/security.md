@@ -100,10 +100,13 @@ isolation**, which a single shared `buildkitd` cannot offer:
   the build nodes (a node-pool concern), but the per-fork wiring is built in rather than orthogonal. See
   [sandboxed-builds.md](sandboxed-builds.md) (why Kata over Sysbox/gVisor, and the cloud-hypervisor +
   ≥4-vCPU requirements under nested virt).
-- **Public exposure is one shared gateway LB.** Daemons stay `ClusterIP`; off-cluster CI reaches all
-  of them through a **single** SNI gateway LoadBalancer (not one LB per daemon), so external surface
-  is fixed and small regardless of project count. mTLS stays end-to-end — the gateway terminates no
-  TLS. Keep even that LB off (in-cluster runners only) when you don't need internet-facing builds.
+- **Public exposure is two authenticated LBs.** Off-cluster CI reaches every daemon through a
+  **single** SNI gateway LoadBalancer (not one LB per daemon); daemons stay `ClusterIP` and mTLS is
+  end-to-end (the gateway terminates no TLS), so a valid **client cert** is required to build. The
+  separate `/route` API LoadBalancer is **bearer-token** gated (`auth.tokenSecret`, constant-time
+  compared) — mandatory once it is internet-facing, since `/route` provisions daemons. External
+  surface is fixed and small regardless of project count; keep both LBs off (in-cluster runners only)
+  when you don't need internet-facing builds.
 - **The live exemption is platform state.** The Kyverno exemption must be tracked in GitOps; an
   undocumented live edit is config drift.
 

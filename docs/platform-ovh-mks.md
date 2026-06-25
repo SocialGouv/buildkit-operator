@@ -51,6 +51,20 @@ The platform ships cluster-wide Kyverno `ClusterPolicy` objects that materially 
   Operator images must be public. Note: GHCR container-package visibility cannot be flipped via the REST
   API (404) — it is a UI/manual action.
 
+## LoadBalancer idle-timeout
+
+OVH MKS LoadBalancers are OpenStack/Octavia, where the default **member-data idle timeout is 50 s**.
+That cuts two buildkit-operator paths once buildd/gateway are exposed:
+
+- a **cold** `/route` blocks while a daemon is provisioned (buildd waits up to `--route-wait`, 180 s) —
+  the LB cuts it at 50 s and the client sees `curl: (52) Empty reply from server` on the first build;
+- a build holds **one long-lived mTLS stream** through the gateway; a quiet stretch (a long `RUN` with
+  no output) is cut the same way.
+
+The chart raises both via Service annotations the OpenStack CCM honors — buildd
+`loadbalancer.openstack.org/timeout-{member,client}-data: "200000"` (> route-wait), gateway `"600000"`.
+The CCM updates the Octavia listener **in place** (no LB recreation, the external IP is preserved).
+
 ## Sandboxed (Kata) runtime on MKS
 
 - Install Kata with `kata-deploy` (Helm), `node-feature-discovery.enabled=false`, scoped to the build

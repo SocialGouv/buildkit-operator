@@ -47,21 +47,32 @@ Rationale and alternatives in [security.md](security.md#admission-policy-kyverno
 ## Expose publicly (for external CI runners)
 
 ```bash
+# the /route bearer token (REQUIRED once /route is on a public LB) — no trailing newline, so the
+# client and the Secret compare byte-for-byte (a stray "\n" is a silent 401).
+kubectl -n buildkit-operator create secret generic buildkit-operator-auth \
+  --from-literal=token="$(openssl rand -hex 32 | tr -d '\n')"
+
 helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator \
-  --set service.type=LoadBalancer \              # buildd /route reachable externally
-  --set gateway.host=builds.example.com          # shared SNI gateway: one LB fronts every daemon
+  --set service.type=LoadBalancer \                 # buildd /route reachable externally
+  --set gateway.host=builds.example.com \           # shared SNI gateway: one LB fronts every daemon
+  --set auth.tokenSecret=buildkit-operator-auth      # bearer-token auth on /route (Secret key: token)
 ```
 
 This renders the gateway Deployment + its single LoadBalancer Service, and makes buildd return
-`tcp://<daemon>.builds.example.com:1234` from `/route`. Daemons stay `ClusterIP`. Two more steps:
+`tcp://<daemon>.builds.example.com:1234` from `/route`. Daemons stay `ClusterIP`. Then:
 
-1. **Wildcard DNS** — point `*.builds.example.com` at the gateway LB's external IP.
+1. **Bearer token** — hand the `token` value to CI (Action input `token` / env
+   `BUILDKIT_OPERATOR_TOKEN`). Without auth on a public `/route`, anyone can spin up daemons.
 2. **Daemon cert SAN** — regenerate the daemon cert covering `*.builds.example.com` and re-apply the
    Secret, or daemons fail mTLS validation from outside:
    ```bash
    GATEWAY_HOST=builds.example.com deploy/cert/create-certs.sh buildkit-operator
    kubectl -n buildkit-operator apply -f deploy/cert/.certs/*-secret.yaml
    ```
+3. **Wildcard DNS** — point `*.builds.example.com` at the gateway LB IP; or, until that record
+   exists, pass the runner the gateway IP via the Action's `gateway-ip` input (escape hatch).
+   The OVH/OpenStack LB also needs its idle timeout raised — the chart does this; see
+   [platform-ovh-mks.md](platform-ovh-mks.md#loadbalancer-idle-timeout).
 
 Details: [ci-integration.md](ci-integration.md#the-certificate-san-requirement). Leave
 `gateway.host` unset if your runners are in-cluster — then there is no public daemon surface at all
