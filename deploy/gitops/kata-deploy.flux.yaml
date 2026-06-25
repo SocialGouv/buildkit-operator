@@ -1,0 +1,47 @@
+# Flux: install the upstream kata-deploy chart from its git repo (it is not published to a Helm repo),
+# scoped to the build nodepool so every node — including MKS replacements — gets Kata automatically.
+# Pair with deploy/kata/kata-clh-vcpu-tune.yaml (the ≥4-vCPU guest floor) which applies as a plain DaemonSet.
+#
+# NOTE: the chart declares a node-feature-discovery dependency. We disable it (enabled: false), but
+# Flux still resolves chart deps — ensure your cluster can reach the NFD Helm repo, or vendor the chart.
+# Argo CD users: an Application pointing at path tools/packaging/kata-deploy/helm-chart/kata-deploy with
+# the same values works equivalently.
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: kata-containers
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://github.com/kata-containers/kata-containers
+  ref:
+    tag: "3.32.0"
+  ignore: |
+    /*
+    !/tools/packaging/kata-deploy/helm-chart
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kata-deploy
+  namespace: kube-system
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: tools/packaging/kata-deploy/helm-chart/kata-deploy
+      sourceRef:
+        kind: GitRepository
+        name: kata-containers
+        namespace: flux-system
+  values:
+    node-feature-discovery:
+      enabled: false
+    nodeSelector:
+      nodepool: prod-build # the build nodepool — change to match your pool's label
+    tolerations:
+      - key: pool
+        operator: Equal
+        value: ci
+        effect: NoSchedule

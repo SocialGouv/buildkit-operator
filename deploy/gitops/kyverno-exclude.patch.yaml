@@ -1,0 +1,22 @@
+# Exclude the operator namespace from the platform's `add-custom-mas-securitycontext` ClusterPolicy.
+# That policy mutates pods to allowPrivilegeEscalation:false, which crashes ROOTLESS (canonical)
+# buildkit daemons (rootlesskit's newuidmap needs no_new_privs OFF). The policy is platform-owned, so
+# this is a Kustomize JSON6902 patch, not a standalone object. PolicyException is disabled cluster-wide,
+# so the policy's own exclude list is the only lever.
+#
+# Wire it where that ClusterPolicy is managed:
+#
+#   # kustomization.yaml
+#   patches:
+#     - target:
+#         group: kyverno.io
+#         version: v1
+#         kind: ClusterPolicy
+#         name: add-custom-mas-securitycontext
+#       path: kyverno-exclude.patch.yaml
+#
+# (Sandboxed FORK daemons run privileged-in-a-VM and are not affected by this policy; only the rootless
+# canonical daemons need the exclusion.)
+- op: add
+  path: /spec/rules/0/exclude/any/0/resources/namespaces/-
+  value: buildkit-operator
