@@ -1,4 +1,5 @@
 {{- if .Values.networkPolicy.enabled }}
+{{- $untrusted := "buildkit-operator.socialgouv.github.io/untrusted" }}
 # Egress lockdown for the build daemons: a daemon runs untrusted code in its RUN steps, so it may
 # reach DNS, the registry/package internet (FROM pulls, apt/npm/pip), and the S3 cold cache — but
 # NOT other in-cluster pods. That blocks lateral movement (it can't reach buildd, the gateway, other
@@ -16,6 +17,12 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
       app.kubernetes.io/component: buildkitd
+    {{- if .Values.networkPolicy.forkEgressStrict }}
+    # Untrusted fork daemons are governed by the stricter fork-egress policy below — exclude them here
+    # (NetworkPolicies union, so a fork must NOT also be selected by this internet-allowing policy).
+    matchExpressions:
+      - { key: {{ $untrusted | quote }}, operator: NotIn, values: ["true"] }
+    {{- end }}
   policyTypes: [Egress]
   egress:
     # Internet (container registry + package managers + external S3), minus RFC1918 in-cluster ranges.
@@ -33,4 +40,37 @@ spec:
     # Extra allowed egress (e.g. an in-cluster S3/MinIO or a pull-through cache mirror).
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- if .Values.networkPolicy.forkEgressStrict }}
+---
+# Stricter egress for UNTRUSTED (fork) daemons: they build attacker-controlled code from an untrusted
+# branch, so they get NO direct internet — only DNS plus the explicit allowlist. With the pull-through
+# mirror and S3 cache in networkPolicy.extraEgress, base images come ONLY through the controlled
+# mirror and the build cannot exfiltrate to arbitrary hosts. Trusted (canonical) daemons keep full
+# internet via the policy above. Requires the mirror (and S3, if used) under extraEgress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-fork-egress
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
+      app.kubernetes.io/component: buildkitd
+      {{ $untrusted }}: "true"
+  policyTypes: [Egress]
+  egress:
+    # Cluster DNS.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    {{- with .Values.networkPolicy.extraEgress }}
+    # The allowlist (pull-through mirror + S3 cache) — the ONLY non-DNS egress an untrusted fork gets.
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
 {{- end }}

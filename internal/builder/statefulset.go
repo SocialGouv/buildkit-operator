@@ -41,7 +41,11 @@ const (
 	cacheVolName    = "cache"
 )
 
-// Labels returns the canonical label set for a project's objects.
+// LabelUntrusted marks fork (untrusted) daemon pods. The chart's optional fork-egress NetworkPolicy
+// selects on it to lock untrusted builds down harder (no direct internet) than trusted ones.
+const LabelUntrusted = "buildkit-operator.socialgouv.github.io/untrusted"
+
+// Labels returns the canonical label set for a project's objects (StatefulSet/Service selector).
 func Labels(bp *bkov1.BuildProject) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":                             "buildkit-operator",
@@ -49,6 +53,17 @@ func Labels(bp *bkov1.BuildProject) map[string]string {
 		"buildkit-operator.socialgouv.github.io/project-key": bp.Spec.Key,
 		"buildkit-operator.socialgouv.github.io/arch":        router.NormalizeArch(bp.Spec.Arch),
 	}
+}
+
+// podLabels is Labels plus an untrusted=true marker on fork daemons. The marker is on the POD only,
+// not the StatefulSet/Service selector (which stay on Labels) — so the fork-egress NetworkPolicy can
+// select untrusted builds without changing how daemons are addressed.
+func podLabels(bp *bkov1.BuildProject) map[string]string {
+	l := Labels(bp)
+	if router.IsForkKey(bp.Spec.Key) {
+		l[LabelUntrusted] = "true"
+	}
+	return l
 }
 
 // Service is the per-project ClusterIP Service exposing the daemon over mTLS. Off-cluster CI reaches
@@ -173,7 +188,7 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			PodManagementPolicy: appsv1.ParallelPodManagement,
 			Selector:            &metav1.LabelSelector{MatchLabels: l},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: l},
+				ObjectMeta: metav1.ObjectMeta{Labels: podLabels(bp)},
 				Spec: corev1.PodSpec{
 					SecurityContext: podSec,
 					// Untrusted fork daemons run under a sandboxed runtime when one is configured —

@@ -87,15 +87,18 @@ isolation**, which a single shared `buildkitd` cannot offer:
 |---|---|
 | **Cross-project cache poisoning** — any project's build can write cache that another project reads. | Each `(project, arch)` gets its **own daemon and its own PVC**. There is no shared writable cache to poison across projects. |
 | **Untrusted fork PRs** run with the same cache-write access as trusted builds. | `untrusted: true` routes to a `ForkKey` daemon: **ephemeral, seeded read-only from the project snapshot, with no write-back**. A malicious fork cannot poison the project's warm cache. The fork spec comes from the shared `DeriveChild(parent, snapshot, ForkChild, key)` policy — the *same* derivation the fan-out uses (`CloneChild`), so isolation behaviour can't silently diverge between the two paths. |
+| **Untrusted forks share the daemons' full internet egress.** | Two opt-in layers, applied to fork daemons *only* (canonical builds keep full speed): (1) `networkPolicy.forkEgressStrict` gives forks an **internet-less** egress — DNS + the explicit allowlist only, so base images come **only** through the in-cluster pull-through mirror and the build cannot exfiltrate to arbitrary hosts; (2) `sandbox.runtimeClass` runs forks under a **sandboxed runtime** (Sysbox/gVisor/Kata). Both target untrusted pods via the `untrusted=true` label the operator stamps on fork daemons. |
 | **Noisy-neighbour / contention** — one heavy build starves others sharing the daemon. | Dedicated daemon per project; no sharing of CPU/store with unrelated builds. |
 | **mTLS endpoint is a single shared trust domain.** | Per-daemon Service; the daemon cert can be scoped, and fork daemons are separate endpoints. |
 
 ## Honest tradeoffs
 
-- **Same daemon hardening ceiling.** buildkit-operator does **not** make the buildkit daemon more locked down
-  than the shared service — both must relax `no_new_privs`. If your threat model cannot tolerate
-  that at all, the answer is a sandboxed runtime (gVisor/Kata/Sysbox) or VM-isolated builders, which
-  is orthogonal to buildkit-operator and applies equally to any buildkit deployment.
+- **Same daemon hardening ceiling for *trusted* builds.** buildkit-operator does **not** make the trusted
+  buildkit daemon more locked down than the shared service — both must relax `no_new_privs`. For
+  *untrusted* builds it can do better: `sandbox.runtimeClass` runs fork daemons under a sandboxed
+  runtime (Sysbox keeps `no_new_privs` ON, which lets you drop the Kyverno exemption for forks;
+  gVisor/Kata are alternatives). This needs the runtime installed on the nodes (a node-pool concern),
+  but the per-fork wiring is built in rather than orthogonal.
 - **Public exposure is one shared gateway LB.** Daemons stay `ClusterIP`; off-cluster CI reaches all
   of them through a **single** SNI gateway LoadBalancer (not one LB per daemon), so external surface
   is fixed and small regardless of project count. mTLS stays end-to-end — the gateway terminates no

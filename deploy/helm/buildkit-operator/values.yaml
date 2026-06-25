@@ -88,6 +88,11 @@ s3:
 networkPolicy:
   enabled: true
   extraEgress: []
+  # Opt-in: give UNTRUSTED fork daemons a stricter, internet-less egress (DNS + extraEgress only), so
+  # base images come ONLY through the in-cluster pull-through mirror and untrusted builds cannot
+  # exfiltrate. Trusted (canonical) daemons keep full internet. Only meaningful with the mirror (and
+  # S3, if used) listed under extraEgress — otherwise forks can't pull anything.
+  forkEgressStrict: false
 
 # Pull-through cache for base-image (FROM) pulls: LAN-speed, immune to Docker Hub rate limits,
 # resilient to upstream outages. `enabled` bundles a registry:2 proxy; `host` is the mirror the
