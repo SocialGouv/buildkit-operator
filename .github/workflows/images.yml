@@ -42,6 +42,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false # one component failing must not cancel + leave the others unsigned
       matrix:
         component: [buildd, companion, gateway]
     steps:
@@ -89,5 +90,8 @@ jobs:
       - name: cosign sign
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-          IMAGE: ghcr.io/${{ github.repository_owner }}/buildkit-operator-${{ matrix.component }}
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+          OWNER: ${{ github.repository_owner }}
+          COMPONENT: ${{ matrix.component }}
+        # OCI references must be lowercase; github.repository_owner ("SocialGouv") is mixed-case, so
+        # lowercase it in-shell (${OWNER,,}) before handing the digest to cosign.
+        run: cosign sign --yes "ghcr.io/${OWNER,,}/buildkit-operator-${COMPONENT}@${DIGEST}"
