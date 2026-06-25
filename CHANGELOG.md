@@ -1,5 +1,17 @@
 
 
+## [0.2.2](https://github.com/SocialGouv/buildkit-operator/compare/v0.2.1...v0.2.2) (2026-06-25)
+
+
+### Features
+
+* **sandbox:** run sandboxed forks privileged + non-rootless (Kata microVM) ([72553fb](https://github.com/SocialGouv/buildkit-operator/commit/72553fbb026a0bd742a7c4eb20aa6aa56a18008a))
+
+
+### Bug Fixes
+
+* close metadata egress, release leaked inflight, normalize repo ports ([219ec50](https://github.com/SocialGouv/buildkit-operator/commit/219ec509493329578528f1ffb79921949c08bd29))
+
 ## [0.2.1](https://github.com/SocialGouv/buildkit-operator/compare/v0.2.0...v0.2.1) (2026-06-25)
 
 
