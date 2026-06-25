@@ -1,5 +1,18 @@
 
 
+## [0.2.0](https://github.com/SocialGouv/buildkit-operator/compare/v1...v0.2.0) (2026-06-25)
+
+
+### Features
+
+* **daemon:** bump default buildkit image to v0.22.0-rootless (ovh-prod parity) ([6a843f9](https://github.com/SocialGouv/buildkit-operator/commit/6a843f9aff351e948573456f3d25c06ece3f9550))
+* **scheduling:** pin daemon pods to a dedicated build nodepool ([761f6f2](https://github.com/SocialGouv/buildkit-operator/commit/761f6f234ec1e2ed979e2dccc8d1de693a756328))
+
+
+### Bug Fixes
+
+* **release:** create the GitHub release via gh CLI (release-it octokit call crashes on v17) ([2cdd912](https://github.com/SocialGouv/buildkit-operator/commit/2cdd912149f97d2120f87af8571dffd39de3bc56))
+
 ## 0.1.0 (2026-06-25)
 
 
