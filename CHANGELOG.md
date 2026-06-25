@@ -1,5 +1,13 @@
 
 
+## [0.5.2](https://github.com/socialgouv/buildkit-operator/compare/v0.5.1...v0.5.2) (2026-06-25)
+
+
+### Bug Fixes
+
+* **ci:** build golangci-lint from source so its Go version matches go.mod ([153d900](https://github.com/socialgouv/buildkit-operator/commit/153d9001054da6d65a4e97b001696f7901cd7dc6))
+* **helm:** nil-safe api.* guard so helm upgrade --reuse-values doesn't break ([ac7c6d9](https://github.com/socialgouv/buildkit-operator/commit/ac7c6d95ceeee800faea72d6f3e1750c21d1fd41))
+
 ## [0.5.1](https://github.com/socialgouv/buildkit-operator/compare/v0.5.0...v0.5.1) (2026-06-25)
 
 
