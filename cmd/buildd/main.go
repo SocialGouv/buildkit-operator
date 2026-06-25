@@ -52,7 +52,7 @@ func main() {
 	)
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context to target (empty = current-context)")
 	flag.StringVar(&cfg.Namespace, "namespace", "buildkit-operator", "namespace the daemons run in")
-	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.22.0-rootless", "buildkitd image (vanilla)")
+	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.31.1-rootless", "buildkitd image (vanilla)")
 	flag.StringVar(&cfg.CompanionImage, "companion-image", "ghcr.io/socialgouv/buildkit-operator-companion:dev", "companion sidecar image")
 	flag.StringVar(&cfg.DaemonCertsSecret, "daemon-certs-secret", "buildkit-daemon-certs", "mTLS server certs secret")
 	flag.BoolVar(&cfg.CertManagerCerts, "cert-manager-certs", false, "the daemon certs Secret is cert-manager-issued (keys tls.crt/tls.key/ca.crt); remap them at mount to the .pem filenames buildkitd reads")

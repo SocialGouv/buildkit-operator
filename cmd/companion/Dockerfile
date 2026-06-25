@@ -2,8 +2,8 @@
 # image) so /readyz and the inode backstop can call `buildctl ... debug workers / prune`.
 # Keep BUILDKIT_VERSION aligned with the daemon image (buildd --buildkit-image) to avoid
 # buildctl/buildkitd version skew.
-ARG BUILDKIT_VERSION=v0.22.0
-FROM golang:1.24 AS build
+ARG BUILDKIT_VERSION=v0.31.1
+FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

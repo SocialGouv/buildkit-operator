@@ -1,7 +1,7 @@
 # buildkit-operator — control plane for one hot vanilla buildkitd per (project, arch).
 
 MODULE        := github.com/socialgouv/buildkit-operator
-CONTROLLER_GEN := go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
+CONTROLLER_GEN := go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0
 IMG_BUILDD    ?= ghcr.io/socialgouv/buildkit-operator-buildd:dev
 IMG_COMPANION ?= ghcr.io/socialgouv/buildkit-operator-companion:dev
 

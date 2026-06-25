@@ -121,21 +121,21 @@ func TestStatefulSet_DaemonScheduling(t *testing.T) {
 // the rootless image's newuidmap can't run in the guest. Trusted/canonical daemons keep rootless.
 func TestStatefulSet_SandboxedForkPrivilegedNonRootless(t *testing.T) {
 	fork := router.ForkKey(router.ProjectKey("github.com/org/repo", "", "", "amd64"))
-	cfg := Config{Namespace: "ns", Port: 1234, BuildkitImage: "moby/buildkit:v0.22.0-rootless", SandboxRuntimeClass: "kata-clh"}
+	cfg := Config{Namespace: "ns", Port: 1234, BuildkitImage: "moby/buildkit:v0.31.1-rootless", SandboxRuntimeClass: "kata-clh"}
 	ctr := func(key string) corev1.Container {
 		bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: key, Arch: "amd64", SecurityProfile: bkov1.ProfileRootless}}
 		return StatefulSet(bp, cfg).Spec.Template.Spec.Containers[0]
 	}
 	f := ctr(fork)
-	if f.Image != "moby/buildkit:v0.22.0" {
-		t.Errorf("sandboxed fork image = %q, want derived non-rootless moby/buildkit:v0.22.0", f.Image)
+	if f.Image != "moby/buildkit:v0.31.1" {
+		t.Errorf("sandboxed fork image = %q, want derived non-rootless moby/buildkit:v0.31.1", f.Image)
 	}
 	if f.SecurityContext == nil || f.SecurityContext.Privileged == nil || !*f.SecurityContext.Privileged {
 		t.Errorf("sandboxed fork must be privileged, got %+v", f.SecurityContext)
 	}
 	// Canonical (trusted) stays rootless even when a sandbox runtime is configured.
 	c := ctr("p1")
-	if c.Image != "moby/buildkit:v0.22.0-rootless" {
+	if c.Image != "moby/buildkit:v0.31.1-rootless" {
 		t.Errorf("canonical image = %q, want rootless", c.Image)
 	}
 	if c.SecurityContext != nil && c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
