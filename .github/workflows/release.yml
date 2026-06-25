@@ -40,3 +40,8 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # release-it handles the version/tag/changelog/chart-push; the GitHub Release is created here via
+      # the gh CLI (release-it's own octokit release call is flaky on v17 — "reading 'debug'" crash).
+      - run: gh release create "$(git describe --tags --abbrev=0)" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
