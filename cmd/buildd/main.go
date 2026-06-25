@@ -342,15 +342,18 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, router.RouteResponse{Key: key, Endpoint: router.Endpoint(key, s.cfg.Namespace, s.cfg.Port), Namespace: s.cfg.Namespace, Cache: s.cacheFor(key)})
 }
 
-// touchLastBuild marks the project active now, which keeps/brings desiredReplicas to 1.
+// touchLastBuild marks the project active now, which keeps/brings desiredReplicas to 1. It uses a
+// MergeFrom patch (not a full Status().Update) so it touches ONLY LastBuildTime: it can't be lost to
+// a resourceVersion conflict with the reconciler's status write, and it can't clobber phase/replicas.
 func (s *routeServer) touchLastBuild(ctx context.Context, key string) {
 	var bp bkov1.BuildProject
 	if err := s.c.Get(ctx, types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp); err != nil {
 		return
 	}
+	orig := bp.DeepCopy()
 	now := metav1.Now()
 	bp.Status.LastBuildTime = &now
-	_ = s.c.Status().Update(ctx, &bp)
+	_ = s.c.Status().Patch(ctx, &bp, client.MergeFrom(orig))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

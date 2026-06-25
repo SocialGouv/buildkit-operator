@@ -76,10 +76,13 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	newEndpoint := router.Endpoint(bp.Spec.Key, r.Cfg.Namespace, r.Cfg.Port)
 	readyCond := boolToCond(ready >= 1)
 	prev := meta.FindStatusCondition(bp.Status.Conditions, "Ready")
-	// Only write status when something actually changed — an unconditional Status().Update
-	// re-triggers reconcile (status is watched) and would busy-loop with the idle requeue.
+	// Only write status when something actually changed — a status write re-triggers reconcile
+	// (status is watched) and would busy-loop with the idle requeue.
 	changed := bp.Status.Replicas != ready || bp.Status.Phase != newPhase || bp.Status.Endpoint != newEndpoint ||
 		prev == nil || prev.Status != readyCond || prev.Reason != newPhase
+	// MergeFrom patch (not a full Update): the reconciler writes only its fields, so it never
+	// clobbers LastBuildTime (set by /route's touchLastBuild) on a concurrent write.
+	orig := bp.DeepCopy()
 	bp.Status.Replicas = ready
 	bp.Status.Endpoint = newEndpoint
 	bp.Status.Phase = newPhase
@@ -90,7 +93,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		Message: fmt.Sprintf("replicas desired=%d ready=%d", desired, ready),
 	})
 	if changed {
-		if err := r.Status().Update(ctx, &bp); err != nil {
+		if err := r.Status().Patch(ctx, &bp, client.MergeFrom(orig)); err != nil {
 			return ctrl.Result{}, client.IgnoreNotFound(err)
 		}
 	}
