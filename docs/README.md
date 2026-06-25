@@ -9,6 +9,8 @@ on a real OVH Managed Kubernetes cluster (GRA9, Cinder gen2).
 |---|---|
 | [architecture.md](architecture.md) | How the control plane routes and manages daemons: the cache-sharing routing key, the reconcile loop, lifecycle states, control-plane HA, the shared SNI gateway for off-cluster CI. |
 | [security.md](security.md) | Why rootless `buildkitd` needs `no_new_privs` off, the Kyverno/PSS constraint and its fix, the threat model, and what per-project + fork isolation actually buy you. |
+| [sandboxed-builds.md](sandboxed-builds.md) | Running **untrusted fork** daemons in a disposable **microVM** (Kata): why Kata over Sysbox/gVisor, the cloud-hypervisor + ≥4-vCPU requirements, and how the operator wires privileged non-rootless buildkit into the VM. |
+| [platform-ovh-mks.md](platform-ovh-mks.md) | Platform constraints on OVH Managed Kubernetes: the Kyverno mutation that breaks rootless and its fix, node recycling, nested virt, gen2 Cinder, public-image pull, and synced-secret collisions. |
 | [storage-and-cold-cache.md](storage-and-cold-cache.md) | The three storage layers (warm PVC, durable VolumeSnapshots, **cold S3**), how the S3 cache is wired, and what it measurably buys (cold ≈ 9×). |
 | [performance.md](performance.md) | Methodology + measured build times (warm vs cold, with vs without S3). |
 | [comparison-buildkit-service.md](comparison-buildkit-service.md) | Side-by-side with the existing shared `buildkit-service` (architecture, security posture, performance, durability). |

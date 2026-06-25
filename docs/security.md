@@ -95,10 +95,11 @@ isolation**, which a single shared `buildkitd` cannot offer:
 
 - **Same daemon hardening ceiling for *trusted* builds.** buildkit-operator does **not** make the trusted
   buildkit daemon more locked down than the shared service — both must relax `no_new_privs`. For
-  *untrusted* builds it can do better: `sandbox.runtimeClass` runs fork daemons under a sandboxed
-  runtime (Sysbox keeps `no_new_privs` ON, which lets you drop the Kyverno exemption for forks;
-  gVisor/Kata are alternatives). This needs the runtime installed on the nodes (a node-pool concern),
-  but the per-fork wiring is built in rather than orthogonal.
+  *untrusted* builds it can do better: `sandbox.runtimeClass` runs fork daemons inside a disposable
+  **microVM** (Kata), where the VM — not the shared kernel — is the boundary. This needs the runtime on
+  the build nodes (a node-pool concern), but the per-fork wiring is built in rather than orthogonal. See
+  [sandboxed-builds.md](sandboxed-builds.md) (why Kata over Sysbox/gVisor, and the cloud-hypervisor +
+  ≥4-vCPU requirements under nested virt).
 - **Public exposure is one shared gateway LB.** Daemons stay `ClusterIP`; off-cluster CI reaches all
   of them through a **single** SNI gateway LoadBalancer (not one LB per daemon), so external surface
   is fixed and small regardless of project count. mTLS stays end-to-end — the gateway terminates no
