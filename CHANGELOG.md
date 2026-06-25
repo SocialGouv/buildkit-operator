@@ -1,5 +1,12 @@
 
 
+## [0.2.3](https://github.com/SocialGouv/buildkit-operator/compare/v0.2.2...v0.2.3) (2026-06-25)
+
+
+### Features
+
+* **sandbox:** skip companion for forks; document Kata vCPU floor for nested virt ([7290418](https://github.com/SocialGouv/buildkit-operator/commit/7290418ac853eb9e6fd10c976379490345749c24))
+
 ## [0.2.2](https://github.com/SocialGouv/buildkit-operator/compare/v0.2.1...v0.2.2) (2026-06-25)
 
 
