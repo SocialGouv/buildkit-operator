@@ -6,9 +6,9 @@ import (
 	"time"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
-	buildcatv1 "github.com/socialgouv/buildcat/api/v1alpha1"
-	"github.com/socialgouv/buildcat/internal/builder"
-	"github.com/socialgouv/buildcat/internal/router"
+	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
+	"github.com/socialgouv/buildkit-operator/internal/builder"
+	"github.com/socialgouv/buildkit-operator/internal/router"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,7 +26,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
-	if err := buildcatv1.AddToScheme(s); err != nil {
+	if err := bkov1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
 	if err := volumesnapshotv1.AddToScheme(s); err != nil {
@@ -40,10 +40,10 @@ func testScheme(t *testing.T) *runtime.Scheme {
 func TestReconcile_CreatesDaemon(t *testing.T) {
 	s := testScheme(t)
 	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
-	ns := "buildcat"
-	bp := &buildcatv1.BuildProject{
+	ns := "buildkit-operator"
+	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierHot},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot},
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
 	r := &BuildProjectReconciler{
@@ -81,7 +81,7 @@ func TestReconcile_CreatesDaemon(t *testing.T) {
 		t.Fatalf("service not created: %v", err)
 	}
 
-	var got buildcatv1.BuildProject
+	var got bkov1.BuildProject
 	if err := c.Get(context.Background(), types.NamespacedName{Name: key, Namespace: ns}, &got); err != nil {
 		t.Fatal(err)
 	}
@@ -98,10 +98,10 @@ func TestReconcile_CreatesDaemon(t *testing.T) {
 func TestReconcile_Idempotent(t *testing.T) {
 	s := testScheme(t)
 	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
-	ns := "buildcat"
-	bp := &buildcatv1.BuildProject{
+	ns := "buildkit-operator"
+	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64"},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64"},
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
 	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
@@ -118,10 +118,10 @@ func TestReconcile_Idempotent(t *testing.T) {
 // don't churn — the idempotent test above covers that side.)
 func TestReconcile_RollsTemplateOnChange(t *testing.T) {
 	s := testScheme(t)
-	ns, key := "buildcat", "rolltest"
-	bp := &buildcatv1.BuildProject{
+	ns, key := "buildkit-operator", "rolltest"
+	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierHot},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot},
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
 	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, BuildkitImage: "buildkit:v1", Port: 1234, HealthPort: 8080}}
@@ -146,8 +146,8 @@ func TestReconcile_RollsTemplateOnChange(t *testing.T) {
 // M2 elasticity: the scale decision must honor tier + idle window + in-flight.
 func TestDesiredReplicas(t *testing.T) {
 	now := time.Now()
-	mk := func(tier string, idleSec int32, ago time.Duration, hasBuilt bool, inflight int32) *buildcatv1.BuildProject {
-		bp := &buildcatv1.BuildProject{Spec: buildcatv1.BuildProjectSpec{Tier: tier, IdleTimeoutSec: idleSec}}
+	mk := func(tier string, idleSec int32, ago time.Duration, hasBuilt bool, inflight int32) *bkov1.BuildProject {
+		bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Tier: tier, IdleTimeoutSec: idleSec}}
 		bp.Status.InflightBuilds = inflight
 		if hasBuilt {
 			ts := metav1.NewTime(now.Add(-ago))
@@ -157,14 +157,14 @@ func TestDesiredReplicas(t *testing.T) {
 	}
 	cases := []struct {
 		name string
-		bp   *buildcatv1.BuildProject
+		bp   *bkov1.BuildProject
 		want int32
 	}{
-		{"hot always on", mk(buildcatv1.TierHot, 0, 0, false, 0), 1},
-		{"warm recent build", mk(buildcatv1.TierWarm, 900, time.Minute, true, 0), 1},
-		{"warm idle -> zero", mk(buildcatv1.TierWarm, 900, time.Hour, true, 0), 0},
-		{"warm never built -> zero", mk(buildcatv1.TierWarm, 900, 0, false, 0), 0},
-		{"warm in-flight -> one", mk(buildcatv1.TierWarm, 900, time.Hour, true, 2), 1},
+		{"hot always on", mk(bkov1.TierHot, 0, 0, false, 0), 1},
+		{"warm recent build", mk(bkov1.TierWarm, 900, time.Minute, true, 0), 1},
+		{"warm idle -> zero", mk(bkov1.TierWarm, 900, time.Hour, true, 0), 0},
+		{"warm never built -> zero", mk(bkov1.TierWarm, 900, 0, false, 0), 0},
+		{"warm in-flight -> one", mk(bkov1.TierWarm, 900, time.Hour, true, 2), 1},
 	}
 	for _, c := range cases {
 		if got := desiredReplicas(c.bp, now); got != c.want {
@@ -176,11 +176,11 @@ func TestDesiredReplicas(t *testing.T) {
 // An idle warm project must be scaled to zero by the reconciler (PVC retained).
 func TestReconcile_ScalesIdleToZero(t *testing.T) {
 	s := testScheme(t)
-	ns, key := "buildcat", "idle"
+	ns, key := "buildkit-operator", "idle"
 	old := metav1.NewTime(time.Now().Add(-2 * time.Hour))
-	bp := &buildcatv1.BuildProject{
+	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierWarm, IdleTimeoutSec: 900},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierWarm, IdleTimeoutSec: 900},
 	}
 	bp.Status.LastBuildTime = &old
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
@@ -203,11 +203,11 @@ func TestReconcile_ScalesIdleToZero(t *testing.T) {
 // right after every build.
 func TestReconcile_DefaultsIdleTimeout(t *testing.T) {
 	s := testScheme(t)
-	ns, key := "buildcat", "nodefault"
+	ns, key := "buildkit-operator", "nodefault"
 	recent := metav1.NewTime(time.Now().Add(-1 * time.Minute))
-	bp := &buildcatv1.BuildProject{
+	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierWarm}, // IdleTimeoutSec unset (0)
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierWarm}, // IdleTimeoutSec unset (0)
 	}
 	bp.Status.LastBuildTime = &recent
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
@@ -228,10 +228,10 @@ func TestReconcile_DefaultsIdleTimeout(t *testing.T) {
 // create a VolumeSnapshot of that PVC (in-use; no scale-to-zero required on OVH).
 func TestReconcile_SnapshotsOnCadence(t *testing.T) {
 	s := testScheme(t)
-	ns, key := "buildcat", "snaptest"
-	bp := &buildcatv1.BuildProject{
+	ns, key := "buildkit-operator", "snaptest"
+	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierHot, SnapshotEverySec: 60},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot, SnapshotEverySec: 60},
 	}
 	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: router.CachePVCName(key), Namespace: ns}}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp, pvc).WithStatusSubresource(bp).Build()
@@ -256,10 +256,10 @@ func TestReconcile_SnapshotsOnCadence(t *testing.T) {
 // (CoW) from the latest snapshot and not fanning out themselves.
 func TestReconcile_FanoutCreatesClones(t *testing.T) {
 	s := testScheme(t)
-	ns, key := "buildcat", "fan"
-	bp := &buildcatv1.BuildProject{
+	ns, key := "buildkit-operator", "fan"
+	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       buildcatv1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: buildcatv1.TierHot, Fanout: 2},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot, Fanout: 2},
 	}
 	bp.Status.LastSnapshot = "snap-fan-1"
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
@@ -270,7 +270,7 @@ func TestReconcile_FanoutCreatesClones(t *testing.T) {
 	}
 	for i := 1; i <= 2; i++ {
 		ckey := router.CloneKey(key, i)
-		var clone buildcatv1.BuildProject
+		var clone bkov1.BuildProject
 		if err := c.Get(context.Background(), types.NamespacedName{Name: ckey, Namespace: ns}, &clone); err != nil {
 			t.Fatalf("clone %d (%s) not created: %v", i, ckey, err)
 		}

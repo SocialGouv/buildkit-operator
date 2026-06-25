@@ -1,4 +1,4 @@
-// Command buildd is the buildcat control plane: a controller-runtime manager that
+// Command buildd is the buildkit-operator control plane: a controller-runtime manager that
 // reconciles BuildProject -> StatefulSet-of-1 vanilla buildkitd, plus an HTTP API
 // (/route, /prewarm) the CLI calls.
 package main
@@ -12,11 +12,11 @@ import (
 	"time"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
-	buildcatv1 "github.com/socialgouv/buildcat/api/v1alpha1"
-	"github.com/socialgouv/buildcat/internal/builder"
-	"github.com/socialgouv/buildcat/internal/controller"
-	"github.com/socialgouv/buildcat/internal/metrics"
-	"github.com/socialgouv/buildcat/internal/router"
+	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
+	"github.com/socialgouv/buildkit-operator/internal/builder"
+	"github.com/socialgouv/buildkit-operator/internal/controller"
+	"github.com/socialgouv/buildkit-operator/internal/metrics"
+	"github.com/socialgouv/buildkit-operator/internal/router"
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,7 +35,7 @@ var scheme = runtime.NewScheme()
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(buildcatv1.AddToScheme(scheme))
+	utilruntime.Must(bkov1.AddToScheme(scheme))
 	utilruntime.Must(volumesnapshotv1.AddToScheme(scheme))
 }
 
@@ -48,9 +48,9 @@ func main() {
 		gatewayHost string
 	)
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context to target (empty = current-context)")
-	flag.StringVar(&cfg.Namespace, "namespace", "buildcat", "namespace the daemons run in")
+	flag.StringVar(&cfg.Namespace, "namespace", "buildkit-operator", "namespace the daemons run in")
 	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.18.2-rootless", "buildkitd image (vanilla)")
-	flag.StringVar(&cfg.CompanionImage, "companion-image", "ghcr.io/socialgouv/buildcat-companion:dev", "companion sidecar image")
+	flag.StringVar(&cfg.CompanionImage, "companion-image", "ghcr.io/socialgouv/buildkit-operator-companion:dev", "companion sidecar image")
 	flag.StringVar(&cfg.DaemonCertsSecret, "daemon-certs-secret", "buildkit-daemon-certs", "mTLS server certs secret")
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
 	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
@@ -86,7 +86,7 @@ func main() {
 		Scheme:                  scheme,
 		Metrics:                 metricsserver.Options{BindAddress: *metricsAddr}, // M4 observability
 		LeaderElection:          *leaderElect,                                     // HA: only the leader reconciles
-		LeaderElectionID:        "buildcat-buildd.buildcat.dev",
+		LeaderElectionID:        "buildkit-operator-buildd.buildkit-operator.io",
 		LeaderElectionNamespace: cfg.Namespace,
 	})
 	if err != nil {
@@ -193,8 +193,8 @@ func decodeReq(w http.ResponseWriter, r *http.Request) (router.RouteRequest, boo
 
 // canonicalSpec turns a RouteRequest into the normalized canonical BuildProject spec — the single
 // place that derives (key, repo, target, arch), shared by /route and /prewarm.
-func canonicalSpec(req router.RouteRequest) buildcatv1.BuildProjectSpec {
-	return buildcatv1.BuildProjectSpec{
+func canonicalSpec(req router.RouteRequest) bkov1.BuildProjectSpec {
+	return bkov1.BuildProjectSpec{
 		Key:    router.ProjectKey(req.Repo, req.Name, req.Target, req.Arch),
 		Repo:   router.NormalizeRepo(req.Repo),
 		Name:   router.NormalizeName(req.Name),
@@ -218,14 +218,14 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	if req.Untrusted {
 		// Fork PR: ephemeral daemon derived read-only from the canonical snapshot — distinct key, so
 		// it can never poison the canonical cache (anti cache-poisoning). Same derivation policy as
-		// fan-out clones, via buildcatv1.DeriveChild.
+		// fan-out clones, via bkov1.DeriveChild.
 		key, result = router.ForkKey(canonical), "untrusted"
 		seed := ""
-		var canon buildcatv1.BuildProject
+		var canon bkov1.BuildProject
 		if err := s.c.Get(ctx, types.NamespacedName{Name: canonical, Namespace: s.cfg.Namespace}, &canon); err == nil {
 			seed = canon.Status.LastSnapshot
 		}
-		spec = buildcatv1.DeriveChild(spec, seed, buildcatv1.ForkChild, key)
+		spec = bkov1.DeriveChild(spec, seed, bkov1.ForkChild, key)
 	}
 
 	respond := func() {
@@ -270,8 +270,8 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	respond()
 }
 
-func (s *routeServer) ensureBuildProject(ctx context.Context, spec buildcatv1.BuildProjectSpec) error {
-	var bp buildcatv1.BuildProject
+func (s *routeServer) ensureBuildProject(ctx context.Context, spec bkov1.BuildProjectSpec) error {
+	var bp bkov1.BuildProject
 	err := s.c.Get(ctx, types.NamespacedName{Name: spec.Key, Namespace: s.cfg.Namespace}, &bp)
 	if err == nil {
 		return nil
@@ -279,7 +279,7 @@ func (s *routeServer) ensureBuildProject(ctx context.Context, spec buildcatv1.Bu
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
-	return s.c.Create(ctx, &buildcatv1.BuildProject{
+	return s.c.Create(ctx, &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: spec.Key, Namespace: s.cfg.Namespace},
 		Spec:       spec,
 	})
@@ -344,7 +344,7 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 
 // touchLastBuild marks the project active now, which keeps/brings desiredReplicas to 1.
 func (s *routeServer) touchLastBuild(ctx context.Context, key string) {
-	var bp buildcatv1.BuildProject
+	var bp bkov1.BuildProject
 	if err := s.c.Get(ctx, types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp); err != nil {
 		return
 	}

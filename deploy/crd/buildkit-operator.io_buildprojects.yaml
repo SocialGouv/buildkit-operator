@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
-  name: buildprojects.buildcat.dev
+  name: buildprojects.buildkit-operator.io
 spec:
-  group: buildcat.dev
+  group: buildkit-operator.io
   names:
     kind: BuildProject
     listKind: BuildProjectList

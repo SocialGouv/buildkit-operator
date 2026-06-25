@@ -1,7 +1,7 @@
 # Operations runbook
 
-How to deploy, expose, secure, observe, and tear down buildcat. Commands assume the namespace
-`buildcat` and a kubeconfig context pinned per call (on a shared cluster, **always** pass
+How to deploy, expose, secure, observe, and tear down buildkit-operator. Commands assume the namespace
+`buildkit-operator` and a kubeconfig context pinned per call (on a shared cluster, **always** pass
 `--context` so you never touch the wrong cluster).
 
 ## Deploy
@@ -11,11 +11,11 @@ How to deploy, expose, secure, observe, and tear down buildcat. Commands assume 
 make manifests && kubectl apply -f deploy/crd
 
 # 2. mTLS material (daemon + client cert Secrets)
-deploy/cert/create-certs.sh buildcat
-kubectl -n buildcat apply -f deploy/cert/.certs/*-secret.yaml
+deploy/cert/create-certs.sh buildkit-operator
+kubectl -n buildkit-operator apply -f deploy/cert/.certs/*-secret.yaml
 
 # 3. control plane (buildd Deployment + RBAC + buildkitd.toml ConfigMap)
-helm upgrade --install buildcat deploy/helm/buildcat -n buildcat --create-namespace
+helm upgrade --install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --create-namespace
 
 # 4. (optional) warm node-pool headroom so wake-ups don't trigger node autoscaling
 kubectl apply -f deploy/warm-pool.yaml
@@ -24,9 +24,9 @@ kubectl apply -f deploy/warm-pool.yaml
 Default Helm values worth knowing: `replicaCount: 2`, `leaderElection: true`, `service.type:
 ClusterIP` (daemons are always ClusterIP; off-cluster CI uses the SNI gateway — see below),
 `snapshotClassName: csi-cinder-snapclass-in-use-v1`, `maxColdStarts: 8`, `s3.bucket: ""` (cold cache
-off), `gateway.host: ""` (gateway off), images `ghcr.io/socialgouv/buildcat-{buildd,companion,gateway}:dev`.
+off), `gateway.host: ""` (gateway off), images `ghcr.io/socialgouv/buildkit-operator-{buildd,companion,gateway}:dev`.
 Images are built and pushed by the [`images`](../.github/workflows/images.yml) workflow; a private
-registry needs a pull secret on the `default` and `buildcat-buildd` ServiceAccounts.
+registry needs a pull secret on the `default` and `buildkit-operator-buildd` ServiceAccounts.
 
 ## Kyverno exemption
 
@@ -35,11 +35,11 @@ On a platform that mutates pods to `allowPrivilegeEscalation: false` (fabrique's
 precedented pattern (see `arc-runners`). **Do this via GitOps**, not a live edit:
 
 ```yaml
-# in the ClusterPolicy's rule match/exclude — add the buildcat namespace
+# in the ClusterPolicy's rule match/exclude — add the buildkit-operator namespace
 exclude:
   any:
     - resources:
-        namespaces: [buildcat]
+        namespaces: [buildkit-operator]
 ```
 
 Rationale and alternatives in [security.md](security.md#admission-policy-kyverno--restricted-pss).
@@ -47,7 +47,7 @@ Rationale and alternatives in [security.md](security.md#admission-policy-kyverno
 ## Expose publicly (for external CI runners)
 
 ```bash
-helm upgrade buildcat deploy/helm/buildcat -n buildcat \
+helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator \
   --set service.type=LoadBalancer \              # buildd /route reachable externally
   --set gateway.host=builds.example.com          # shared SNI gateway: one LB fronts every daemon
 ```
@@ -59,8 +59,8 @@ This renders the gateway Deployment + its single LoadBalancer Service, and makes
 2. **Daemon cert SAN** — regenerate the daemon cert covering `*.builds.example.com` and re-apply the
    Secret, or daemons fail mTLS validation from outside:
    ```bash
-   GATEWAY_HOST=builds.example.com deploy/cert/create-certs.sh buildcat
-   kubectl -n buildcat apply -f deploy/cert/.certs/*-secret.yaml
+   GATEWAY_HOST=builds.example.com deploy/cert/create-certs.sh buildkit-operator
+   kubectl -n buildkit-operator apply -f deploy/cert/.certs/*-secret.yaml
    ```
 
 Details: [ci-integration.md](ci-integration.md#the-certificate-san-requirement). Leave
@@ -70,27 +70,27 @@ Details: [ci-integration.md](ci-integration.md#the-certificate-san-requirement).
 ## HA — verify and test
 
 ```bash
-kubectl -n buildcat get deploy buildcat-buildd          # want 2/2
-kubectl -n buildcat get lease buildcat-buildd.buildcat.dev -o jsonpath='{.spec.holderIdentity}'
-kubectl -n buildcat delete pod <leader-pod>             # follower takes the Lease; /route keeps serving
+kubectl -n buildkit-operator get deploy buildkit-operator-buildd          # want 2/2
+kubectl -n buildkit-operator get lease buildkit-operator-buildd.buildkit-operator.io -o jsonpath='{.spec.holderIdentity}'
+kubectl -n buildkit-operator delete pod <leader-pod>             # follower takes the Lease; /route keeps serving
 ```
 
 The reconciler runs on the leader only; `/route` is served by both replicas.
 
 ## Observe
 
-Prometheus metrics on `--metrics-addr` (`:8081`): `buildcat_routes_total`,
-`buildcat_route_duration_seconds`, `buildcat_coldstart_seconds`, `buildcat_coldstarts_inflight`,
-`buildcat_scale_events_total`, `buildcat_snapshots_total`. Useful signals: rising
+Prometheus metrics on `--metrics-addr` (`:8081`): `buildkit_operator_routes_total`,
+`buildkit_operator_route_duration_seconds`, `buildkit_operator_coldstart_seconds`, `buildkit_operator_coldstarts_inflight`,
+`buildkit_operator_scale_events_total`, `buildkit_operator_snapshots_total`. Useful signals: rising
 `coldstarts_inflight` near `--max-cold-starts` means you're throttling wake-ups (consider
-warm-pool/idle-timeout tuning); `buildcat_coldstart_seconds` isolates the cold-daemon wait
+warm-pool/idle-timeout tuning); `buildkit_operator_coldstart_seconds` isolates the cold-daemon wait
 (provision + Cinder attach) from warm route latency — the bench B/C signal — while
 `route_duration_seconds` covers all routes.
 
 ```bash
-kubectl -n buildcat get buildproject          # PHASE (Warm/Idle/...), REPLICAS, ENDPOINT per project
-kubectl -n buildcat get volumesnapshot        # durability snapshots (M3)
-kubectl -n buildcat logs deploy/buildcat-buildd -f
+kubectl -n buildkit-operator get buildproject          # PHASE (Warm/Idle/...), REPLICAS, ENDPOINT per project
+kubectl -n buildkit-operator get volumesnapshot        # durability snapshots (M3)
+kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd -f
 ```
 
 ## Lifecycle behaviours to expect
@@ -106,19 +106,19 @@ kubectl -n buildcat logs deploy/buildcat-buildd -f
 
 ## S3 cold cache (optional, external) — a buildd policy
 
-buildcat does **not** deploy an object store; point it at OVH Object Storage (prod) or any
+buildkit-operator does **not** deploy an object store; point it at OVH Object Storage (prod) or any
 S3-compatible endpoint. The cold cache is now configured **once on buildd**, not per build job:
 
 ```bash
 # the bucket Secret (AWS creds) the DAEMONS use for the s3 backend
-kubectl -n buildcat create secret generic buildcat-s3 \
+kubectl -n buildkit-operator create secret generic buildkit-operator-s3 \
   --from-literal=AWS_ACCESS_KEY_ID=… --from-literal=AWS_SECRET_ACCESS_KEY=…
 
-helm upgrade buildcat deploy/helm/buildcat -n buildcat \
+helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator \
   --set s3.bucket=buildcache \
   --set s3.region=gra \
   --set s3.endpoint=https://s3.gra.io.cloud.ovh.net \
-  --set s3.credsSecret=buildcat-s3
+  --set s3.credsSecret=buildkit-operator-s3
 ```
 
 `/route` then returns the per-project cache reference (bucket/region/endpoint, prefix = the project
@@ -131,15 +131,15 @@ that is what the validation used; it is not part of the chart. See
 ## Tear down cleanly (shared cluster hygiene)
 
 ```bash
-kubectl -n buildcat delete buildproject --all          # cascades StatefulSets/(ClusterIP)Services/PVCs
-kubectl -n buildcat delete pvc -l app.kubernetes.io/name=buildcat   # if any PVCs linger
-helm uninstall buildcat -n buildcat
+kubectl -n buildkit-operator delete buildproject --all          # cascades StatefulSets/(ClusterIP)Services/PVCs
+kubectl -n buildkit-operator delete pvc -l app.kubernetes.io/name=buildkit-operator   # if any PVCs linger
+helm uninstall buildkit-operator -n buildkit-operator
 # verify no orphans:
-kubectl get pv | grep buildcat
-kubectl -n buildcat get volumesnapshotcontent 2>/dev/null
+kubectl get pv | grep buildkit-operator
+kubectl -n buildkit-operator get volumesnapshotcontent 2>/dev/null
 ```
 
 Daemon Services are `ClusterIP`, so deleting `BuildProject`s frees no LoadBalancers. The only public
 LBs are chart-level (the buildd `/route` Service and the shared gateway when exposed); `helm
-uninstall` removes them. Afterwards check `kubectl -n buildcat get svc` shows no stray `LoadBalancer`
+uninstall` removes them. Afterwards check `kubectl -n buildkit-operator get svc` shows no stray `LoadBalancer`
 (public IPs cost money and surface).

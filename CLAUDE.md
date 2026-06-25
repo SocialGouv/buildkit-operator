@@ -1,4 +1,4 @@
-# buildcat
+# buildkit-operator
 
 Service de build **BuildKit distribué** : un `buildkitd` **chaud par `(projet, arch)`** sur OVH Managed Kubernetes. Concurrence et partage de cache (layers + cache mounts) sont **internes au daemon** ; la valeur ajoutée est un **plan de contrôle** (routage + cycle de vie) au-dessus de buildkit/containerd **VANILLA** — aucun fork, aucun snapshotter custom.
 

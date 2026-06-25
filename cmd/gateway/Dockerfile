@@ -1,4 +1,4 @@
-# gateway — buildcat's shared SNI router for off-cluster CI. A pure Go binary on distroless; it
+# gateway — buildkit-operator's shared SNI router for off-cluster CI. A pure Go binary on distroless; it
 # terminates NO TLS (it peeks the ClientHello SNI and pipes the connection), so it carries no certs.
 FROM golang:1.24 AS build
 WORKDIR /src

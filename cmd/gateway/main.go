@@ -1,4 +1,4 @@
-// Command gateway is buildcat's single shared SNI router for off-cluster CI. It terminates NO TLS:
+// Command gateway is buildkit-operator's single shared SNI router for off-cluster CI. It terminates NO TLS:
 // it peeks the TLS ClientHello's SNI (<daemon>.<domain>), then pipes the still-encrypted connection
 // straight to that project's daemon ClusterIP Service (<daemon>.<ns>.svc:<port>) — mTLS stays
 // end-to-end to the daemon (client-cert auth intact). One LoadBalancer fronts every daemon, instead
@@ -28,12 +28,12 @@ func main() {
 	g := &gateway{dialTO: 10 * time.Second}
 	var listen string
 	flag.StringVar(&listen, "listen", ":1234", "TCP listen address")
-	flag.StringVar(&g.domain, "domain", os.Getenv("BUILDCAT_GATEWAY_DOMAIN"), "gateway domain; the SNI is <daemon>.<domain> (required)")
-	flag.StringVar(&g.namespace, "namespace", envOr("BUILDCAT_NAMESPACE", "buildcat"), "namespace the daemons run in")
+	flag.StringVar(&g.domain, "domain", os.Getenv("BUILDKIT_OPERATOR_GATEWAY_DOMAIN"), "gateway domain; the SNI is <daemon>.<domain> (required)")
+	flag.StringVar(&g.namespace, "namespace", envOr("BUILDKIT_OPERATOR_NAMESPACE", "buildkit-operator"), "namespace the daemons run in")
 	flag.IntVar(&g.port, "daemon-port", 1234, "daemon mTLS port")
 	flag.Parse()
 	if g.domain == "" {
-		slog.Error("--domain (or BUILDCAT_GATEWAY_DOMAIN) is required")
+		slog.Error("--domain (or BUILDKIT_OPERATOR_GATEWAY_DOMAIN) is required")
 		os.Exit(2)
 	}
 
@@ -42,7 +42,7 @@ func main() {
 		slog.Error("listen", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("buildcat gateway listening", "addr", listen, "domain", g.domain, "namespace", g.namespace)
+	slog.Info("buildkit-operator gateway listening", "addr", listen, "domain", g.domain, "namespace", g.namespace)
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -83,7 +83,7 @@ func (g *gateway) handle(client net.Conn) {
 }
 
 // backendFor maps an SNI <daemon>.<domain> to the daemon's in-cluster Service address. It rejects
-// anything outside the gateway domain or that is not a buildcat daemon name (defense in depth — a
+// anything outside the gateway domain or that is not a buildkit-operator daemon name (defense in depth — a
 // caller can't be routed to an arbitrary host or another namespace).
 func (g *gateway) backendFor(sni string) (string, error) {
 	suffix := "." + g.domain

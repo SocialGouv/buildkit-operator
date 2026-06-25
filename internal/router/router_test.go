@@ -2,7 +2,7 @@ package router
 
 import "testing"
 
-// The single most important correctness property of buildcat: all references to
+// The single most important correctness property of buildkit-operator: all references to
 // the SAME logical project must collapse to the SAME ProjectKey, so concurrent
 // and later builds converge on one daemon and share its cache. A regression here
 // silently fragments the cache.
@@ -113,7 +113,7 @@ func TestDaemonNameAndEndpoint(t *testing.T) {
 	if len(name) > 63 {
 		t.Errorf("DaemonName %q exceeds DNS-1123 limit (63)", name)
 	}
-	if got, want := Endpoint(k, "buildcat", 1234), "tcp://"+name+".buildcat.svc:1234"; got != want {
+	if got, want := Endpoint(k, "buildkit-operator", 1234), "tcp://"+name+".buildkit-operator.svc:1234"; got != want {
 		t.Errorf("Endpoint = %q, want %q", got, want)
 	}
 }

@@ -2,7 +2,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: buildcat-buildd
+  name: buildkit-operator-buildd
 rules:
 - apiGroups:
   - ""
@@ -46,7 +46,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - buildcat.dev
+  - buildkit-operator.io
   resources:
   - buildprojects
   verbs:
@@ -58,7 +58,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - buildcat.dev
+  - buildkit-operator.io
   resources:
   - buildprojects/status
   verbs:

@@ -4,22 +4,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "buildcat.fullname" . }}-gateway
+  name: {{ include "buildkit-operator.fullname" . }}-gateway
   namespace: {{ .Values.namespace }}
   labels:
-    {{- include "buildcat.labels" . | nindent 4 }}
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "buildcat.name" . }}
+      app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: gateway
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "buildcat.name" . }}
+        app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: gateway
     spec:
@@ -52,15 +52,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "buildcat.fullname" . }}-gateway
+  name: {{ include "buildkit-operator.fullname" . }}-gateway
   namespace: {{ .Values.namespace }}
   labels:
-    {{- include "buildcat.labels" . | nindent 4 }}
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
 spec:
   type: {{ .Values.gateway.service.type }}
   selector:
-    app.kubernetes.io/name: {{ include "buildcat.name" . }}
+    app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: gateway
   ports:

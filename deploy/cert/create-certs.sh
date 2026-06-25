@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# create-certs.sh — mint the shared mTLS material for buildcat's buildkit fleet.
+# create-certs.sh — mint the shared mTLS material for buildkit-operator's buildkit fleet.
 #
 # Adapted from the upstream BuildKit example
 # (.repos/buildkit/examples/kubernetes/create-certs.sh) with one crucial change:
-# buildcat creates ONE buildkitd Service per (project, arch) DYNAMICALLY at
+# buildkit-operator creates ONE buildkitd Service per (project, arch) DYNAMICALLY at
 # runtime, so we cannot enumerate the daemon hostnames ahead of time. Instead we
 # issue a single daemon server certificate with a WILDCARD SAN that covers every
 # Service DNS name in the target namespace:
@@ -30,7 +30,7 @@
 #
 # Usage:
 #   ./create-certs.sh [NAMESPACE]
-#   NAMESPACE defaults to "buildcat".
+#   NAMESPACE defaults to "buildkit-operator".
 
 set -o errexit
 set -o nounset
@@ -38,7 +38,7 @@ set -o pipefail
 set -o errtrace
 
 PRODUCT=buildkit
-NS="${1:-buildcat}"
+NS="${1:-buildkit-operator}"
 
 # Resolve paths relative to this script so it works from any CWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,7 +62,7 @@ GATEWAY_HOST="${GATEWAY_HOST:-}"
 
 mkdir -p "${DIR}" "${CLIENT_DIR}"
 
-echo ">> buildcat mTLS certs"
+echo ">> buildkit-operator mTLS certs"
 echo "   namespace : ${NS}"
 echo "   output    : ${DIR}"
 echo "   daemon SAN: DNS:${SAN_DNS_1}, DNS:${SAN_DNS_2}, DNS:${SAN_DNS_3}${GATEWAY_HOST:+, DNS:*.${GATEWAY_HOST}}, IP:${SAN_IP_1}"
@@ -108,7 +108,7 @@ gen_with_openssl() {
     openssl genrsa -out "${DIR}/ca-key.pem" "${KEY_BITS}" 2>/dev/null
     openssl req -x509 -new -nodes -sha256 -days "${DAYS}" \
       -key "${DIR}/ca-key.pem" \
-      -subj "/CN=buildcat-ca/O=buildcat" \
+      -subj "/CN=buildkit-operator-ca/O=buildkit-operator" \
       -out "${DIR}/ca.pem" 2>/dev/null
   fi
   # Both bundles trust the same CA.
@@ -128,7 +128,7 @@ prompt             = no
 
 [dn]
 CN = buildkitd.${NS}
-O  = buildcat
+O  = buildkit-operator
 
 [v3_req]
 basicConstraints = CA:FALSE
@@ -169,7 +169,7 @@ prompt             = no
 
 [dn]
 CN = ${SAN_CLIENT}
-O  = buildcat
+O  = buildkit-operator
 
 [v3_req]
 basicConstraints = CA:FALSE
@@ -224,7 +224,7 @@ metadata:
   name: ${name}
   namespace: ${NS}
   labels:
-    app.kubernetes.io/name: buildcat
+    app.kubernetes.io/name: buildkit-operator
     app.kubernetes.io/component: buildd
 type: Opaque
 data:
@@ -243,7 +243,7 @@ render_secret "${PRODUCT}-client-certs" \
   "${CLIENT_DIR}/ca.pem" "${CLIENT_DIR}/cert.pem" "${CLIENT_DIR}/key.pem" "${CLIENT_SECRET}"
 
 echo
-echo ">> done. Apply the Secrets into the buildcat namespace:"
+echo ">> done. Apply the Secrets into the buildkit-operator namespace:"
 echo
 echo "   kubectl create namespace ${NS} --dry-run=client -o yaml | kubectl apply -f -"
 echo "   kubectl apply -f ${DAEMON_SECRET}"

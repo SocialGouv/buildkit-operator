@@ -1,10 +1,10 @@
-// Package v1alpha1 contains the buildcat API types.
+// Package v1alpha1 contains the buildkit-operator API types.
 //
-// buildcat runs one hot, vanilla buildkitd per (project, arch) on Kubernetes.
+// buildkit-operator runs one hot, vanilla buildkitd per (project, arch) on Kubernetes.
 // A BuildProject is the cache identity + lifecycle handle for one such daemon.
 //
 // +kubebuilder:object:generate=true
-// +groupName=buildcat.dev
+// +groupName=buildkit-operator.io
 package v1alpha1
 
 import (
@@ -13,7 +13,7 @@ import (
 )
 
 // GroupVersion is the group/version used to register these objects.
-var GroupVersion = schema.GroupVersion{Group: "buildcat.dev", Version: "v1alpha1"}
+var GroupVersion = schema.GroupVersion{Group: "buildkit-operator.io", Version: "v1alpha1"}
 
 var (
 	// SchemeBuilder registers the API types with a runtime.Scheme.

@@ -1,6 +1,6 @@
 # Storage layers & the S3 cold cache
 
-buildcat has **three** cache layers, each at a different point on the speed/durability curve. The
+buildkit-operator has **three** cache layers, each at a different point on the speed/durability curve. The
 fast path is local; durability and cold-start resilience are added without slowing the fast path.
 
 | Layer | Backing | Scope | Speed | What it holds |
@@ -15,9 +15,9 @@ that lets a **brand-new or wiped** daemon avoid a from-scratch build.
 
 ## The S3 cold cache
 
-### It is external and opt-in — buildcat is an S3 *client*, not an S3 *provider*
+### It is external and opt-in — buildkit-operator is an S3 *client*, not an S3 *provider*
 
-buildcat does **not** deploy or bundle an object store. It **consumes** an S3-compatible bucket the
+buildkit-operator does **not** deploy or bundle an object store. It **consumes** an S3-compatible bucket the
 same way it consumes a container registry — you provide it. In production that is **OVH Object
 Storage** (`s3.<region>.io.cloud.ovh.net`); for the autonomous proof in this session it was a
 throwaway MinIO. There is no MinIO in the architecture; it was a test backend.
@@ -55,7 +55,7 @@ not in the client. The client only passes the (credential-free) reference throug
 proven this session:
 
 - The S3 endpoint is resolved **daemon-side**, so it can be an **in-cluster** address
-  (`minio.buildcat.svc:9000`) that the external GitHub-hosted runner cannot even reach. The runner
+  (`minio.buildkit-operator.svc:9000`) that the external GitHub-hosted runner cannot even reach. The runner
   never opens an S3 connection. In the example CI log:
   `#8 importing cache manifest from s3:12475883348330026593` — the in-cluster daemon did it.
 - S3 credentials live on the **daemon pods** (a k8s Secret mounted as AWS env), never on the runner
@@ -92,10 +92,10 @@ Reading:
   build is to **keep the bucket fresh** (`cache-to`), for ~free.
 - **Cold builds get ~9× faster** — the slow `RUN` layers are imported instead of recomputed.
 - **When does "cold" actually happen?** New project, lost/GC'd PVC, a new cluster (DR/migration), or
-  a cache eviction. buildcat **retains the PVC across scale-to-zero**, so cold is *rarer* than on a
+  a cache eviction. buildkit-operator **retains the PVC across scale-to-zero**, so cold is *rarer* than on a
   service that drops local cache on rebalancing — and S3 covers the rest.
 
-End-to-end proof: `socialgouv/buildcat-example` CI run `28126430796` (green) on a stock
+End-to-end proof: `socialgouv/buildkit-operator-example` CI run `28126430796` (green) on a stock
 GitHub-hosted runner exported and imported its layer cache through the in-cluster daemon to S3.
 
 ## Why this matters versus the shared service

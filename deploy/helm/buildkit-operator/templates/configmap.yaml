@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "buildcat.fullname" . }}-buildkitd-config
+  name: {{ include "buildkit-operator.fullname" . }}-buildkitd-config
   namespace: {{ .Values.namespace }}
   labels:
-    {{- include "buildcat.labels" . | nindent 4 }}
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: buildd
 data:
   # GC config for the per-project buildkitd daemons. The buildd controller mounts

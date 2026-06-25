@@ -1,12 +1,12 @@
-buildcat {{ .Chart.AppVersion }} — control plane installed.
+buildkit-operator {{ .Chart.AppVersion }} — control plane installed.
 
 Release : {{ .Release.Name }}
 Namespace: {{ .Values.namespace }}
 
 What was installed (cluster-wide control plane ONLY):
   - buildd Deployment + Service (HTTP /route API + /healthz on :{{ .Values.service.port }})
-  - ServiceAccount {{ include "buildcat.serviceAccountName" . }} + least-privilege ClusterRole/Binding
-  - ConfigMap {{ include "buildcat.fullname" . }}-buildkitd-config (the per-project buildkitd.toml GC config)
+  - ServiceAccount {{ include "buildkit-operator.serviceAccountName" . }} + least-privilege ClusterRole/Binding
+  - ConfigMap {{ include "buildkit-operator.fullname" . }}-buildkitd-config (the per-project buildkitd.toml GC config)
 
 The per-project buildkitd StatefulSets, their Services (TCP+mTLS :{{ .Values.buildkit.port }})
 and Cinder cache PVCs are created by the buildd CONTROLLER at runtime from
@@ -27,12 +27,12 @@ Next steps:
 
 2. Watch buildd come up:
 
-     kubectl -n {{ .Values.namespace }} rollout status deploy/{{ include "buildcat.fullname" . }}-buildd
+     kubectl -n {{ .Values.namespace }} rollout status deploy/{{ include "buildkit-operator.fullname" . }}-buildd
 
 3. Create a BuildProject and watch the controller materialise its daemon:
 
      kubectl -n {{ .Values.namespace }} get buildprojects -w
-     kubectl -n {{ .Values.namespace }} get statefulset,svc,pvc -l app.kubernetes.io/name=buildcat
+     kubectl -n {{ .Values.namespace }} get statefulset,svc,pvc -l app.kubernetes.io/name=buildkit-operator
 
 Security profile in effect: {{ .Values.securityProfile }}
 {{- if eq .Values.securityProfile "rootless" }}

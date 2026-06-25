@@ -7,8 +7,8 @@ package builder
 import (
 	"fmt"
 
-	buildcatv1 "github.com/socialgouv/buildcat/api/v1alpha1"
-	"github.com/socialgouv/buildcat/internal/router"
+	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
+	"github.com/socialgouv/buildkit-operator/internal/router"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -41,18 +41,18 @@ const (
 )
 
 // Labels returns the canonical label set for a project's objects.
-func Labels(bp *buildcatv1.BuildProject) map[string]string {
+func Labels(bp *bkov1.BuildProject) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":      "buildcat",
-		"app.kubernetes.io/component": "buildkitd",
-		"buildcat.dev/project-key":    bp.Spec.Key,
-		"buildcat.dev/arch":           router.NormalizeArch(bp.Spec.Arch),
+		"app.kubernetes.io/name":           "buildkit-operator",
+		"app.kubernetes.io/component":      "buildkitd",
+		"buildkit-operator.io/project-key": bp.Spec.Key,
+		"buildkit-operator.io/arch":        router.NormalizeArch(bp.Spec.Arch),
 	}
 }
 
 // Service is the per-project ClusterIP Service exposing the daemon over mTLS. Off-cluster CI reaches
 // daemons through the single shared SNI gateway (cmd/gateway), not a public LB per daemon.
-func Service(bp *buildcatv1.BuildProject, cfg Config) *corev1.Service {
+func Service(bp *bkov1.BuildProject, cfg Config) *corev1.Service {
 	l := Labels(bp)
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -74,13 +74,13 @@ func Service(bp *buildcatv1.BuildProject, cfg Config) *corev1.Service {
 }
 
 // StatefulSet renders the daemon StatefulSet-of-1 with a retained gen2 PVC.
-func StatefulSet(bp *buildcatv1.BuildProject, cfg Config) *appsv1.StatefulSet {
+func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 	l := Labels(bp)
 	name := router.DaemonName(bp.Spec.Key)
 	replicas := int32(1)
 
 	dataDir, sockAddr := rootlessDataDir, rootlessSock
-	if bp.Spec.SecurityProfile == buildcatv1.ProfilePrivileged {
+	if bp.Spec.SecurityProfile == bkov1.ProfilePrivileged {
 		dataDir, sockAddr = privilegedData, privilegedSock
 	}
 
@@ -101,7 +101,7 @@ func StatefulSet(bp *buildcatv1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			{Name: "run", MountPath: rootlessRunDir},
 		},
 	}
-	if bp.Spec.SecurityProfile != buildcatv1.ProfilePrivileged {
+	if bp.Spec.SecurityProfile != bkov1.ProfilePrivileged {
 		daemon.VolumeMounts = append(daemon.VolumeMounts,
 			corev1.VolumeMount{Name: "config", MountPath: rootlessConfig})
 	}
@@ -141,7 +141,7 @@ func StatefulSet(bp *buildcatv1.BuildProject, cfg Config) *appsv1.StatefulSet {
 		{Name: "run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "certs", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: cfg.DaemonCertsSecret}}},
 	}
-	if bp.Spec.SecurityProfile != buildcatv1.ProfilePrivileged {
+	if bp.Spec.SecurityProfile != bkov1.ProfilePrivileged {
 		volumes = append(volumes, corev1.Volume{
 			Name: "config",
 			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -197,7 +197,7 @@ func buildkitdArgs(profile string, port int32) []string {
 		"--tlscert", "/certs/cert.pem",
 		"--tlskey", "/certs/key.pem",
 	}
-	if profile == buildcatv1.ProfilePrivileged {
+	if profile == bkov1.ProfilePrivileged {
 		return args
 	}
 	// rootless / userns
@@ -227,7 +227,7 @@ func buildctlProbe(addr string, initialDelay, period int32) *corev1.Probe {
 // of the whole volume on every (re)attach — the lesson from the Cinder bench.
 func securityContexts(profile string) (*corev1.PodSecurityContext, *corev1.SecurityContext) {
 	switch profile {
-	case buildcatv1.ProfilePrivileged:
+	case bkov1.ProfilePrivileged:
 		return &corev1.PodSecurityContext{},
 			&corev1.SecurityContext{Privileged: ptr(true)}
 	default: // rootless (and, for now, userns)

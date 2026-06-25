@@ -1,9 +1,9 @@
-# buildcat — control plane for one hot vanilla buildkitd per (project, arch).
+# buildkit-operator — control plane for one hot vanilla buildkitd per (project, arch).
 
-MODULE        := github.com/socialgouv/buildcat
+MODULE        := github.com/socialgouv/buildkit-operator
 CONTROLLER_GEN := go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
-IMG_BUILDD    ?= ghcr.io/socialgouv/buildcat-buildd:dev
-IMG_COMPANION ?= ghcr.io/socialgouv/buildcat-companion:dev
+IMG_BUILDD    ?= ghcr.io/socialgouv/buildkit-operator-buildd:dev
+IMG_COMPANION ?= ghcr.io/socialgouv/buildkit-operator-companion:dev
 
 .PHONY: all
 all: generate manifests build
@@ -16,11 +16,11 @@ generate:
 ## manifests: CRDs + RBAC from kubebuilder markers.
 .PHONY: manifests
 manifests:
-	$(CONTROLLER_GEN) crd rbac:roleName=buildcat-buildd \
+	$(CONTROLLER_GEN) crd rbac:roleName=buildkit-operator-buildd \
 		paths="./api/...;./internal/..." \
 		output:crd:artifacts:config=deploy/crd \
 		output:rbac:artifacts:config=deploy/rbac
-	cp deploy/crd/buildcat.dev_*.yaml deploy/helm/buildcat/crds/   # helm installs CRDs from chart crds/
+	cp deploy/crd/buildkit-operator.io_*.yaml deploy/helm/buildkit-operator/crds/   # helm installs CRDs from chart crds/
 
 ## docker-build: build the buildd + companion images.
 .PHONY: docker-build

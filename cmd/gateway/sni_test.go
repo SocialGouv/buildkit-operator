@@ -34,10 +34,10 @@ func TestPeekClientHelloSNI_RealHandshake(t *testing.T) {
 }
 
 func TestBackendFor(t *testing.T) {
-	g := &gateway{domain: "builds.example.com", namespace: "buildcat", port: 1234}
+	g := &gateway{domain: "builds.example.com", namespace: "buildkit-operator", port: 1234}
 
-	if got, err := g.backendFor("buildkitd-pabc.builds.example.com"); err != nil || got != "buildkitd-pabc.buildcat.svc:1234" {
-		t.Errorf("backendFor(daemon) = %q, %v; want buildkitd-pabc.buildcat.svc:1234", got, err)
+	if got, err := g.backendFor("buildkitd-pabc.builds.example.com"); err != nil || got != "buildkitd-pabc.buildkit-operator.svc:1234" {
+		t.Errorf("backendFor(daemon) = %q, %v; want buildkitd-pabc.buildkit-operator.svc:1234", got, err)
 	}
 	// Defense in depth: reject foreign domains, non-daemon names, and cross-namespace traversal.
 	for _, bad := range []string{

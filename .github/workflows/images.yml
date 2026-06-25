@@ -32,7 +32,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/buildcat-${{ matrix.component }}
+          images: ghcr.io/${{ github.repository_owner }}/buildkit-operator-${{ matrix.component }}
           tags: |
             type=raw,value=dev
             type=sha

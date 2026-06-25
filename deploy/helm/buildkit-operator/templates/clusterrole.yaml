@@ -1,22 +1,22 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "buildcat.fullname" . }}-buildd
+  name: {{ include "buildkit-operator.fullname" . }}-buildd
   labels:
-    {{- include "buildcat.labels" . | nindent 4 }}
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: buildd
 rules:
-  # --- buildcat custom resources -------------------------------------------
+  # --- buildkit-operator custom resources -------------------------------------------
   # Full lifecycle over the CRs the controller reconciles.
-  - apiGroups: ["buildcat.dev"]
+  - apiGroups: ["buildkit-operator.io"]
     resources: ["buildprojects", "builds"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Status subresources (write-back of observed state / conditions).
-  - apiGroups: ["buildcat.dev"]
+  - apiGroups: ["buildkit-operator.io"]
     resources: ["buildprojects/status", "builds/status"]
     verbs: ["get", "update", "patch"]
   # Finalizers (clean teardown of per-project daemons on CR deletion).
-  - apiGroups: ["buildcat.dev"]
+  - apiGroups: ["buildkit-operator.io"]
     resources: ["buildprojects/finalizers", "builds/finalizers"]
     verbs: ["update"]
 

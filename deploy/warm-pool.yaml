@@ -1,4 +1,4 @@
-# Warm node-pool headroom for buildcat (M2).
+# Warm node-pool headroom for buildkit-operator (M2).
 #
 # Why: a scale-to-one wakeup must NOT trigger cluster autoscaling — that costs minutes,
 # and the Phase 0 bench (C) already showed Cinder attaches serialize into minutes under a
@@ -9,36 +9,36 @@
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: buildcat-balloon
+  name: buildkit-operator-balloon
 value: -10
 globalDefault: false
 preemptionPolicy: Never
-description: "Preemptible filler reserving warm capacity for buildcat builders."
+description: "Preemptible filler reserving warm capacity for buildkit-operator builders."
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: buildcat-warm-pool
-  namespace: buildcat
+  name: buildkit-operator-warm-pool
+  namespace: buildkit-operator
   labels:
-    app.kubernetes.io/name: buildcat
+    app.kubernetes.io/name: buildkit-operator
     app.kubernetes.io/component: warm-pool
 spec:
   replicas: 10 # ~peak concurrent cold starts to absorb (from bench C; tune per traffic)
   selector:
     matchLabels:
-      app.kubernetes.io/name: buildcat
+      app.kubernetes.io/name: buildkit-operator
       app.kubernetes.io/component: warm-pool
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: buildcat
+        app.kubernetes.io/name: buildkit-operator
         app.kubernetes.io/component: warm-pool
     spec:
-      priorityClassName: buildcat-balloon
+      priorityClassName: buildkit-operator-balloon
       terminationGracePeriodSeconds: 0
       # Pin to your builder/warm node pool so the headroom is where builders land:
-      # nodeSelector: { nodepool: buildcat }
+      # nodeSelector: { nodepool: buildkit-operator }
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

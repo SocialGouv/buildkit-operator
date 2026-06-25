@@ -29,7 +29,7 @@ snapshot classes `csi-cinder-snapclass-v1` and `csi-cinder-snapclass-in-use-v1`.
 
 ## Why these shaped the design
 
-- **B and C are the reason buildcat retains the PVC across scale-to-zero and rate-limits cold
+- **B and C are the reason buildkit-operator retains the PVC across scale-to-zero and rate-limits cold
   starts.** A 31 s reattach is fine occasionally but ruinous if you churn; a 50-wide cold burst
   taking minutes is why `--max-cold-starts` exists and why the warm pool and `/prewarm` matter.
 - **D is the reason fan-out (M5) is a CoW clone, not a full copy.** Constant-time snapshot/clone

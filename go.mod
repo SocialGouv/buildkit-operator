@@ -1,4 +1,4 @@
-module github.com/socialgouv/buildcat
+module github.com/socialgouv/buildkit-operator
 
 go 1.24.0
 

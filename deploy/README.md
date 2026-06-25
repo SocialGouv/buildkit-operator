@@ -1,6 +1,6 @@
-# buildcat — deployment
+# buildkit-operator — deployment
 
-This directory ships the **cluster-wide install** of buildcat: the `buildd`
+This directory ships the **cluster-wide install** of buildkit-operator: the `buildd`
 control plane, its RBAC, the generated CRDs, the shared mTLS certs, the shared
 `buildkitd.toml` GC config, and the snapshot-class reference.
 
@@ -16,7 +16,7 @@ deploy/
   cert/.certs/                  # generated certs + Secret manifests (gitignored)
   crd/                          # `make manifests` writes the generated CRDs here
   rbac/                         # `make manifests` writes generated RBAC here (reference)
-  helm/buildcat/                # the Helm chart for the control plane
+  helm/buildkit-operator/                # the Helm chart for the control plane
 ```
 
 ## Prerequisites
@@ -46,7 +46,7 @@ install them with the chart, also copy them into the chart's `crds/` directory
 (Helm installs CRDs from there once, and never templates/upgrades them):
 
 ```bash
-cp deploy/crd/*.yaml deploy/helm/buildcat/crds/
+cp deploy/crd/*.yaml deploy/helm/buildkit-operator/crds/
 ```
 
 (Alternatively apply them out of band with `kubectl apply -f deploy/crd` and skip
@@ -60,7 +60,7 @@ daemon server cert with a **wildcard SAN** (`*.<ns>.svc`,
 Service the controller will ever create in the namespace.
 
 ```bash
-deploy/cert/create-certs.sh buildcat       # <ns> defaults to "buildcat"
+deploy/cert/create-certs.sh buildkit-operator       # <ns> defaults to "buildkit-operator"
 kubectl apply -f deploy/cert/.certs/buildkit-daemon-certs.yaml
 kubectl apply -f deploy/cert/.certs/buildkit-client-certs.yaml
 ```
@@ -77,7 +77,7 @@ system trust store. The generated material is gitignored.
 ### (c) Install the chart
 
 ```bash
-helm install buildcat deploy/helm/buildcat -n buildcat --create-namespace
+helm install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --create-namespace
 ```
 
 This installs the `buildd` Deployment + Service (HTTP `/route` API and
@@ -85,14 +85,14 @@ This installs the `buildd` Deployment + Service (HTTP `/route` API and
 binding, and the `buildkitd.toml` ConfigMap. Watch it roll out:
 
 ```bash
-kubectl -n buildcat rollout status deploy/buildcat-buildd
+kubectl -n buildkit-operator rollout status deploy/buildkit-operator-buildd
 ```
 
 Then create a `BuildProject` and watch the controller materialise its daemon:
 
 ```bash
-kubectl -n buildcat get buildprojects -w
-kubectl -n buildcat get statefulset,svc,pvc -l app.kubernetes.io/name=buildcat
+kubectl -n buildkit-operator get buildprojects -w
+kubectl -n buildkit-operator get statefulset,svc,pvc -l app.kubernetes.io/name=buildkit-operator
 ```
 
 ### (d) OVH gen2 storage / snapshot classes
@@ -104,7 +104,7 @@ on the OVH cluster. They are the chart defaults
 differently, override at install time:
 
 ```bash
-helm install buildcat deploy/helm/buildcat -n buildcat --create-namespace \
+helm install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --create-namespace \
   --set defaults.storageClass=<your-sc> \
   --set snapshotClassName=<your-vsc>
 ```
@@ -120,15 +120,15 @@ A restrictive admission policy — e.g. a Kyverno `restrict-seccomp` /
 Pod-Security-`restricted` baseline — will **reject** `seccompProfile: Unconfined`
 and block the daemons from starting. Two ways out:
 
-1. **PolicyException (preferred):** grant the buildcat namespace an exception for
+1. **PolicyException (preferred):** grant the buildkit-operator namespace an exception for
    the seccomp rule, scoped to the buildkitd pods. With Kyverno:
 
    ```yaml
    apiVersion: kyverno.io/v2
    kind: PolicyException
    metadata:
-     name: buildcat-rootless-seccomp
-     namespace: buildcat
+     name: buildkit-operator-rootless-seccomp
+     namespace: buildkit-operator
    spec:
      exceptions:
        - policyName: restrict-seccomp          # your cluster's policy name
@@ -138,10 +138,10 @@ and block the daemons from starting. Two ways out:
        any:
          - resources:
              kinds: ["Pod"]
-             namespaces: ["buildcat"]
+             namespaces: ["buildkit-operator"]
              selector:
                matchLabels:
-                 app.kubernetes.io/name: buildcat
+                 app.kubernetes.io/name: buildkit-operator
    ```
 
    (Adjust `policyName`/`ruleNames` to match the policy actually deployed on the
@@ -151,10 +151,10 @@ and block the daemons from starting. Two ways out:
    profile so `Unconfined` is no longer required:
 
    ```bash
-   helm upgrade buildcat deploy/helm/buildcat -n buildcat \
+   helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator \
      --set securityProfile=userns        # kubelet-assigned UID, UserNamespacesSupport
    # or, last resort:
-   helm upgrade buildcat deploy/helm/buildcat -n buildcat \
+   helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator \
      --set securityProfile=privileged
    ```
 
@@ -166,7 +166,7 @@ and block the daemons from starting. Two ways out:
 ## Uninstall
 
 ```bash
-helm uninstall buildcat -n buildcat
+helm uninstall buildkit-operator -n buildkit-operator
 # CRDs are intentionally NOT removed by Helm; delete them explicitly if desired:
 kubectl delete -f deploy/crd --ignore-not-found
 ```

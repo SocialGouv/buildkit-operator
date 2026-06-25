@@ -1,4 +1,4 @@
-# buildcat vs the shared `buildkit-service`
+# buildkit-operator vs the shared `buildkit-service`
 
 A side-by-side with the existing BuildKit service running in the fabrique infra (namespace
 `buildkit-service` on `ovh-prod`), gathered by read-only inspection of its live workloads and chart.
@@ -14,11 +14,11 @@ A **shared pool** of rootless buildkit pods:
 - **Eight public LoadBalancers** + mTLS (`buildkit.socialgouv.io`), client certs committed in-chart.
 - Cache is **per pod, shared across all repos** that hash to it. **No** S3 / registry cache layer.
 - Security posture: rootless, `Unconfined` seccomp/AppArmor, `allowPrivilegeEscalation` unset —
-  **identical** to buildcat's daemon (it is the same incompressible rootless requirement).
+  **identical** to buildkit-operator's daemon (it is the same incompressible rootless requirement).
 
 ## Side-by-side
 
-| Axis | buildkit-service | buildcat |
+| Axis | buildkit-service | buildkit-operator |
 |---|---|---|
 | **Daemon model** | shared pool (HPA 3–6), consistent-hash | **dedicated per `(project, arch)`** |
 | **Cache scope** | per pod, shared by all repos on that pod | **per project** (own daemon + own PVC) |
@@ -35,7 +35,7 @@ A **shared pool** of rootless buildkit pods:
 
 ## What each wins
 
-**buildcat wins on:**
+**buildkit-operator wins on:**
 
 - **Isolation** — both security (no cross-project poisoning, fork isolation) and performance (no
   noisy neighbours). This is the structural advantage of a daemon per project.
@@ -49,17 +49,17 @@ A **shared pool** of rootless buildkit pods:
 
 **buildkit-service wins on:**
 
-- **Cold-start** — it is always warm, so there is never a 90 s provision wait. buildcat mitigates
+- **Cold-start** — it is always warm, so there is never a 90 s provision wait. buildkit-operator mitigates
   this (warm pool, `/prewarm`, PVC retention, S3) but does not eliminate it.
 - **Simplicity** — a StatefulSet + HPA + consistent-hash is less machinery than a CRD + reconciler +
   snapshots + fan-out + a gateway.
-- **Fixed, known surface** — a stable set of endpoints. (buildcat is now also fixed and small — 2
+- **Fixed, known surface** — a stable set of endpoints. (buildkit-operator is now also fixed and small — 2
   LBs via the shared SNI gateway — so this gap has largely closed; the remaining edge is just less
   moving infrastructure.)
 
 ## What is the same (don't oversell)
 
-- **Daemon hardening.** Both relax `no_new_privs` for rootless buildkit. buildcat does not make the
+- **Daemon hardening.** Both relax `no_new_privs` for rootless buildkit. buildkit-operator does not make the
   daemon more locked down — see [security.md](security.md).
 - **The build engine.** Both run vanilla `buildkitd`. Warm-cache-hit builds of the same thing on an
   uncontended daemon are comparable; the measured gaps come from isolation and cold-start handling,
@@ -67,11 +67,11 @@ A **shared pool** of rootless buildkit pods:
 
 ## When to pick which
 
-- **Many small repos, latency-sensitive, security-sensitive (forks, multi-tenant):** buildcat — the
+- **Many small repos, latency-sensitive, security-sensitive (forks, multi-tenant):** buildkit-operator — the
   isolation and cold rehydration pay off, and scale-to-zero controls cost.
 - **A few always-busy repos where 90 s cold-starts are unacceptable and isolation is a non-issue:**
   the shared pool's always-warm simplicity is hard to beat.
 
-The two are not mutually exclusive: buildcat's public LB + end-to-end mTLS shape is deliberately the
-same as buildkit-service (buildcat just fans one shared SNI gateway out to many daemons instead of a
+The two are not mutually exclusive: buildkit-operator's public LB + end-to-end mTLS shape is deliberately the
+same as buildkit-service (buildkit-operator just fans one shared SNI gateway out to many daemons instead of a
 fixed LB set), so a CI integration can point at either.

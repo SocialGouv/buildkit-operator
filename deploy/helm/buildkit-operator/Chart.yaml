@@ -1,5 +1,5 @@
 apiVersion: v2
-name: buildcat
+name: buildkit-operator
 description: >-
   Control plane for one hot, vanilla buildkitd per (project, arch) on Kubernetes.
   Installs the buildd controller, its RBAC, the shared buildkitd GC config, and
@@ -12,6 +12,6 @@ keywords:
   - buildkit
   - ci
   - build-cache
-home: https://github.com/devthejo/buildcat
+home: https://github.com/devthejo/buildkit-operator
 maintainers:
   - name: devthejo

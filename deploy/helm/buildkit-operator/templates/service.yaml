@@ -1,15 +1,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "buildcat.fullname" . }}-buildd
+  name: {{ include "buildkit-operator.fullname" . }}-buildd
   namespace: {{ .Values.namespace }}
   labels:
-    {{- include "buildcat.labels" . | nindent 4 }}
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: buildd
 spec:
   type: {{ .Values.service.type }}
   selector:
-    {{- include "buildcat.buildd.selectorLabels" . | nindent 4 }}
+    {{- include "buildkit-operator.buildd.selectorLabels" . | nindent 4 }}
   ports:
     # buildd HTTP /route API + /healthz.
     - name: http

@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "buildcat.fullname" . }}-buildd
+  name: {{ include "buildkit-operator.fullname" . }}-buildd
   namespace: {{ .Values.namespace }}
   labels:
-    {{- include "buildcat.labels" . | nindent 4 }}
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: buildd
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "buildcat.buildd.selectorLabels" . | nindent 6 }}
+      {{- include "buildkit-operator.buildd.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "buildcat.buildd.selectorLabels" . | nindent 8 }}
+        {{- include "buildkit-operator.buildd.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "buildcat.serviceAccountName" . }}
+      serviceAccountName: {{ include "buildkit-operator.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -36,7 +36,7 @@ spec:
             - --companion={{ .Values.companion.enabled }}
             - --companion-image={{ .Values.companion.image.repository }}:{{ .Values.companion.image.tag }}
             - --daemon-certs-secret={{ .Values.certs.daemonSecretName }}
-            - --buildkitd-configmap={{ include "buildcat.fullname" . }}-buildkitd-config
+            - --buildkitd-configmap={{ include "buildkit-operator.fullname" . }}-buildkitd-config
             - --snapshot-class={{ .Values.snapshotClassName }}
             - --keep-snapshots={{ .Values.snapshots.keep }}
             - --max-cold-starts={{ .Values.maxColdStarts }}

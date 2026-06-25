@@ -1,7 +1,7 @@
 // Package router computes the stable cache identity that routes a build to the
 // right hot daemon. It is intentionally PURE (no Kubernetes imports) so the CLI
 // and the control plane share exactly the same normalization — the single most
-// important correctness property of buildcat: all builds that must share a cache
+// important correctness property of buildkit-operator: all builds that must share a cache
 // MUST resolve to the same Key (a too-fine key fragments the cache and kills sharing).
 package router
 

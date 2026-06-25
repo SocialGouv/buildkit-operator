@@ -1,12 +1,12 @@
 # Architecture
 
-buildcat is a **control plane** over stock `buildkitd`. It owns two things — **routing** (send
+buildkit-operator is a **control plane** over stock `buildkitd`. It owns two things — **routing** (send
 builds that should share a cache to the same daemon) and **lifecycle** (keep that daemon warm,
 scale it to zero, snapshot it, clone it). It deliberately owns **nothing** at the storage layer:
 the daemon's content store, snapshots, and bbolt metadata are vanilla.
 
 ```
-   client (CI runner)                         Kubernetes namespace `buildcat`
+   client (CI runner)                         Kubernetes namespace `buildkit-operator`
   ┌──────────────┐   POST /route          ┌──────────────────────────────────────────────┐
   │  build.sh /  │ ─────────────────────► │  buildd (Deployment, replicas: 2, HA)         │
   │  build CLI   │ ◄──── endpoint ─────── │   • controller-runtime manager (leader only)  │
@@ -48,9 +48,9 @@ Design points proven out in this session:
   image, so unrelated components in the same repo don't share (or thrash) a cache. It is **omitted
   from the hash when empty**, so a single-image repo keeps the exact key it had before `name`
   existed (migration-safe). Wired end-to-end through `RouteRequest.Name`, `BuildProjectSpec.Name`,
-  `DeriveChild`, and the CLI `--name` flag (env `BUILDCAT_NAME`) / `build.sh NAME`.
+  `DeriveChild`, and the CLI `--name` flag (env `BUILDKIT_OPERATOR_NAME`) / `build.sh NAME`.
 
-Example: `SocialGouv/buildcat-example` + `amd64` (empty name) → `pa081c22c974da132` (the daemon name
+Example: `SocialGouv/buildkit-operator-example` + `amd64` (empty name) → `pa081c22c974da132` (the daemon name
 you see running on the cluster).
 
 ## The reconcile loop
@@ -69,7 +69,7 @@ controller-runtime loop. Per object it converges:
    snapshotted. Old snapshots are pruned to `--keep-snapshots`.
 4. **`reconcileFanout`** — when `spec.fanout > 0` (M5), materializes N **CoW clone** daemons
    (`CloneKey`) from the latest snapshot — vertical-first scaling for a saturated project. The clone
-   spec comes from the **shared derivation policy** `buildcatv1.DeriveChild(parent, parentSnapshot,
+   spec comes from the **shared derivation policy** `buildkit-operatorv1.DeriveChild(parent, parentSnapshot,
    CloneChild, key)` — the *same* function the `/route` fork path uses (with `ForkChild`), so a
    fan-out clone and a fork daemon can never drift in how they inherit storage/security and seed
    from the parent snapshot.
@@ -77,8 +77,8 @@ controller-runtime loop. Per object it converges:
    Status is only written when it actually changes (a busy-loop guard learned the hard way —
    unconditional status writes re-trigger reconcile forever).
 
-Metrics emitted: `buildcat_routes_total`, `buildcat_route_duration_seconds`,
-`buildcat_coldstarts_inflight`, `buildcat_scale_events_total`, `buildcat_snapshots_total`.
+Metrics emitted: `buildkit_operator_routes_total`, `buildkit_operator_route_duration_seconds`,
+`buildkit_operator_coldstarts_inflight`, `buildkit_operator_scale_events_total`, `buildkit_operator_snapshots_total`.
 
 ## Control-plane HA
 
@@ -91,7 +91,7 @@ Lease). Two roles, split deliberately:
   `NeedLeaderElection() = false`, so a routing request is served whether it lands on the leader or a
   follower. Routing is read-mostly (ensure-or-wait); only the leader mutates.
 
-Verified live: `buildcat-buildd` reports `2/2` ready and the `buildcat-buildd.buildcat.dev` Lease is
+Verified live: `buildkit-operator-buildd` reports `2/2` ready and the `buildkit-operator-buildd.buildkit-operator.io` Lease is
 held by one of the two pods. Kill the leader and the follower takes the Lease; `/route` never stops
 serving.
 
@@ -99,7 +99,7 @@ serving.
 
 Daemon Services are **always `ClusterIP`** (in-cluster clients only). An **external** CI runner
 reaches every daemon through **one shared SNI gateway** — a new `cmd/gateway` binary (image
-`ghcr.io/socialgouv/buildcat-gateway`) fronted by a **single** LoadBalancer, instead of a public LB
+`ghcr.io/socialgouv/buildkit-operator-gateway`) fronted by a **single** LoadBalancer, instead of a public LB
 per daemon (which doesn't scale with project count).
 
 How it routes, without terminating TLS:
@@ -118,7 +118,7 @@ certificate's SAN must cover `*.<gateway-host>` (`create-certs.sh` honours `GATE
 Helm chart renders the gateway Deployment + its one LoadBalancer Service from
 `gateway.{host,image,service.type,resources}`, gated on `gateway.host`. See
 [ci-integration.md](ci-integration.md) and [security.md](security.md). This is the same end-to-end
-mTLS shape the existing `buildkit-service` uses — buildcat just fans one LB out to many daemons by
+mTLS shape the existing `buildkit-service` uses — buildkit-operator just fans one LB out to many daemons by
 SNI instead of allocating one LB each.
 
 ## What stays vanilla (non-goals)

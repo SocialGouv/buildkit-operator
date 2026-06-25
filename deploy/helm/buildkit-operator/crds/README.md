@@ -2,7 +2,7 @@
 
 Helm installs every `*.yaml` it finds in this `crds/` directory **before** the
 rest of the chart, and (by Helm's CRD convention) does **not** template, upgrade,
-or delete them. That is exactly what we want for buildcat's CustomResource-
+or delete them. That is exactly what we want for buildkit-operator's CustomResource-
 Definitions: install-once, managed out of band.
 
 These CRD YAMLs are **generated**, not hand-written. They come from the
@@ -18,13 +18,13 @@ the generated files here before `helm install`/`helm package`:
 
 ```bash
 make manifests
-cp deploy/crd/*.yaml deploy/helm/buildcat/crds/
+cp deploy/crd/*.yaml deploy/helm/buildkit-operator/crds/
 ```
 
 Expected CRDs:
 
-- `buildcat.dev_buildprojects.yaml`
-- `buildcat.dev_builds.yaml`
+- `buildkit-operator.io_buildprojects.yaml`
+- `buildkit-operator.io_builds.yaml`
 
 This directory intentionally ships only this README in version control; the
 generated CRD YAMLs are produced by the build, mirroring how `deploy/crd/` is

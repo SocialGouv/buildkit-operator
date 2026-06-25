@@ -15,10 +15,10 @@ import (
 	"time"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
-	buildcatv1 "github.com/socialgouv/buildcat/api/v1alpha1"
-	"github.com/socialgouv/buildcat/internal/builder"
-	"github.com/socialgouv/buildcat/internal/metrics"
-	"github.com/socialgouv/buildcat/internal/router"
+	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
+	"github.com/socialgouv/buildkit-operator/internal/builder"
+	"github.com/socialgouv/buildkit-operator/internal/metrics"
+	"github.com/socialgouv/buildkit-operator/internal/router"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,10 +39,10 @@ type BuildProjectReconciler struct {
 	KeepSnapshots int // durability snapshots retained per project (default 3)
 }
 
-const projectKeyLabel = "buildcat.dev/project-key"
+const projectKeyLabel = "buildkit-operator.io/project-key"
 
-// +kubebuilder:rbac:groups=buildcat.dev,resources=buildprojects,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=buildcat.dev,resources=buildprojects/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=buildkit-operator.io,resources=buildprojects,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=buildkit-operator.io,resources=buildprojects/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services;persistentvolumeclaims;configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
@@ -54,7 +54,7 @@ const projectKeyLabel = "buildcat.dev/project-key"
 func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
 
-	var bp buildcatv1.BuildProject
+	var bp bkov1.BuildProject
 	if err := r.Get(ctx, req.NamespacedName, &bp); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -105,7 +105,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Requeue at the soonest of: idle re-check (while warm) and the next snapshot due.
 	requeue := time.Duration(0)
-	if desired == 1 && bp.Spec.Tier != buildcatv1.TierHot {
+	if desired == 1 && bp.Spec.Tier != bkov1.TierHot {
 		requeue = idleRecheckInterval(&bp)
 	}
 	if snapAfter > 0 && (requeue == 0 || snapAfter < requeue) {
@@ -117,7 +117,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{}, nil
 }
 
-func (r *BuildProjectReconciler) ensureService(ctx context.Context, bp *buildcatv1.BuildProject) error {
+func (r *BuildProjectReconciler) ensureService(ctx context.Context, bp *bkov1.BuildProject) error {
 	want := builder.Service(bp, r.Cfg)
 	if err := ctrl.SetControllerReference(bp, want, r.Scheme); err != nil {
 		return err
@@ -143,13 +143,13 @@ func (r *BuildProjectReconciler) ensureService(ctx context.Context, bp *buildcat
 // templateHashAnnotation records the hash of the desired pod template on the StatefulSet, so the
 // reconciler can detect a real spec change (image/env/args/profile) without diffing against
 // server-defaulted fields (which would churn forever).
-const templateHashAnnotation = "buildcat.dev/template-hash"
+const templateHashAnnotation = "buildkit-operator.io/template-hash"
 
 // ensureStatefulSet creates the STS if absent, else converges the two things we drive: the replica
 // count, and the pod template when its desired hash changes (a buildkit-image bump, S3 creds, etc. —
 // rolled onto the daemon; the retained PVC survives the restart). The immutable volumeClaimTemplates
 // and selector are never touched (k8s forbids it).
-func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *buildcatv1.BuildProject, desired int32) error {
+func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *bkov1.BuildProject, desired int32) error {
 	want := builder.StatefulSet(bp, r.Cfg)
 	want.Spec.Replicas = &desired
 	hash := templateHash(want.Spec.Template)
@@ -197,7 +197,7 @@ func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *buil
 }
 
 // templateHash is a stable fingerprint of the DESIRED pod template (recomputed identically each
-// reconcile), so it changes only when buildcat's rendered spec changes — not on apiserver defaulting.
+// reconcile), so it changes only when buildkit-operator's rendered spec changes — not on apiserver defaulting.
 func templateHash(t corev1.PodTemplateSpec) string {
 	b, _ := json.Marshal(t)
 	sum := sha256.Sum256(b)
@@ -208,8 +208,8 @@ func templateHash(t corev1.PodTemplateSpec) string {
 // 1 while a build is in flight or the project was active within IdleTimeoutSec, else 0
 // (scale-to-zero — the PVC is retained via volumeClaimTemplates, so the next build just
 // reattaches the warm cache; no restore). Idle timeout default seeded from bench B.
-func desiredReplicas(bp *buildcatv1.BuildProject, now time.Time) int32 {
-	if bp.Spec.Tier == buildcatv1.TierHot {
+func desiredReplicas(bp *bkov1.BuildProject, now time.Time) int32 {
+	if bp.Spec.Tier == bkov1.TierHot {
 		return 1
 	}
 	if bp.Status.InflightBuilds > 0 {
@@ -225,7 +225,7 @@ func desiredReplicas(bp *buildcatv1.BuildProject, now time.Time) int32 {
 
 // idleRecheckInterval requeues a warm project often enough to scale it down promptly
 // once it crosses IdleTimeoutSec (events alone won't fire when nothing changes).
-func idleRecheckInterval(bp *buildcatv1.BuildProject) time.Duration {
+func idleRecheckInterval(bp *bkov1.BuildProject) time.Duration {
 	iv := time.Duration(bp.Spec.IdleTimeoutSec) * time.Second / 6
 	if iv < 30*time.Second {
 		iv = 30 * time.Second
@@ -247,7 +247,7 @@ func phaseFrom(desired, ready int32) string {
 // applyDefaults guards against BuildProjects created without CRD/apiserver defaulting (the fake
 // client in tests, or objects built in-process). It MUST mirror the +kubebuilder:default markers in
 // api/v1alpha1/buildproject_types.go — keep the two in sync.
-func applyDefaults(bp *buildcatv1.BuildProject) {
+func applyDefaults(bp *bkov1.BuildProject) {
 	if bp.Spec.StorageClass == "" {
 		bp.Spec.StorageClass = "csi-cinder-high-speed-gen2"
 	}
@@ -255,7 +255,7 @@ func applyDefaults(bp *buildcatv1.BuildProject) {
 		bp.Spec.CacheVolumeGi = 60
 	}
 	if bp.Spec.Tier == "" {
-		bp.Spec.Tier = buildcatv1.TierWarm
+		bp.Spec.Tier = bkov1.TierWarm
 	}
 	if bp.Spec.IdleTimeoutSec == 0 {
 		// Mirrors +kubebuilder:default=900 (bench B). Without this, an undefaulted warm project
@@ -264,7 +264,7 @@ func applyDefaults(bp *buildcatv1.BuildProject) {
 		bp.Spec.IdleTimeoutSec = 900
 	}
 	if bp.Spec.SecurityProfile == "" {
-		bp.Spec.SecurityProfile = buildcatv1.ProfileRootless
+		bp.Spec.SecurityProfile = bkov1.ProfileRootless
 	}
 }
 
@@ -278,7 +278,7 @@ func boolToCond(b bool) metav1.ConditionStatus {
 // maybeSnapshot takes a durability VolumeSnapshot of the project's cache when the cadence
 // (SnapshotEverySec) is due. OVH supports in-use snapshots (bench D-bis), so this needs no
 // scale-to-zero. Returns the duration until the next snapshot is due (0 = disabled).
-func (r *BuildProjectReconciler) maybeSnapshot(ctx context.Context, bp *buildcatv1.BuildProject) (time.Duration, error) {
+func (r *BuildProjectReconciler) maybeSnapshot(ctx context.Context, bp *bkov1.BuildProject) (time.Duration, error) {
 	if bp.Spec.SnapshotEverySec <= 0 || r.Cfg.SnapshotClass == "" {
 		return 0, nil
 	}
@@ -349,24 +349,24 @@ func (r *BuildProjectReconciler) pruneSnapshots(ctx context.Context, items []vol
 // proved Cinder clones are CoW (fast boot). Clones run hot, are owned by the canonical (cascade
 // GC), and don't fan out themselves; layers converge via shared S3, cache mounts stay per-daemon.
 // Vertical scaling (Resources / CacheVolumeGi) remains the first resort.
-func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *buildcatv1.BuildProject) error {
+func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.BuildProject) error {
 	if bp.Spec.Fanout <= 0 || bp.Status.LastSnapshot == "" {
 		return nil // disabled, or no snapshot to clone from yet
 	}
 	for i := int32(1); i <= bp.Spec.Fanout; i++ {
 		ckey := router.CloneKey(bp.Spec.Key, int(i))
-		var clone buildcatv1.BuildProject
+		var clone bkov1.BuildProject
 		if err := r.Get(ctx, types.NamespacedName{Name: ckey, Namespace: r.Cfg.Namespace}, &clone); err == nil {
 			continue
 		} else if !apierrors.IsNotFound(err) {
 			return err
 		}
-		clone = buildcatv1.BuildProject{
+		clone = bkov1.BuildProject{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: ckey, Namespace: r.Cfg.Namespace,
-				Labels: map[string]string{projectKeyLabel: bp.Spec.Key, "buildcat.dev/clone-of": bp.Spec.Key},
+				Labels: map[string]string{projectKeyLabel: bp.Spec.Key, "buildkit-operator.io/clone-of": bp.Spec.Key},
 			},
-			Spec: buildcatv1.DeriveChild(bp.Spec, bp.Status.LastSnapshot, buildcatv1.CloneChild, ckey),
+			Spec: bkov1.DeriveChild(bp.Spec, bp.Status.LastSnapshot, bkov1.CloneChild, ckey),
 		}
 		if err := ctrl.SetControllerReference(bp, &clone, r.Scheme); err != nil {
 			return err
@@ -383,7 +383,7 @@ func ptr[T any](v T) *T { return &v }
 // SetupWithManager wires the reconciler and the objects it owns.
 func (r *BuildProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&buildcatv1.BuildProject{}).
+		For(&bkov1.BuildProject{}).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
 		Owns(&volumesnapshotv1.VolumeSnapshot{}).

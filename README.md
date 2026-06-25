@@ -1,8 +1,8 @@
-# buildcat
+# buildkit-operator
 
 **A distributed BuildKit build service: one hot, *vanilla* `buildkitd` per `(project, arch)` on Kubernetes.**
 
-buildcat gives CI builds the perceived speed of a warm local BuildKit cache, with the
+buildkit-operator gives CI builds the perceived speed of a warm local BuildKit cache, with the
 elasticity and durability of Kubernetes — **without forking BuildKit, containerd, or writing a
 custom snapshotter.** It is a small **control plane** (routing + lifecycle) on top of stock
 `buildkitd`/`containerd`. Built for OVH Managed Kubernetes (Cinder gen2), portable to any CSI.
@@ -16,7 +16,7 @@ custom snapshotter.** It is a small **control plane** (routing + lifecycle) on t
 ## Documentation
 
 This README is the overview. The [`docs/`](docs/) directory holds the deep-dives and the **measured
-evidence** gathered validating buildcat on a real OVH MKS cluster:
+evidence** gathered validating buildkit-operator on a real OVH MKS cluster:
 
 - [architecture.md](docs/architecture.md) — routing key, reconcile loop, HA, the shared SNI gateway
 - [security.md](docs/security.md) — rootless constraint, Kyverno fix, threat model, fork isolation
@@ -104,11 +104,11 @@ omitted from the hash, so single-image repos keep the exact same key (migration-
 ## The `BuildProject` resource
 
 ```yaml
-apiVersion: buildcat.dev/v1alpha1
+apiVersion: buildkit-operator.io/v1alpha1
 kind: BuildProject
 metadata:
   name: p1a2b3c4d5e6f7a8        # = spec.key
-  namespace: buildcat
+  namespace: buildkit-operator
 spec:
   key: p1a2b3c4d5e6f7a8         # stable cache identity (set by the router)
   repo: github.com/acme/app     # normalized, informational
@@ -126,7 +126,7 @@ spec:
 status:
   phase: Warm                   # Pending | Warm | Idle | Scaling | Failed
   replicas: 1
-  endpoint: tcp://buildkitd-p1a2b3c4d5e6f7a8.buildcat.svc:1234
+  endpoint: tcp://buildkitd-p1a2b3c4d5e6f7a8.buildkit-operator.svc:1234
   lastSnapshot: snap-...
 ```
 
@@ -145,19 +145,19 @@ make manifests
 kubectl apply -f deploy/crd
 
 # 2. mTLS certs (wildcard SAN over the daemon Services)
-deploy/cert/create-certs.sh buildcat        # writes the buildkit-daemon-certs / -client-certs Secrets
-kubectl -n buildcat apply -f deploy/cert/.certs/*-secret.yaml
+deploy/cert/create-certs.sh buildkit-operator        # writes the buildkit-daemon-certs / -client-certs Secrets
+kubectl -n buildkit-operator apply -f deploy/cert/.certs/*-secret.yaml
 
 # 3. control plane (buildd Deployment + RBAC + buildkitd.toml ConfigMap)
-helm upgrade --install buildcat deploy/helm/buildcat -n buildcat --create-namespace
+helm upgrade --install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --create-namespace
 
 # 4. (optional) warm node-pool headroom
 kubectl apply -f deploy/warm-pool.yaml
 ```
 
-Images (`buildd`, `companion`) are built and pushed to `ghcr.io/socialgouv/buildcat-*` by the
+Images (`buildd`, `companion`) are built and pushed to `ghcr.io/socialgouv/buildkit-operator-*` by the
 [`images`](.github/workflows/images.yml) GitHub Actions workflow. For a private registry, give the
-namespace a pull secret and attach it to the `default` and `buildcat-buildd` ServiceAccounts.
+namespace a pull secret and attach it to the `default` and `buildkit-operator-buildd` ServiceAccounts.
 
 ### ⚠️ Admission policy (Kyverno / restricted PSS)
 
@@ -178,13 +178,13 @@ that mutate rule (the precedented pattern for CI/build namespaces), or switch `s
 # build via the CLI (resolves the key, routes through buildd, builds via buildx remote+mTLS)
 build --repo github.com/acme/app --arch amd64 -t registry/acme/app:sha --push .
 
-# monorepo: --name (env BUILDCAT_NAME) segments one repo into per-component daemons + caches
+# monorepo: --name (env BUILDKIT_OPERATOR_NAME) segments one repo into per-component daemons + caches
 build --repo github.com/acme/monorepo --name api --arch amd64 -t registry/acme/api:sha --push .
 
 # or just talk to the buildd API
-curl -XPOST http://buildcat-buildd.buildcat.svc:8080/route   -d '{"repo":"github.com/acme/app","arch":"amd64"}'
-curl -XPOST http://buildcat-buildd.buildcat.svc:8080/prewarm -d '{"repo":"github.com/acme/app","arch":"amd64"}'   # on git push
-curl -XPOST http://buildcat-buildd.buildcat.svc:8080/route   -d '{"repo":"...","arch":"amd64","untrusted":true}'   # fork PR -> isolated daemon
+curl -XPOST http://buildkit-operator-buildd.buildkit-operator.svc:8080/route   -d '{"repo":"github.com/acme/app","arch":"amd64"}'
+curl -XPOST http://buildkit-operator-buildd.buildkit-operator.svc:8080/prewarm -d '{"repo":"github.com/acme/app","arch":"amd64"}'   # on git push
+curl -XPOST http://buildkit-operator-buildd.buildkit-operator.svc:8080/route   -d '{"repo":"...","arch":"amd64","untrusted":true}'   # fork PR -> isolated daemon
 ```
 
 The cold cache is a **project policy**, not a client concern: when buildd is configured with an S3

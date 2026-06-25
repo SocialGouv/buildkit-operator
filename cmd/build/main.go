@@ -1,8 +1,8 @@
-// Command build is the buildcat client CLI / CI entrypoint: a thin, drop-in-ish
+// Command build is the buildkit-operator client CLI / CI entrypoint: a thin, drop-in-ish
 // `docker build` that routes every build to the one hot vanilla buildkitd that
 // serves its (project, arch).
 //
-// The whole point of buildcat is cache sharing: concurrent builds of the same
+// The whole point of buildkit-operator is cache sharing: concurrent builds of the same
 // project must hit the same daemon so they share its layer cache and its
 // `RUN --mount=type=cache` mounts. That only works if every build resolves to
 // the *same* project key. So this CLI does NOT invent its own key scheme — it
@@ -15,7 +15,7 @@
 //     router.RouteResponse{Key, Endpoint, Namespace} — the mTLS address of the
 //     daemon's Service.
 //  3. BUILD via the buildx `remote` driver: create an idempotent
-//     `buildcat-<key>` builder pointed at the endpoint (with the client mTLS
+//     `buildkit-operator-<key>` builder pointed at the endpoint (with the client mTLS
 //     material), then `docker buildx build ...` streaming progress straight
 //     through.
 //
@@ -25,10 +25,10 @@
 // Environment variables (every flag has an env fallback so --help shows the
 // effective value):
 //
-//	BUILDCAT_BUILDD_URL     base URL of buildd          (default http://buildd.buildcat.svc:8080)
-//	BUILDCAT_CLIENT_CERTS   dir with ca.pem/cert.pem/key.pem for the remote driver mTLS
-//	                        (default $HOME/.buildcat/certs)
-//	BUILDCAT_NAME           optional monorepo component (segments the cache identity)
+//	BUILDKIT_OPERATOR_BUILDD_URL     base URL of buildd          (default http://buildd.buildkit-operator.svc:8080)
+//	BUILDKIT_OPERATOR_CLIENT_CERTS   dir with ca.pem/cert.pem/key.pem for the remote driver mTLS
+//	                        (default $HOME/.buildkit-operator/certs)
+//	BUILDKIT_OPERATOR_NAME           optional monorepo component (segments the cache identity)
 //
 // The S3 cold cache is a PROJECT policy, not a client concern: when buildd has a bucket configured
 // it returns the per-project cache reference on /route and this CLI applies it automatically — no S3
@@ -51,7 +51,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/socialgouv/buildcat/internal/router"
+	"github.com/socialgouv/buildkit-operator/internal/router"
 )
 
 // config holds the resolved CLI configuration. Cobra defaults are env-aware
@@ -84,7 +84,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "build [flags] [CONTEXT]",
-		Short: "buildcat client: route to the project's hot buildkitd and build via buildx remote",
+		Short: "buildkit-operator client: route to the project's hot buildkitd and build via buildx remote",
 		Long: "build resolves the project key for (repo, target, arch), asks buildd to route it to " +
 			"the one hot vanilla buildkitd serving that project, then runs `docker buildx build` " +
 			"against that daemon so concurrent builds share its layer and cache-mount caches.",
@@ -101,13 +101,13 @@ func newRootCmd() *cobra.Command {
 	}
 
 	f := cmd.Flags()
-	f.StringVar(&cfg.repo, "repo", os.Getenv("BUILDCAT_REPO"),
+	f.StringVar(&cfg.repo, "repo", os.Getenv("BUILDKIT_OPERATOR_REPO"),
 		"source repository identity (empty = derive from git remote.origin.url, then context basename)")
-	f.StringVar(&cfg.name, "name", os.Getenv("BUILDCAT_NAME"),
+	f.StringVar(&cfg.name, "name", os.Getenv("BUILDKIT_OPERATOR_NAME"),
 		"optional monorepo component (image/path) — segments the cache identity so each image gets its own daemon")
-	f.StringVar(&cfg.target, "target", os.Getenv("BUILDCAT_TARGET"),
+	f.StringVar(&cfg.target, "target", os.Getenv("BUILDKIT_OPERATOR_TARGET"),
 		"Dockerfile target stage (also part of the cache identity)")
-	f.StringVar(&cfg.arch, "arch", envOr("BUILDCAT_ARCH", defaultArch()),
+	f.StringVar(&cfg.arch, "arch", envOr("BUILDKIT_OPERATOR_ARCH", defaultArch()),
 		"build architecture: amd64 | arm64 (default mapped from runtime.GOARCH)")
 	f.StringVarP(&cfg.contextDir, "context", "c", ".",
 		"build context directory")
@@ -121,9 +121,9 @@ func newRootCmd() *cobra.Command {
 		"buildx output destination (e.g. type=local,dest=out); mutually exclusive with --push")
 	f.StringVar(&cfg.progress, "progress", "auto",
 		"progress output mode: auto | plain | tty | rawjson")
-	f.StringVar(&cfg.builddURL, "buildd-url", envOr("BUILDCAT_BUILDD_URL", "http://buildd.buildcat.svc:8080"),
+	f.StringVar(&cfg.builddURL, "buildd-url", envOr("BUILDKIT_OPERATOR_BUILDD_URL", "http://buildd.buildkit-operator.svc:8080"),
 		"base URL of the buildd control plane; routing POSTs to <url>/route")
-	f.StringVar(&cfg.clientCerts, "client-certs", envOr("BUILDCAT_CLIENT_CERTS", defaultCertsDir()),
+	f.StringVar(&cfg.clientCerts, "client-certs", envOr("BUILDKIT_OPERATOR_CLIENT_CERTS", defaultCertsDir()),
 		"directory holding ca.pem, cert.pem and key.pem for the remote driver mTLS")
 	f.BoolVar(&cfg.dryRun, "dry-run", false,
 		"resolve + route, then print the buildx argv without creating the builder or building")
@@ -183,7 +183,7 @@ func run(ctx context.Context, cfg *config) error {
 		"key", resp.Key, "endpoint", resp.Endpoint, "namespace", resp.Namespace)
 
 	// 3. BUILD.
-	builder := "buildcat-" + resp.Key
+	builder := "buildkit-operator-" + resp.Key
 	buildArgs := cfg.buildxBuildArgs(builder, resp)
 
 	if cfg.dryRun {
@@ -390,8 +390,8 @@ func runStreaming(ctx context.Context, name string, args []string) error {
 	return cmd.Run()
 }
 
-// defaultArch maps the host GOARCH to a buildcat arch via the shared router normalizer (the same
-// one buildd uses), defaulting to amd64 for anything outside buildcat's supported set.
+// defaultArch maps the host GOARCH to a buildkit-operator arch via the shared router normalizer (the same
+// one buildd uses), defaulting to amd64 for anything outside buildkit-operator's supported set.
 func defaultArch() string {
 	if a := router.NormalizeArch(runtime.GOARCH); a == "amd64" || a == "arm64" {
 		return a
@@ -399,13 +399,13 @@ func defaultArch() string {
 	return "amd64"
 }
 
-// defaultCertsDir returns $HOME/.buildcat/certs, or a relative fallback when
+// defaultCertsDir returns $HOME/.buildkit-operator/certs, or a relative fallback when
 // HOME is unset (rare; keeps the default printable in --help).
 func defaultCertsDir() string {
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".buildcat", "certs")
+		return filepath.Join(home, ".buildkit-operator", "certs")
 	}
-	return filepath.Join(".buildcat", "certs")
+	return filepath.Join(".buildkit-operator", "certs")
 }
 
 // envOr returns the env var value or a fallback when unset/empty.

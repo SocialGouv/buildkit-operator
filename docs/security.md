@@ -1,8 +1,8 @@
 # Security model
 
-This documents the security posture of buildcat, the **one hard constraint** rootless BuildKit
+This documents the security posture of buildkit-operator, the **one hard constraint** rootless BuildKit
 imposes (and why it is not negotiable), the **admission-policy friction** on a hardened platform and
-its fix, and the threat-model improvements buildcat makes over a single shared daemon.
+its fix, and the threat-model improvements buildkit-operator makes over a single shared daemon.
 
 ## The incompressible constraint: rootless `buildkitd` needs `no_new_privs` OFF
 
@@ -25,7 +25,7 @@ Symptoms when this is wrong (both hit and fixed during bring-up):
 - `allowPrivilegeEscalation: false` ⇒ `newuidmap: Could not set caps` ⇒ crash-loop.
 - missing `appArmorProfile: Unconfined` ⇒ `failed to share mount point: permission denied`.
 
-**This is a property of rootless BuildKit, not of buildcat.** Any rootless buildkit on Kubernetes —
+**This is a property of rootless BuildKit, not of buildkit-operator.** Any rootless buildkit on Kubernetes —
 including the existing `buildkit-service` — runs with exactly this posture. The pods remain
 **non-root and unprivileged**; the only thing relaxed is `no_new_privs` (plus the default seccomp/
 AppArmor filters, which the rootless engine manages itself). The alternatives are heavier, not
@@ -47,7 +47,7 @@ The fabrique OVH platform ships a Kyverno `ClusterPolicy` (`add-custom-mas-secur
 > exclude list **through GitOps**, not a live `kubectl edit`. See
 > [operations.md](operations.md#kyverno-exemption).
 
-The buildcat memory captures this as a reusable platform fact: *Kyverno blocks rootless buildkit;
+The buildkit-operator memory captures this as a reusable platform fact: *Kyverno blocks rootless buildkit;
 exempt the daemon namespace (precedent: arc-runners).*
 
 ## The control plane is locked down
@@ -69,12 +69,12 @@ It needs no volumes and no privileges — it only reads/writes CRDs and hands Co
 **names** to the daemon pods it renders. RBAC is scoped to its own CRDs plus the
 StatefulSet/Service/PVC/VolumeSnapshot/Lease verbs it actually uses.
 
-## Where buildcat is actually *more* secure than a shared daemon
+## Where buildkit-operator is actually *more* secure than a shared daemon
 
 The daemon posture is identical to a shared service; the improvement is in **blast radius and
 isolation**, which a single shared `buildkitd` cannot offer:
 
-| Risk on a shared daemon | buildcat |
+| Risk on a shared daemon | buildkit-operator |
 |---|---|
 | **Cross-project cache poisoning** — any project's build can write cache that another project reads. | Each `(project, arch)` gets its **own daemon and its own PVC**. There is no shared writable cache to poison across projects. |
 | **Untrusted fork PRs** run with the same cache-write access as trusted builds. | `untrusted: true` routes to a `ForkKey` daemon: **ephemeral, seeded read-only from the project snapshot, with no write-back**. A malicious fork cannot poison the project's warm cache. The fork spec comes from the shared `DeriveChild(parent, snapshot, ForkChild, key)` policy — the *same* derivation the M5 fan-out uses (`CloneChild`), so isolation behaviour can't silently diverge between the two paths. |
@@ -83,10 +83,10 @@ isolation**, which a single shared `buildkitd` cannot offer:
 
 ## Honest tradeoffs
 
-- **Same daemon hardening ceiling.** buildcat does **not** make the buildkit daemon more locked down
+- **Same daemon hardening ceiling.** buildkit-operator does **not** make the buildkit daemon more locked down
   than the shared service — both must relax `no_new_privs`. If your threat model cannot tolerate
   that at all, the answer is a sandboxed runtime (gVisor/Kata/Sysbox) or VM-isolated builders, which
-  is orthogonal to buildcat and applies equally to any buildkit deployment.
+  is orthogonal to buildkit-operator and applies equally to any buildkit deployment.
 - **Public exposure is one shared gateway LB.** Daemons stay `ClusterIP`; off-cluster CI reaches all
   of them through a **single** SNI gateway LoadBalancer (not one LB per daemon), so external surface
   is fixed and small regardless of project count. mTLS stays end-to-end — the gateway terminates no

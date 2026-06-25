@@ -1,4 +1,4 @@
-// Command companion is the buildcat sidecar that runs next to a vanilla
+// Command companion is the buildkit-operator sidecar that runs next to a vanilla
 // buildkitd container in a per-(project,arch) pod.
 //
 // One hot buildkitd serves a single cache that lives on a Cinder gen2 PVC
@@ -57,7 +57,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "companion",
-		Short:         "buildcat buildkitd sidecar (health, inode GC backstop, graceful drain)",
+		Short:         "buildkit-operator buildkitd sidecar (health, inode GC backstop, graceful drain)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -67,25 +67,25 @@ func newRootCmd() *cobra.Command {
 
 	f := cmd.Flags()
 	f.StringVar(&cfg.buildkitAddr, "buildkit-addr",
-		envOr("BUILDCAT_BUILDKIT_ADDR", "unix:///run/user/1000/buildkit/buildkitd.sock"),
+		envOr("BUILDKIT_OPERATOR_BUILDKIT_ADDR", "unix:///run/user/1000/buildkit/buildkitd.sock"),
 		"buildkitd address passed to buildctl --addr")
 	f.StringVar(&cfg.cacheDir, "cache-dir",
-		envOr("BUILDCAT_CACHE_DIR", "/home/user/.local/share/buildkit"),
+		envOr("BUILDKIT_OPERATOR_CACHE_DIR", "/home/user/.local/share/buildkit"),
 		"buildkitd data dir on the Cinder PVC; statfs'd for the inode backstop")
 	f.StringVar(&cfg.listen, "listen",
-		envOr("BUILDCAT_LISTEN", ":8080"),
+		envOr("BUILDKIT_OPERATOR_LISTEN", ":8080"),
 		"address for the health/metrics HTTP server")
 	f.DurationVar(&cfg.inodeCheckInterval, "inode-check-interval",
-		envDurationOr("BUILDCAT_INODE_CHECK_INTERVAL", 60*time.Second),
+		envDurationOr("BUILDKIT_OPERATOR_INODE_CHECK_INTERVAL", 60*time.Second),
 		"interval between inode usage checks on the cache dir")
 	f.Float64Var(&cfg.inodeThreshold, "inode-threshold",
-		envFloatOr("BUILDCAT_INODE_THRESHOLD", 0.95),
+		envFloatOr("BUILDKIT_OPERATOR_INODE_THRESHOLD", 0.95),
 		"inode usage ratio above which the companion runs `buildctl prune --all`")
 	f.DurationVar(&cfg.drainSeconds, "drain-seconds",
-		envDurationOr("BUILDCAT_DRAIN_SECONDS", 120*time.Second),
+		envDurationOr("BUILDKIT_OPERATOR_DRAIN_SECONDS", 120*time.Second),
 		"max time to drain in-flight work after SIGTERM before exiting")
 	f.StringVar(&cfg.drainDoneFile, "drain-done-file",
-		envOr("BUILDCAT_DRAIN_DONE_FILE", ""),
+		envOr("BUILDKIT_OPERATOR_DRAIN_DONE_FILE", ""),
 		"optional path that, once it exists, short-circuits the drain wait")
 
 	return cmd
