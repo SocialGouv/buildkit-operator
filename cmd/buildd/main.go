@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	crconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -342,18 +343,19 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, router.RouteResponse{Key: key, Endpoint: router.Endpoint(key, s.cfg.Namespace, s.cfg.Port), Namespace: s.cfg.Namespace, Cache: s.cacheFor(key)})
 }
 
-// touchLastBuild marks the project active now, which keeps/brings desiredReplicas to 1. It uses a
-// MergeFrom patch (not a full Status().Update) so it touches ONLY LastBuildTime: it can't be lost to
-// a resourceVersion conflict with the reconciler's status write, and it can't clobber phase/replicas.
+// touchLastBuild marks the project active now, which keeps/brings desiredReplicas to 1. It re-Gets
+// and retries on conflict: an earlier version did a single Status().Update and ignored the 409 when
+// it raced the reconciler, leaving LastBuildTime unset so the project scaled straight back to 0.
 func (s *routeServer) touchLastBuild(ctx context.Context, key string) {
-	var bp bkov1.BuildProject
-	if err := s.c.Get(ctx, types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp); err != nil {
-		return
-	}
-	orig := bp.DeepCopy()
-	now := metav1.Now()
-	bp.Status.LastBuildTime = &now
-	_ = s.c.Status().Patch(ctx, &bp, client.MergeFrom(orig))
+	_ = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var bp bkov1.BuildProject
+		if err := s.c.Get(ctx, types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp); err != nil {
+			return err
+		}
+		now := metav1.Now()
+		bp.Status.LastBuildTime = &now
+		return s.c.Status().Update(ctx, &bp)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
