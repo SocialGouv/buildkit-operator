@@ -47,6 +47,9 @@ spec:
             {{- if .Values.sandbox.runtimeClass }}
             - --sandbox-runtime-class={{ .Values.sandbox.runtimeClass }}
             {{- end }}
+            {{- if or .Values.daemonScheduling.nodeSelector .Values.daemonScheduling.tolerations .Values.daemonScheduling.affinity }}
+            - {{ printf "--daemon-scheduling=%s" (.Values.daemonScheduling | toJson) | quote }}
+            {{- end }}
             - --port={{ .Values.buildkit.port }}
             - --api-listen=:{{ .Values.service.port }}
             - --metrics-addr=:{{ .Values.metrics.port }}

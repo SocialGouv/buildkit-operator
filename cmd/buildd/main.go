@@ -56,6 +56,7 @@ func main() {
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
 	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
 	flag.StringVar(&cfg.SandboxRuntimeClass, "sandbox-runtime-class", "", "RuntimeClass applied to UNTRUSTED fork daemons only (e.g. sysbox-runc / gvisor); empty = the default runtime")
+	daemonScheduling := flag.String("daemon-scheduling", "", `JSON {"nodeSelector":{},"tolerations":[],"affinity":{}} to pin daemon pods to a dedicated build nodepool (empty = cluster default)`)
 	flag.StringVar(&gatewayHost, "gateway-host", "", "gateway domain for off-cluster CI: /route returns tcp://<daemon>.<gateway-host>:<port> (empty = in-cluster ClusterIP DNS)")
 	flag.StringVar(&cfg.SnapshotClass, "snapshot-class", "", "VolumeSnapshotClass for durability snapshots (empty = disabled)")
 	keepSnaps := flag.Int("keep-snapshots", 3, "durability snapshots retained per project")
@@ -78,6 +79,11 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	log := ctrl.Log.WithName("buildd")
+
+	if err := cfg.SchedulingFromJSON(*daemonScheduling); err != nil {
+		log.Error(err, "invalid --daemon-scheduling")
+		panic(err)
+	}
 
 	restCfg, err := crconfig.GetConfigWithContext(kubeContext)
 	if err != nil {

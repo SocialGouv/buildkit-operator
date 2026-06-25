@@ -5,6 +5,7 @@
 package builder
 
 import (
+	"encoding/json"
 	"fmt"
 
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
@@ -29,6 +30,34 @@ type Config struct {
 	Companion           bool   // include the companion sidecar (default true; off needs no custom image)
 	S3CredsSecret       string // Secret with AWS_ACCESS_KEY_ID/SECRET for the s3 cold cache (env on the daemon)
 	SandboxRuntimeClass string // RuntimeClass for UNTRUSTED (fork) daemons only (e.g. sysbox-runc / gvisor); empty = runc
+
+	// Scheduling for the per-project daemon pods. Set these to pin daemons onto a dedicated build
+	// nodepool (nodeSelector to attract them + a toleration for its taint) so build spikes and
+	// untrusted RUN code stay off the app / control-plane nodes. All empty = the cluster default.
+	DaemonNodeSelector map[string]string
+	DaemonTolerations  []corev1.Toleration
+	DaemonAffinity     *corev1.Affinity
+}
+
+// SchedulingFromJSON fills the daemon scheduling fields from a JSON object
+// {"nodeSelector":{...},"tolerations":[...],"affinity":{...}} — the form the chart renders from its
+// daemonScheduling values. An empty string (or "{}") is a no-op, leaving the cluster default.
+func (c *Config) SchedulingFromJSON(s string) error {
+	if s == "" || s == "{}" {
+		return nil
+	}
+	var sched struct {
+		NodeSelector map[string]string   `json:"nodeSelector"`
+		Tolerations  []corev1.Toleration `json:"tolerations"`
+		Affinity     *corev1.Affinity    `json:"affinity"`
+	}
+	if err := json.Unmarshal([]byte(s), &sched); err != nil {
+		return fmt.Errorf("daemon scheduling JSON: %w", err)
+	}
+	c.DaemonNodeSelector = sched.NodeSelector
+	c.DaemonTolerations = sched.Tolerations
+	c.DaemonAffinity = sched.Affinity
+	return nil
 }
 
 const (
@@ -193,7 +222,11 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 					SecurityContext: podSec,
 					// Untrusted fork daemons run under a sandboxed runtime when one is configured —
 					// the build executes attacker-controlled code, so isolate it harder than runc.
-					RuntimeClassName:              runtimeClassFor(bp, cfg),
+					RuntimeClassName: runtimeClassFor(bp, cfg),
+					// Pin daemons to a dedicated build nodepool when configured (off by default).
+					NodeSelector:                  cfg.DaemonNodeSelector,
+					Tolerations:                   cfg.DaemonTolerations,
+					Affinity:                      cfg.DaemonAffinity,
 					Containers:                    containers,
 					TerminationGracePeriodSeconds: ptr[int64](120),
 					Volumes:                       volumes,
