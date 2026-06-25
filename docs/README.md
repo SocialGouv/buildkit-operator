@@ -23,6 +23,7 @@ on a real OVH Managed Kubernetes cluster (GRA9, Cinder gen2).
 | [ci-integration.md](ci-integration.md) | The GitHub Action and the CI-agnostic core (GitHub/GitLab/any runner), public exposure (LB + mTLS + cert SANs + **bearer-token auth** + the `gateway-ip` escape hatch), **supply-chain attestations** (SLSA/SBOM/cosign), and the example repo. |
 | [benchmarks-phase0.md](benchmarks-phase0.md) | The Cinder gen2 storage benchmark that drives the config values (idle timeout, cold-start rate limit, fan-out viability). |
 | [operations.md](operations.md) | Runbook: deploy, expose publicly, exempt Kyverno, run HA, observe, and tear down cleanly. |
+| [onboarding.md](onboarding.md) | Wire a GitHub repo to the build daemons: org-level credentials set once + a copy-paste per-repo workflow. |
 
 ## In short
 
