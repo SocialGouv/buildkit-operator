@@ -1,5 +1,12 @@
 
 
+## [0.5.1](https://github.com/socialgouv/buildkit-operator/compare/v0.5.0...v0.5.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **ci:** lowercase image owner for cosign + disable matrix fail-fast ([19a182a](https://github.com/socialgouv/buildkit-operator/commit/19a182a1988bd544110ecd4eb31bb62c7ce2055b))
+
 ## [0.5.0](https://github.com/socialgouv/buildkit-operator/compare/v0.4.1...v0.5.0) (2026-06-25)
 
 
