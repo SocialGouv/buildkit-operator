@@ -1,3 +1,8 @@
+{{- if eq .Values.service.type "LoadBalancer" }}
+  {{- if and (not .Values.auth.tokenSecret) (not .Values.service.loadBalancerSourceRanges) }}
+    {{- fail "service.type=LoadBalancer exposes the buildd /route API off-cluster: set auth.tokenSecret (bearer token) or service.loadBalancerSourceRanges (allowlisted IPs) — otherwise anyone can spin up build daemons." }}
+  {{- end }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -12,6 +17,10 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
+  {{- with .Values.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     {{- include "buildkit-operator.buildd.selectorLabels" . | nindent 4 }}
   ports:

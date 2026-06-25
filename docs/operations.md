@@ -24,9 +24,11 @@ kubectl apply -f deploy/warm-pool.yaml
 Default Helm values worth knowing: `replicaCount: 2`, `leaderElection: true`, `service.type:
 ClusterIP` (daemons are always ClusterIP; off-cluster CI uses the SNI gateway — see below),
 `snapshotClassName: csi-cinder-snapclass-in-use-v1`, `maxColdStarts: 8`, `s3.bucket: ""` (cold cache
-off), `gateway.host: ""` (gateway off), images `ghcr.io/socialgouv/buildkit-operator-{buildd,companion,gateway}:dev`.
-Images are built and pushed by the [`images`](../.github/workflows/images.yml) workflow; a private
-registry needs a pull secret on the `default` and `buildkit-operator-buildd` ServiceAccounts.
+off), `gateway.host: ""` (gateway off). Image tags default to the chart **appVersion** (an immutable release
+tag) — override `image.tag` / `companion.image.tag` / `gateway.image.tag` only for local dev (e.g.
+`dev`); never ship a floating tag to prod. Images are built and pushed by the
+[`images`](../.github/workflows/images.yml) workflow; a private registry needs a pull secret on the
+`default` and `buildkit-operator-buildd` ServiceAccounts.
 
 ### mTLS via cert-manager (instead of mkcert)
 
@@ -99,6 +101,37 @@ kubectl -n buildkit-operator delete pod <leader-pod>             # follower take
 
 The reconciler runs on the leader only; `/route` is served by both replicas.
 
+## Upgrade
+
+Pinned image tags follow the chart `appVersion`, so an upgrade is a chart bump:
+
+```bash
+# re-apply CRDs first (they are NOT upgraded by `helm upgrade` — chart CRDs install once)
+make manifests && kubectl apply -f deploy/crd
+
+helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --reuse-values
+kubectl -n buildkit-operator rollout status deploy/buildkit-operator-buildd
+```
+
+buildd rolls with leader election (the follower keeps `/route` serving). Per-project daemons are
+**not** restarted by a control-plane upgrade; a changed daemon pod template (buildkit image bump, S3
+creds) is rolled by the reconciler via the StatefulSet template hash, and the retained PVC survives the
+restart. Roll back with `helm rollback buildkit-operator -n buildkit-operator`.
+
+## Certificate rotation
+
+- **cert-manager** (`certManager.enabled=true`): leaf certs auto-renew at `renewBefore` (default 30d
+  before a 1y expiry); nothing to do. Daemons pick up the rotated Secret on their next restart.
+- **mkcert / openssl** (`create-certs.sh`): no auto-renewal — regenerate and re-apply before expiry,
+  then restart daemons so they re-read the cert:
+  ```bash
+  GATEWAY_HOST=builds.example.com deploy/cert/create-certs.sh buildkit-operator   # GATEWAY_HOST optional
+  kubectl -n buildkit-operator apply -f deploy/cert/.certs/*-secret.yaml
+  kubectl -n buildkit-operator rollout restart statefulset -l app.kubernetes.io/component=buildkitd
+  ```
+  Redistribute the **client** Secret to CI if the CA changed. Keep `renewBefore < duration` when using
+  cert-manager (a `renewBefore` ≥ `duration` never renews).
+
 ## Observe
 
 Prometheus metrics on `--metrics-addr` (`:8081`): `buildkit_operator_routes_total`,
@@ -164,3 +197,18 @@ Daemon Services are `ClusterIP`, so deleting `BuildProject`s frees no LoadBalanc
 LBs are chart-level (the buildd `/route` Service and the shared gateway when exposed); `helm
 uninstall` removes them. Afterwards check `kubectl -n buildkit-operator get svc` shows no stray `LoadBalancer`
 (public IPs cost money and surface).
+
+### Namespace stuck `Terminating` on a VolumeSnapshot
+
+If you delete the whole namespace while durability snapshots exist, it can hang in `Terminating`: a
+`VolumeSnapshot` keeps a `snapshot.storage.kubernetes.io/volumesnapshot-bound-protection` finalizer
+until the snapshotter releases it, and a wedged Cinder backend deletion stalls that. Prefer deleting
+`BuildProject`s first (above) so the operator reaps the cache. To unblock a namespace that is already
+stuck on a **test** snapshot (this reclaims the backend snapshot via the content's `Delete` policy):
+
+```bash
+kubectl --context <ctx> -n <ns> get volumesnapshot                    # find the holder
+kubectl --context <ctx> -n <ns> delete volumesnapshot <name> --wait=false
+# if the finalizer still hangs after the content is gone (test debris only — may orphan a backend snap):
+kubectl --context <ctx> -n <ns> patch volumesnapshot <name> --type=merge -p '{"metadata":{"finalizers":null}}'
+```

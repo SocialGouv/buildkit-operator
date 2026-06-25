@@ -18,7 +18,9 @@ leaderElection: true
 # --- buildd: the controller-runtime manager + HTTP /route API on :8080 -------
 image:
   repository: ghcr.io/socialgouv/buildkit-operator-buildd
-  tag: dev
+  # Empty = pin to the chart appVersion (an immutable release tag) for reproducible deploys.
+  # Override only for local/dev images (e.g. tag: dev). Never ship a floating tag to prod.
+  tag: ""
   pullPolicy: IfNotPresent
 
 # --- companion: the inode-GC backstop sidecar -------------------------------
@@ -31,7 +33,9 @@ companion:
   enabled: true
   image:
     repository: ghcr.io/socialgouv/buildkit-operator-companion
-    tag: dev
+    # Empty = pin to the chart appVersion. The companion bundles buildctl and must stay in lockstep
+    # with the buildd release (its buildctl talks to the daemon); keep it on the same version.
+    tag: ""
     pullPolicy: IfNotPresent
 
 # --- buildkitd: the per-project daemon image --------------------------------
@@ -157,7 +161,9 @@ gateway:
   host: "" # e.g. builds.buildkit-operator.example.com
   image:
     repository: ghcr.io/socialgouv/buildkit-operator-gateway
-    tag: dev
+    # Empty = pin to the chart appVersion (immutable). The gateway is the public-facing LB front; never
+    # ship it on a floating tag.
+    tag: ""
   service:
     type: LoadBalancer
     # A build holds ONE long-lived mTLS stream through this LB. On OVH/OpenStack LBs the default
@@ -175,6 +181,10 @@ gateway:
 service:
   port: 8080
   type: ClusterIP
+  # SAFETY: exposing /route off-cluster (type: LoadBalancer) without auth lets anyone spin up daemons.
+  # The chart REFUSES to render a LoadBalancer buildd Service unless you set auth.tokenSecret OR restrict
+  # the source IPs here. Leave empty for in-cluster (ClusterIP) use.
+  loadBalancerSourceRanges: []
   # /route blocks up to --route-wait (180s) for a COLD daemon to become Ready. The OVH/OpenStack LB's
   # default member-data idle timeout (50s) would cut that wait → curl "(52) Empty reply". Raise it past
   # route-wait so first-build cold starts complete. Honored by the OpenStack CCM (milliseconds).

@@ -57,7 +57,11 @@ func drain(ctx context.Context, cfg *config, logger *slog.Logger) {
 
 		select {
 		case <-ctx.Done():
-			// A second signal (or forced ctx cancellation) cuts the drain short.
+			// Honoured if a caller passes a cancellable context. NB: run() passes context.Background()
+			// here on purpose — the signal context is already cancelled by the first SIGTERM, so passing
+			// it would make this return immediately and skip the drain entirely. A second-SIGTERM cut
+			// would need its own context wired in run(); today the drain runs to drain-seconds or the
+			// done-file.
 			logger.Warn("drain interrupted by context cancellation")
 			return
 		case <-time.After(sleep):

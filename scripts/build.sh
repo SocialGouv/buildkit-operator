@@ -68,8 +68,10 @@ docker buildx create --name buildkit-operator --driver remote \
   --driver-opt "cacert=$certs/ca.pem,cert=$certs/cert.pem,key=$certs/key.pem" \
   "$endpoint" --use >/dev/null
 
-# 3. Assemble the buildx args.
-set -- buildx build --builder buildkit-operator
+# 3. Assemble the buildx args. --metadata-file captures the resulting image digest so the Action can
+# expose it as an output (downstream sign/scan/deploy by digest).
+meta="$certs/meta.json"
+set -- buildx build --builder buildkit-operator --metadata-file "$meta"
 [ -n "${DOCKERFILE:-}" ] && set -- "$@" --file "$DOCKERFILE"
 [ -n "${TARGET:-}" ] && set -- "$@" --target "$TARGET"
 for t in ${TAGS:?set TAGS}; do set -- "$@" --tag "$t"; done
@@ -92,4 +94,14 @@ fi
 # Run the build (not exec'd, so the EXIT trap can release the inflight build afterwards).
 status=0
 docker "$@" "$BUILD_CONTEXT" || status=$?
+
+# Surface the image digest (present once pushed). Echo it always; export it as a GitHub Action output
+# when running under Actions so callers can sign/scan/deploy by digest.
+if [ "$status" -eq 0 ] && [ -f "$meta" ]; then
+  digest="$(jq -r '."containerimage.digest" // empty' "$meta" 2>/dev/null || true)"
+  if [ -n "$digest" ]; then
+    echo "buildkit-operator: image digest $digest"
+    [ -n "${GITHUB_OUTPUT:-}" ] && echo "digest=$digest" >> "$GITHUB_OUTPUT"
+  fi
+fi
 exit "$status"

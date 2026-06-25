@@ -34,8 +34,11 @@ nav:
   - Home: README.md
   - Architecture: architecture.md
   - CI integration: ci-integration.md
+  - Onboarding: onboarding.md
   - Storage & cold cache: storage-and-cold-cache.md
   - Security: security.md
+  - Sandboxed builds (Kata): sandboxed-builds.md
+  - Platform notes (OVH MKS): platform-ovh-mks.md
   - Performance: performance.md
   - Comparison vs buildkit-service: comparison-buildkit-service.md
   - Benchmarks (Phase 0): benchmarks-phase0.md

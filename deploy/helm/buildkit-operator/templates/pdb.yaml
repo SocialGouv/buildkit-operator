@@ -1,0 +1,36 @@
+# PodDisruptionBudgets keep the control plane available through voluntary disruptions (node drains,
+# cluster upgrades): without one, both replicas of a 2-replica Deployment can be evicted at once,
+# taking down the /route API (buildd) or the public SNI front (gateway) and stranding in-flight builds.
+{{- if gt (int .Values.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-buildd
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildd
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "buildkit-operator.buildd.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if .Values.gateway.host }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-gateway
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: gateway
+{{- end }}

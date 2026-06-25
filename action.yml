@@ -61,11 +61,17 @@ inputs:
     description: "cosign keyless-sign the pushed image. Requires push: true and the caller job to set permissions.id-token: write."
     default: "false"
 
+outputs:
+  digest:
+    description: "Image digest (sha256:...) of the build result. Populated when push: true."
+    value: ${{ steps.build.outputs.digest }}
+
 runs:
   using: composite
   steps:
-    - uses: docker/setup-buildx-action@v3
-    - shell: bash
+    - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+    - id: build
+      shell: bash
       env:
         BUILDKIT_OPERATOR_BUILDD_URL: ${{ inputs.buildd-url }}
         BUILDKIT_OPERATOR_CA: ${{ inputs.ca }}
@@ -86,7 +92,7 @@ runs:
         SBOM: ${{ inputs.sbom }}
       run: ${{ github.action_path }}/scripts/build.sh
     - if: ${{ inputs.sign == 'true' }}
-      uses: sigstore/cosign-installer@v3
+      uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
     - if: ${{ inputs.sign == 'true' }}
       shell: bash
       env:
