@@ -7,6 +7,7 @@ package builder
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/router"
@@ -29,7 +30,8 @@ type Config struct {
 	HealthPort          int32  // companion health port (8080)
 	Companion           bool   // include the companion sidecar (default true; off needs no custom image)
 	S3CredsSecret       string // Secret with AWS_ACCESS_KEY_ID/SECRET for the s3 cold cache (env on the daemon)
-	SandboxRuntimeClass string // RuntimeClass for UNTRUSTED (fork) daemons only (e.g. sysbox-runc / gvisor); empty = runc
+	SandboxRuntimeClass  string // RuntimeClass for UNTRUSTED (fork) daemons only (e.g. kata-clh / sysbox-runc); empty = runc
+	SandboxBuildkitImage string // NON-rootless buildkit image for sandboxed (Kata) forks; empty = derived from BuildkitImage by stripping "-rootless"
 
 	// Scheduling for the per-project daemon pods. Set these to pin daemons onto a dedicated build
 	// nodepool (nodeSelector to attract them + a toleration for its taint) so build spikes and
@@ -125,20 +127,28 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 	name := router.DaemonName(bp.Spec.Key)
 	replicas := int32(1)
 
+	// Under a sandbox runtime (e.g. a Kata microVM) the VM is the security boundary, so a fork daemon
+	// runs PRIVILEGED + non-rootless: rootless's setuid newuidmap can't run in the guest, and privileged
+	// is both safe inside the disposable VM and faster. Trusted (canonical) daemons are unaffected.
+	profile, image := bp.Spec.SecurityProfile, cfg.BuildkitImage
+	if sandboxedFork(bp, cfg) {
+		profile, image = bkov1.ProfilePrivileged, sandboxImage(cfg)
+	}
+
 	dataDir, sockAddr, runDir := rootlessDataDir, rootlessSock, rootlessRunDir
-	if bp.Spec.SecurityProfile == bkov1.ProfilePrivileged {
+	if profile == bkov1.ProfilePrivileged {
 		// The privileged daemon writes its socket under /run/buildkit, not /run/user/1000 — the
 		// shared `run` emptyDir must be mounted there in BOTH containers so the companion's buildctl
 		// probe can reach the socket (otherwise /readyz never goes ready and the pod never becomes Ready).
 		dataDir, sockAddr, runDir = privilegedData, privilegedSock, privilegedRun
 	}
 
-	podSec, daemonSec := securityContexts(bp.Spec.SecurityProfile)
+	podSec, daemonSec := securityContexts(profile)
 
 	daemon := corev1.Container{
 		Name:            "buildkitd",
-		Image:           cfg.BuildkitImage,
-		Args:            buildkitdArgs(bp.Spec.SecurityProfile, cfg.Port),
+		Image:           image,
+		Args:            buildkitdArgs(profile, cfg.Port),
 		SecurityContext: daemonSec,
 		Ports:           []corev1.ContainerPort{{Name: "buildkit", ContainerPort: cfg.Port, Protocol: corev1.ProtocolTCP}},
 		ReadinessProbe:  buildctlProbe(sockAddr, 5, 10),
@@ -150,7 +160,7 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			{Name: "run", MountPath: runDir},
 		},
 	}
-	if bp.Spec.SecurityProfile != bkov1.ProfilePrivileged {
+	if profile != bkov1.ProfilePrivileged {
 		daemon.VolumeMounts = append(daemon.VolumeMounts,
 			corev1.VolumeMount{Name: "config", MountPath: rootlessConfig})
 	}
@@ -190,7 +200,7 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 		{Name: "run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "certs", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: cfg.DaemonCertsSecret}}},
 	}
-	if bp.Spec.SecurityProfile != bkov1.ProfilePrivileged {
+	if profile != bkov1.ProfilePrivileged {
 		volumes = append(volumes, corev1.Volume{
 			Name: "config",
 			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -313,10 +323,25 @@ func securityContexts(profile string) (*corev1.PodSecurityContext, *corev1.Secur
 // runtimeClassFor returns the sandboxed RuntimeClass for UNTRUSTED (fork) daemons when one is
 // configured, else nil (trusted daemons use the cluster default runtime — runc — for full speed).
 func runtimeClassFor(bp *bkov1.BuildProject, cfg Config) *string {
-	if cfg.SandboxRuntimeClass != "" && router.IsForkKey(bp.Spec.Key) {
+	if sandboxedFork(bp, cfg) {
 		return ptr(cfg.SandboxRuntimeClass)
 	}
 	return nil
+}
+
+// sandboxedFork reports whether this daemon is an UNTRUSTED fork AND a sandbox runtime is configured —
+// the case where it runs in a microVM (Kata) as privileged + non-rootless instead of rootless + runc.
+func sandboxedFork(bp *bkov1.BuildProject, cfg Config) bool {
+	return cfg.SandboxRuntimeClass != "" && router.IsForkKey(bp.Spec.Key)
+}
+
+// sandboxImage is the NON-rootless buildkit image for sandboxed forks (rootless's newuidmap can't run
+// in the guest). Defaults to BuildkitImage with the "-rootless" suffix stripped.
+func sandboxImage(cfg Config) string {
+	if cfg.SandboxBuildkitImage != "" {
+		return cfg.SandboxBuildkitImage
+	}
+	return strings.TrimSuffix(cfg.BuildkitImage, "-rootless")
 }
 
 func ptr[T any](v T) *T { return &v }
