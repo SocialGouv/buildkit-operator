@@ -1,0 +1,42 @@
+site_name: buildkit-operator
+site_description: A distributed BuildKit build service — one hot vanilla buildkitd per (project, arch) on Kubernetes.
+site_url: https://socialgouv.github.io/buildkit-operator/
+repo_url: https://github.com/socialgouv/buildkit-operator
+docs_dir: docs
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle: { icon: material/weather-night, name: Switch to dark }
+    - scheme: slate
+      primary: indigo
+      toggle: { icon: material/weather-sunny, name: Switch to light }
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: README.md
+  - Architecture: architecture.md
+  - CI integration: ci-integration.md
+  - Storage & cold cache: storage-and-cold-cache.md
+  - Security: security.md
+  - Performance: performance.md
+  - Comparison vs buildkit-service: comparison-buildkit-service.md
+  - Benchmarks (Phase 0): benchmarks-phase0.md
+  - Operations: operations.md

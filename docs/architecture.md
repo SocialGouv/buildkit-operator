@@ -5,20 +5,18 @@ builds that should share a cache to the same daemon) and **lifecycle** (keep tha
 scale it to zero, snapshot it, clone it). It deliberately owns **nothing** at the storage layer:
 the daemon's content store, snapshots, and bbolt metadata are vanilla.
 
-```
-   client (CI runner)                         Kubernetes namespace `buildkit-operator`
-  ┌──────────────┐   POST /route          ┌──────────────────────────────────────────────┐
-  │  build.sh /  │ ─────────────────────► │  buildd (Deployment, replicas: 2, HA)         │
-  │  build CLI   │ ◄──── endpoint ─────── │   • controller-runtime manager (leader only)  │
-  └──────┬───────┘                        │   • HTTP API /route /prewarm (all replicas)   │
-         │ buildx remote (TCP + mTLS)     │   • Prometheus /metrics                        │
-         ▼                                └───────────────────┬──────────────────────────┘
-  ┌─────────────────────────┐  reconciles                     │ creates / scales / snapshots
-  │ StatefulSet-of-1         │ ◄───────────────────────────────┘
-  │  buildkitd (vanilla)     │   one per (project, arch)
-  │  + companion (sidecar)   │   Service :1234 (TCP + mTLS)  — always ClusterIP
-  │  + Cinder gen2 PVC (warm)│   (off-cluster CI reaches it via the shared SNI gateway)
-  └─────────────────────────┘
+```mermaid
+flowchart LR
+    ci["CI runner<br/>build.sh / build CLI"]
+    subgraph ns["Kubernetes namespace: buildkit-operator"]
+        buildd["<b>buildd</b> (Deployment ×2, HA)<br/>reconciler (leader) + /route /prewarm (all)"]
+        gw["<b>gateway</b><br/>shared SNI router (1 LB)"]
+        sts["<b>StatefulSet-of-1</b> per (project, arch)<br/>buildkitd (vanilla) + companion<br/>+ Cinder gen2 PVC (warm cache)<br/>Service :1234 — always ClusterIP"]
+        buildd -- "reconciles / scales / snapshots" --> sts
+        gw --> sts
+    end
+    ci -- "POST /route (endpoint)" --> buildd
+    ci -- "buildx remote (TCP + mTLS)" --> gw
 ```
 
 ## The routing key — the one invariant that matters
