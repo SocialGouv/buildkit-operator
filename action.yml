@@ -1,0 +1,64 @@
+name: "buildkit-operator build"
+description: "Build a container image via buildkit-operator: route to the project's hot buildkitd and build with buildx remote over mTLS (warm cache, optional S3 cold cache, monorepo-aware)."
+author: "SocialGouv"
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  buildd-url:
+    description: "buildd /route API URL (LoadBalancer/Ingress)."
+    required: true
+  ca:
+    description: "Client mTLS CA (PEM)."
+    required: true
+  cert:
+    description: "Client mTLS certificate (PEM)."
+    required: true
+  key:
+    description: "Client mTLS private key (PEM)."
+    required: true
+  tags:
+    description: "Image tag(s), whitespace-separated (e.g. ghcr.io/org/app:sha)."
+    required: true
+  repo:
+    description: "Project identity = the cache key. Defaults to the GitHub repository."
+    default: ${{ github.repository }}
+  name:
+    description: "Optional monorepo component — gives each image its own daemon + cache."
+    default: ""
+  arch:
+    description: "Build architecture: amd64 | arm64."
+    default: amd64
+  context:
+    description: "Build context path."
+    default: "."
+  file:
+    description: "Dockerfile path (default: Dockerfile in the context)."
+    default: ""
+  target:
+    description: "Dockerfile target stage."
+    default: ""
+  push:
+    description: "Push the result to the registry."
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: docker/setup-buildx-action@v3
+    - shell: bash
+      env:
+        BUILDKIT_OPERATOR_BUILDD_URL: ${{ inputs.buildd-url }}
+        BUILDKIT_OPERATOR_CA: ${{ inputs.ca }}
+        BUILDKIT_OPERATOR_CERT: ${{ inputs.cert }}
+        BUILDKIT_OPERATOR_KEY: ${{ inputs.key }}
+        REPO: ${{ inputs.repo }}
+        NAME: ${{ inputs.name }}
+        ARCH: ${{ inputs.arch }}
+        BUILD_CONTEXT: ${{ inputs.context }}
+        DOCKERFILE: ${{ inputs.file }}
+        TARGET: ${{ inputs.target }}
+        TAGS: ${{ inputs.tags }}
+        PUSH: ${{ inputs.push }}
+      run: ${{ github.action_path }}/scripts/build.sh

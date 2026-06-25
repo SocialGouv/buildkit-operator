@@ -55,10 +55,10 @@ flowchart LR
     ci["CI runner<br/>build.sh / build CLI"]
     s3[("S3 cold cache<br/>OVH Object Storage")]
     subgraph ns["Kubernetes namespace: buildkit-operator"]
-        buildd["<b>buildd</b> — control plane (HA)<br/>reconciler + /route /prewarm API"]
-        gw["<b>gateway</b><br/>shared SNI router (1 LB)"]
-        da["<b>buildkitd</b> · project A<br/>+ companion + gen2 PVC"]
-        db["<b>buildkitd</b> · project B<br/>+ companion + gen2 PVC"]
+        buildd["buildd — control plane (HA)<br/>reconciler + /route /prewarm API"]
+        gw["gateway<br/>shared SNI router (1 LB)"]
+        da["buildkitd · project A<br/>+ companion + gen2 PVC"]
+        db["buildkitd · project B<br/>+ companion + gen2 PVC"]
         buildd -- "reconciles<br/>STS + Service + PVC" --> da
         buildd -- reconciles --> db
         gw --> da
@@ -69,20 +69,6 @@ flowchart LR
     da -. "layers" .-> s3
     db -. "layers" .-> s3
 ```
-
-**Components** (this repo is a Go monorepo):
-
-| Path | What |
-|---|---|
-| [`api/v1alpha1`](api/v1alpha1) | CRD: `BuildProject` (cache identity + daemon lifecycle) |
-| [`internal/router`](internal/router) | the **stable routing key** — `ProjectKey(repo,name,target,arch)`; pure, shared by CLI and control plane |
-| [`internal/builder`](internal/builder) | renders the `buildkitd` `StatefulSet` + `Service` (gen2 PVC, security profiles) |
-| [`internal/controller`](internal/controller) | the `BuildProject` reconciler (scale, snapshot, fan-out, status) |
-| [`internal/metrics`](internal/metrics) | Prometheus collectors |
-| [`cmd/buildd`](cmd/buildd) | the control plane (manager + `/route` API) |
-| [`cmd/companion`](cmd/companion) | per-daemon sidecar: readiness, inode-GC backstop, clean drain |
-| [`cmd/build`](cmd/build) | the client CLI — a thin, drop-in-ish `docker build` |
-| [`deploy/`](deploy) | Helm chart, generated CRDs/RBAC, mTLS cert script, `buildkitd.toml`, warm-pool |
 
 **Routing rule (critical):** all builds that must share a cache **must resolve to the same key**
 ⇒ the same StatefulSet ⇒ the same daemon. The key is `"p" + sha256(normRepo [⏎ n:name] ⏎
@@ -142,10 +128,10 @@ sequenceDiagram
     participant G as gateway (SNI)
     participant D as buildkitd (ClusterIP)
     CI->>B: POST /route
-    B-->>CI: tcp://&lt;daemon&gt;.&lt;gateway-host&gt;:1234 (deterministic)
-    CI->>G: TLS ClientHello (SNI = &lt;daemon&gt;.&lt;gateway-host&gt;)
+    B-->>CI: tcp://daemon.gateway-host:1234 (deterministic)
+    CI->>G: TLS ClientHello (SNI = daemon.gateway-host)
     G->>G: peek SNI (no TLS termination)
-    G->>D: pipe to &lt;daemon&gt;.svc:1234
+    G->>D: pipe to daemon.svc:1234
     Note over CI,D: mTLS end-to-end — client-cert auth at the daemon
     D-->>CI: image built
 ```

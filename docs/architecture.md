@@ -9,9 +9,9 @@ the daemon's content store, snapshots, and bbolt metadata are vanilla.
 flowchart LR
     ci["CI runner<br/>build.sh / build CLI"]
     subgraph ns["Kubernetes namespace: buildkit-operator"]
-        buildd["<b>buildd</b> (Deployment ×2, HA)<br/>reconciler (leader) + /route /prewarm (all)"]
-        gw["<b>gateway</b><br/>shared SNI router (1 LB)"]
-        sts["<b>StatefulSet-of-1</b> per (project, arch)<br/>buildkitd (vanilla) + companion<br/>+ Cinder gen2 PVC (warm cache)<br/>Service :1234 — always ClusterIP"]
+        buildd["buildd (Deployment ×2, HA)<br/>reconciler (leader) + /route /prewarm (all)"]
+        gw["gateway<br/>shared SNI router (1 LB)"]
+        sts["StatefulSet-of-1 per (project, arch)<br/>buildkitd (vanilla) + companion<br/>+ Cinder gen2 PVC (warm cache)<br/>Service :1234 — always ClusterIP"]
         buildd -- "reconciles / scales / snapshots" --> sts
         gw --> sts
     end
