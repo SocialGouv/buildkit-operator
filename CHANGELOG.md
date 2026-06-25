@@ -1,5 +1,12 @@
 
 
+## [0.5.0](https://github.com/socialgouv/buildkit-operator/compare/v0.4.1...v0.5.0) (2026-06-25)
+
+
+### Features
+
+* harden CI, supply-chain, observability and robustness from full project review ([3446961](https://github.com/socialgouv/buildkit-operator/commit/3446961657863d6f9f07aeaba4fe8a788f18c05f))
+
 ## [0.4.1](https://github.com/SocialGouv/buildkit-operator/compare/v0.4.0...v0.4.1) (2026-06-25)
 
 ## [0.4.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.3.0...v0.4.0) (2026-06-25)
