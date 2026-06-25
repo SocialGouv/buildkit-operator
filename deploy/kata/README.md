@@ -18,24 +18,22 @@ inside the VM (guest kernel 6.18 vs host 5.15), stable.
 
 ## Setup (reproducible)
 
-1. **Pick the node(s)** that will run sandboxed builds and label them (must expose nested virt —
-   `/dev/kvm`, `vmx`/`svm`):
-
-   ```sh
-   kubectl label node <node> kata-node=true
-   ```
+1. **Target the build nodepool.** `kata-deploy-values.yaml` selects `nodeSelector: { nodepool: prod-build }`
+   so every node in the pool — **including replacement nodes MKS recycles in** — gets Kata automatically
+   (durable; survives a downscale). Set the label to match your build pool. The pool must expose nested
+   virt (`/dev/kvm`, CPU `vmx`/`svm`).
 
 2. **Install Kata** with the upstream `kata-deploy` Helm chart (kata-containers v3.32.0,
-   `tools/packaging/kata-deploy/helm-chart/kata-deploy`), scoped to those nodes:
+   `tools/packaging/kata-deploy/helm-chart/kata-deploy`):
 
    ```sh
    helm dependency update <chart>
    helm install kata-deploy <chart> -n kube-system -f deploy/kata/kata-deploy-values.yaml
    ```
 
-   It reconfigures containerd and **restarts it** on the labelled node (running pods survive the
-   restart, but plan a short maintenance window if the node already runs workloads). When done it
-   labels the node `katacontainers.io/kata-runtime=true` and creates the `kata-clh` RuntimeClass.
+   It reconfigures containerd and **restarts it** on each pool node (running pods survive the restart,
+   but plan a short maintenance window if a node already runs workloads). When done it labels the node
+   `katacontainers.io/kata-runtime=true` and creates the `kata-clh` RuntimeClass.
 
 3. **Apply the vCPU tuning** (keeps the guest at 4 vCPUs / 4 GiB):
 
