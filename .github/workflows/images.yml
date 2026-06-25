@@ -6,6 +6,13 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore: # docs / Action / scripts don't change the binaries
+      - "**.md"
+      - "docs/**"
+      - "mkdocs.yml"
+      - "action.yml"
+      - "scripts/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:

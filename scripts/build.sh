@@ -36,6 +36,14 @@ resp="$(curl -fsS -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/route" \
 endpoint="$(printf '%s' "$resp" | jq -r .endpoint)"
 echo "buildkit-operator: routed $REPO${NAME:+/$NAME} ($ARCH) -> $endpoint"
 
+# Optional: when there is no wildcard DNS for the gateway yet, map this build's gateway hostname to
+# the gateway LoadBalancer IP for the duration of the run (testing/bootstrap escape hatch).
+if [ -n "${GATEWAY_IP:-}" ]; then
+  host="$(printf '%s' "$endpoint" | sed -E 's#^tcp://##; s#:[0-9]+$##')"
+  echo "$GATEWAY_IP $host" | sudo tee -a /etc/hosts >/dev/null 2>&1 || echo "$GATEWAY_IP $host" >> /etc/hosts 2>/dev/null || true
+  echo "buildkit-operator: mapped $host -> $GATEWAY_IP (no wildcard DNS)"
+fi
+
 # 2. Point a buildx remote builder at it over mTLS.
 docker buildx rm buildkit-operator >/dev/null 2>&1 || true
 docker buildx create --name buildkit-operator --driver remote \

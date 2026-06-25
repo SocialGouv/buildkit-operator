@@ -42,6 +42,9 @@ inputs:
   push:
     description: "Push the result to the registry."
     default: "false"
+  gateway-ip:
+    description: "Optional: gateway LoadBalancer IP, to map the gateway hostname for this run when there is no wildcard DNS yet (testing/bootstrap)."
+    default: ""
 
 runs:
   using: composite
@@ -61,4 +64,5 @@ runs:
         TARGET: ${{ inputs.target }}
         TAGS: ${{ inputs.tags }}
         PUSH: ${{ inputs.push }}
+        GATEWAY_IP: ${{ inputs.gateway-ip }}
       run: ${{ github.action_path }}/scripts/build.sh
