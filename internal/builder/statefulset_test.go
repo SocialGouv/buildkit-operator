@@ -146,4 +146,16 @@ func TestStatefulSet_SandboxedForkPrivilegedNonRootless(t *testing.T) {
 	if got := ctr(fork).Image; got != "ghcr.io/acme/bk:pinned" {
 		t.Errorf("SandboxBuildkitImage override = %q, want ghcr.io/acme/bk:pinned", got)
 	}
+	// The companion inode-GC backstop is skipped for ephemeral sandboxed forks, kept for canonical.
+	cfg.Companion = true
+	count := func(key string) int {
+		bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: key, Arch: "amd64"}}
+		return len(StatefulSet(bp, cfg).Spec.Template.Spec.Containers)
+	}
+	if count(fork) != 1 {
+		t.Errorf("sandboxed fork containers = %d, want 1 (no companion)", count(fork))
+	}
+	if count("p1") != 2 {
+		t.Errorf("canonical containers = %d, want 2 (buildkitd + companion)", count("p1"))
+	}
 }

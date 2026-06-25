@@ -104,6 +104,8 @@ mirror:
 sandbox:
   # RuntimeClass for UNTRUSTED fork daemons (the VM/sandbox is the security boundary). On Kata, use
   # `kata-clh` (cloud-hypervisor — boots fast enough to survive nested virt; `kata-qemu` times out).
+  # NOTE on NESTED virt (e.g. OVH MKS): bump the kata guest to >=4 vCPUs (configuration-clh.toml
+  # `default_vcpus = 4`) or the agent is too slow to answer the CRI status query and the VM gets killed.
   # When set, fork daemons run the NON-rootless buildkit image PRIVILEGED (rootless can't run in the
   # guest); the VM isolates them. Trusted (canonical) daemons keep rootless + the default runtime.
   runtimeClass: ""

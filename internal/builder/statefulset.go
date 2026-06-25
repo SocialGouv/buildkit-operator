@@ -130,8 +130,9 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 	// Under a sandbox runtime (e.g. a Kata microVM) the VM is the security boundary, so a fork daemon
 	// runs PRIVILEGED + non-rootless: rootless's setuid newuidmap can't run in the guest, and privileged
 	// is both safe inside the disposable VM and faster. Trusted (canonical) daemons are unaffected.
+	sandboxed := sandboxedFork(bp, cfg)
 	profile, image := bp.Spec.SecurityProfile, cfg.BuildkitImage
-	if sandboxedFork(bp, cfg) {
+	if sandboxed {
 		profile, image = bkov1.ProfilePrivileged, sandboxImage(cfg)
 	}
 
@@ -173,7 +174,9 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 	}
 
 	containers := []corev1.Container{daemon}
-	if cfg.Companion {
+	// Sandboxed forks are ephemeral + disposable, so they skip the companion inode-GC backstop —
+	// it's unneeded and keeps the microVM lean (one less thing to keep responsive under nested virt).
+	if cfg.Companion && !sandboxed {
 		companion := corev1.Container{
 			Name:  "companion",
 			Image: cfg.CompanionImage,
