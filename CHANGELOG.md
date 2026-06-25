@@ -1,5 +1,18 @@
 
 
+## [0.3.0](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.3.0) (2026-06-25)
+
+
+### Features
+
+* **certs:** opt-in cert-manager issuance for the mTLS material ([3cd485b](https://github.com/socialgouv/buildkit-operator/commit/3cd485b6c83fadc825b2bcae0d23bd395278fdf0))
+* **kata:** target the whole build nodepool so replacement nodes auto-get Kata (durable) ([34f8d38](https://github.com/socialgouv/buildkit-operator/commit/34f8d38ebb279b248870d4c403b7de92d0e959fd))
+
+
+### Bug Fixes
+
+* **helm:** raise OVH/OpenStack LB idle timeout so cold-start routes and long builds aren't cut ([085b9de](https://github.com/socialgouv/buildkit-operator/commit/085b9de37e008c978a3d1cfeb018320435207990))
+
 ## [0.2.3](https://github.com/SocialGouv/buildkit-operator/compare/v0.2.2...v0.2.3) (2026-06-25)
 
 
