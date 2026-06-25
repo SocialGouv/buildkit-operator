@@ -1,0 +1,36 @@
+{{- if .Values.networkPolicy.enabled }}
+# Egress lockdown for the build daemons: a daemon runs untrusted code in its RUN steps, so it may
+# reach DNS, the registry/package internet (FROM pulls, apt/npm/pip), and the S3 cold cache — but
+# NOT other in-cluster pods. That blocks lateral movement (it can't reach buildd, the gateway, other
+# daemons, or the Kubernetes API) and isolates daemons from each other at the network layer. Ingress
+# is left to mTLS (the daemon already authenticates every client cert).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-daemon-egress
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
+      app.kubernetes.io/component: buildkitd
+  policyTypes: [Egress]
+  egress:
+    # Internet (container registry + package managers + external S3), minus RFC1918 in-cluster ranges.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+    # Cluster DNS.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    {{- with .Values.networkPolicy.extraEgress }}
+    # Extra allowed egress (e.g. an in-cluster S3/MinIO or a pull-through cache mirror).
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

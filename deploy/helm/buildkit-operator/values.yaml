@@ -79,6 +79,16 @@ s3:
   endpoint: "" # e.g. https://s3.gra.io.cloud.ovh.net (empty = AWS default)
   credsSecret: "" # k8s Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 
+# Network egress lockdown for the build daemons: they keep DNS + registry/package internet + external
+# S3, but cannot reach other in-cluster pods (lateral-movement + inter-daemon isolation). For an
+# IN-CLUSTER S3/MinIO or a pull-through cache mirror, allowlist it under extraEgress, e.g.:
+#   extraEgress:
+#     - to: [{ podSelector: { matchLabels: { app: minio } } }]
+#       ports: [{ protocol: TCP, port: 9000 }]
+networkPolicy:
+  enabled: true
+  extraEgress: []
+
 # Max concurrent cold-start attaches buildd allows (M4 backpressure; seed from bench C so a
 # CI burst does not serialize Cinder attaches into minutes).
 maxColdStarts: 8

@@ -45,6 +45,15 @@ inputs:
   gateway-ip:
     description: "Optional: gateway LoadBalancer IP, to map the gateway hostname for this run when there is no wildcard DNS yet (testing/bootstrap)."
     default: ""
+  provenance:
+    description: "SLSA provenance attestation, e.g. 'mode=max' (needs push: true). Empty = off."
+    default: ""
+  sbom:
+    description: "Generate an SBOM attestation (needs push: true)."
+    default: "false"
+  sign:
+    description: "cosign keyless-sign the pushed image. Requires push: true and the caller job to set permissions.id-token: write."
+    default: "false"
 
 runs:
   using: composite
@@ -65,4 +74,14 @@ runs:
         TAGS: ${{ inputs.tags }}
         PUSH: ${{ inputs.push }}
         GATEWAY_IP: ${{ inputs.gateway-ip }}
+        PROVENANCE: ${{ inputs.provenance }}
+        SBOM: ${{ inputs.sbom }}
       run: ${{ github.action_path }}/scripts/build.sh
+    - if: ${{ inputs.sign == 'true' }}
+      uses: sigstore/cosign-installer@v3
+    - if: ${{ inputs.sign == 'true' }}
+      shell: bash
+      env:
+        TAGS: ${{ inputs.tags }}
+      run: |
+        for t in $TAGS; do echo "cosign sign $t"; cosign sign --yes "$t"; done
