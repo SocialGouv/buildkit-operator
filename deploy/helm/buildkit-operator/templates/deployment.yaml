@@ -59,11 +59,13 @@ spec:
             - --port={{ .Values.buildkit.port }}
             - --api-listen=:{{ .Values.service.port }}
             - --metrics-addr=:{{ .Values.metrics.port }}
-            {{- if hasKey .Values.api "rateLimit" }}
-            - --api-rate-limit={{ .Values.api.rateLimit }}
+            {{- with .Values.api }}
+            {{- if hasKey . "rateLimit" }}
+            - --api-rate-limit={{ .rateLimit }}
             {{- end }}
-            {{- if hasKey .Values.api "rateBurst" }}
-            - --api-rate-burst={{ .Values.api.rateBurst }}
+            {{- if hasKey . "rateBurst" }}
+            - --api-rate-burst={{ .rateBurst }}
+            {{- end }}
             {{- end }}
             {{- if .Values.s3.bucket }}
             - --s3-bucket={{ .Values.s3.bucket }}
