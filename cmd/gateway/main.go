@@ -145,6 +145,7 @@ func (g *gateway) handle(client net.Conn) {
 	}
 	defer upstream.Close()
 	if _, err := upstream.Write(raw); err != nil { // replay the buffered ClientHello
+		slog.Warn("replay clienthello to backend", "backend", backend, "err", err)
 		return
 	}
 	slog.Info("routed", "sni", sni, "backend", backend)

@@ -61,6 +61,22 @@ func NormalizeRepo(repo string) string {
 			s = s[at+1:]
 		}
 	}
+	// Drop an explicit host port (host:443/path -> host/path) so a port-qualified URL collapses to the
+	// same identity as the scp/no-port form of the same repo — else the cache fragments across URL
+	// styles. A scp-like colon (host:org/repo, where the part after ':' is a path, not digits) is left
+	// for the ':' -> '/' rewrite below.
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		rest := s[i+1:]
+		port := rest
+		if end := strings.IndexByte(rest, '/'); end >= 0 {
+			port = rest[:end]
+			if port != "" && isAllDigits(port) {
+				s = s[:i] + rest[end:]
+			}
+		} else if port != "" && isAllDigits(port) {
+			s = s[:i]
+		}
+	}
 	s = strings.ReplaceAll(s, ":", "/") // host:org/repo -> host/org/repo
 	s = strings.TrimSuffix(s, "/")
 	s = strings.TrimSuffix(s, ".git")
@@ -70,6 +86,16 @@ func NormalizeRepo(repo string) string {
 		s = strings.ReplaceAll(s, "//", "/")
 	}
 	return s
+}
+
+// isAllDigits reports whether s is non-empty and every byte is an ASCII digit (a host port).
+func isAllDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // NormalizeTarget maps the empty Dockerfile target to a stable sentinel.

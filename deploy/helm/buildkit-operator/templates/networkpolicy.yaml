@@ -25,11 +25,14 @@ spec:
     {{- end }}
   policyTypes: [Egress]
   egress:
-    # Internet (container registry + package managers + external S3), minus RFC1918 in-cluster ranges.
+    # Internet (container registry + package managers + external S3), minus in-cluster/private ranges.
+    # 169.254.0.0/16 is excluded too: it carries the cloud instance-metadata endpoint
+    # (169.254.169.254), which a build RUN step could otherwise read to steal node credentials.
+    # 100.64.0.0/10 is CGNAT, used by some providers for internal traffic.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
-            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10]
     # Cluster DNS.
     - to:
         - namespaceSelector: {}

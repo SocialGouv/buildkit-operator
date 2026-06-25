@@ -1,7 +1,8 @@
 # buildkitd.toml — GC configuration for the per-project buildkitd daemons.
 #
 # This file is shipped cluster-wide as a ConfigMap (see the Helm chart) and is
-# mounted read-only at /etc/buildkit/buildkitd.toml inside *every* per-project
+# mounted read-only at /home/user/.config/buildkit/buildkitd.toml (the rootless
+# config dir, passed to buildkitd via --config) inside *every* per-project
 # StatefulSet-of-1 that the buildd controller creates. It is intentionally
 # generic: it carries no project/arch specifics, only the cache GC policy that
 # keeps a long-lived "warm" daemon from filling its Cinder gen2 cache volume.

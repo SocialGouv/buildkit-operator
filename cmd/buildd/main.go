@@ -281,8 +281,19 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	// from now), and is released by the client's /complete call. The reconciler ignores inflight older
 	// than --max-build-seconds, so a missed /complete can't leak a hot daemon forever.
 	s.addInflight(ctx, key, +1)
+	// The client only calls /complete after a SUCCESSFUL /route, so on any error path below we must
+	// release the inflight here — otherwise a failed cold start (504/499) pins the daemon warm for up
+	// to --max-build-seconds. respond() (the success path) cancels this by setting routed=true; the
+	// release uses a fresh context because the request ctx is already cancelled on the 499 path.
+	routed := false
+	defer func() {
+		if !routed {
+			s.addInflight(context.Background(), key, -1)
+		}
+	}()
 
 	if s.ready(ctx, key) { // warm: no cold-start gating
+		routed = true
 		respond()
 		return
 	}
@@ -308,6 +319,7 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metrics.ColdStartSeconds.Observe(time.Since(coldStart).Seconds())
+	routed = true
 	respond()
 }
 

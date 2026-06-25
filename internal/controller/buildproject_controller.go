@@ -358,7 +358,11 @@ func (r *BuildProjectReconciler) maybeSnapshot(ctx context.Context, bp *bkov1.Bu
 	metrics.SnapshotsTotal.Inc()
 	orig := bp.DeepCopy()
 	bp.Status.LastSnapshot = name
-	_ = r.Status().Patch(ctx, bp, client.MergeFrom(orig))
+	// LastSnapshot gates fanout (reconcileFanout returns early while it's empty), so a dropped patch
+	// silently stalls fan-out until the next snapshot is due. Log it instead of swallowing.
+	if err := r.Status().Patch(ctx, bp, client.MergeFrom(orig)); err != nil {
+		log.FromContext(ctx).V(1).Info("persist LastSnapshot failed", "err", err.Error(), "snapshot", name)
+	}
 	r.pruneSnapshots(ctx, append(snaps.Items, *snap))
 	return cadence, nil
 }
