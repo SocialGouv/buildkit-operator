@@ -35,6 +35,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
-        with:
-          version: v2.5.0
+      # Build golangci-lint with the runner's Go (from go.mod, 1.26) rather than a prebuilt binary:
+      # the published v2.5.0 binary is built with go1.25 and refuses a go.mod targeting a newer Go.
+      - run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...
