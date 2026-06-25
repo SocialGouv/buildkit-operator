@@ -160,6 +160,12 @@ gateway:
     tag: dev
   service:
     type: LoadBalancer
+    # A build holds ONE long-lived mTLS stream through this LB. On OVH/OpenStack LBs the default
+    # member-data idle timeout (50s) cuts a build that goes quiet (e.g. a long RUN with no output),
+    # so raise it well past the longest expected build. Keys honored by the OpenStack CCM (ms).
+    annotations:
+      loadbalancer.openstack.org/timeout-member-data: "600000"
+      loadbalancer.openstack.org/timeout-client-data: "600000"
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 500m, memory: 128Mi }
@@ -169,6 +175,12 @@ gateway:
 service:
   port: 8080
   type: ClusterIP
+  # /route blocks up to --route-wait (180s) for a COLD daemon to become Ready. The OVH/OpenStack LB's
+  # default member-data idle timeout (50s) would cut that wait → curl "(52) Empty reply". Raise it past
+  # route-wait so first-build cold starts complete. Honored by the OpenStack CCM (milliseconds).
+  annotations:
+    loadbalancer.openstack.org/timeout-member-data: "200000"
+    loadbalancer.openstack.org/timeout-client-data: "200000"
 
 # Names of the mTLS Secrets minted by deploy/cert/create-certs.sh. The daemon Secret is mounted by
 # per-project daemons (the controller wires its NAME into each StatefulSet). buildd itself does NOT
