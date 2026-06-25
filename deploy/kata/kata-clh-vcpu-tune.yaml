@@ -1,0 +1,61 @@
+# kata-clh vCPU floor for NESTED virtualization (e.g. OVH MKS).
+#
+# Why: with the shipped default of 1 vCPU, the kata-agent in the guest is too slow to answer
+# containerd's CRI `get state` query under nested virt — containerd hits `context deadline exceeded`
+# and the kubelet kills the sandbox (VMs loop every ~20-80s). Bumping the guest to 4 vCPUs (+ 4 GiB)
+# makes the agent responsive enough and the VM stable. Kata reads its config PER-SANDBOX, so no
+# containerd restart is needed; the next pod just picks up the new value.
+#
+# This DaemonSet keeps `default_vcpus`/`default_memory` patched on every kata node (idempotent, and
+# re-applied periodically so a kata-deploy upgrade that rewrites the defaults gets corrected). It is
+# scoped to nodes kata-deploy has finished installing on (label katacontainers.io/kata-runtime=true),
+# runs in kube-system (Kyverno-exempt for the hostPath), and only edits the kata-clh config files.
+#
+#   kubectl apply -f deploy/kata/kata-clh-vcpu-tune.yaml
+#
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kata-clh-vcpu-tune
+  namespace: kube-system
+  labels: { app: kata-clh-vcpu-tune }
+spec:
+  selector:
+    matchLabels: { app: kata-clh-vcpu-tune }
+  template:
+    metadata:
+      labels: { app: kata-clh-vcpu-tune }
+    spec:
+      # Only kata-installed nodes; tolerate any taint so we land on the dedicated build pool.
+      nodeSelector:
+        katacontainers.io/kata-runtime: "true"
+      tolerations:
+        - operator: Exists
+      priorityClassName: system-node-critical
+      containers:
+        - name: tune
+          image: busybox:1.36
+          securityContext:
+            privileged: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              while true; do
+                for C in /host/opt/kata/share/defaults/kata-containers/runtimes/clh/configuration-clh.toml \
+                         /host/opt/kata/share/defaults/kata-containers/configuration-clh.toml; do
+                  [ -f "$C" ] || continue
+                  sed -i 's/^default_vcpus = 1$/default_vcpus = 4/; s/^default_memory = 2048$/default_memory = 4096/' "$C"
+                  echo "$(date -u +%FT%TZ) tuned $C -> $(grep -hE '^default_vcpus|^default_memory' "$C" | tr '\n' ' ')"
+                done
+                sleep 600
+              done
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { cpu: 50m, memory: 32Mi }
+          volumeMounts:
+            - { name: kata, mountPath: /host/opt/kata }
+      volumes:
+        - name: kata
+          hostPath: { path: /opt/kata }

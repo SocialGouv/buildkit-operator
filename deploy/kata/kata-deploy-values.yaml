@@ -1,0 +1,11 @@
+# kata-deploy scoped to nodes you label `kata-node=true` (so it never touches un-labelled nodes).
+# Tolerates the OVH prod-build pool taint; NFD disabled (we target virt-capable nodes by hand).
+node-feature-discovery:
+  enabled: false # we target the virt-capable node manually; no cluster-wide NFD
+nodeSelector:
+  kata-node: "true" # label the chosen node(s): kubectl label node <node> kata-node=true
+tolerations:
+  - key: pool
+    operator: Equal
+    value: ci
+    effect: NoSchedule
