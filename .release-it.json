@@ -1,0 +1,29 @@
+{
+  "git": {
+    "commitMessage": "chore: release v${version}",
+    "tagName": "v${version}",
+    "tagAnnotation": "buildkit-operator v${version}",
+    "push": true
+  },
+  "github": {
+    "release": true,
+    "releaseName": "v${version}"
+  },
+  "npm": {
+    "publish": false
+  },
+  "hooks": {
+    "after:bump": [
+      "sed -i \"s/^version:.*/version: ${version}/; s/^appVersion:.*/appVersion: \\\"${version}\\\"/\" deploy/helm/buildkit-operator/Chart.yaml",
+      "git add deploy/helm/buildkit-operator/Chart.yaml",
+      "helm package deploy/helm/buildkit-operator -d /tmp/chart",
+      "helm push /tmp/chart/buildkit-operator-${version}.tgz oci://ghcr.io/socialgouv/charts"
+    ]
+  },
+  "plugins": {
+    "@release-it/conventional-changelog": {
+      "preset": "conventionalcommits",
+      "infile": "CHANGELOG.md"
+    }
+  }
+}

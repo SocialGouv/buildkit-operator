@@ -1,0 +1,13 @@
+{
+  "name": "buildkit-operator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Release tooling (release-it) for the buildkit-operator Helm chart + container images.",
+  "scripts": {
+    "release": "release-it"
+  },
+  "devDependencies": {
+    "@release-it/conventional-changelog": "^8.0.2",
+    "release-it": "^17.10.0"
+  }
+}

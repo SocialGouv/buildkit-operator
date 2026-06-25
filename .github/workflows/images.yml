@@ -6,13 +6,17 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths-ignore: # docs / Action / scripts don't change the binaries
+    paths-ignore: # docs / Action / scripts / release tooling don't change the binaries
       - "**.md"
       - "docs/**"
       - "mkdocs.yml"
       - "action.yml"
       - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".release-it.json"
       - ".github/workflows/pages.yml"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:

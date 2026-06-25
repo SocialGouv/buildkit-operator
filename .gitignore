@@ -5,3 +5,4 @@
 cover.out
 __debug_bin*
 .DS_Store
+node_modules/

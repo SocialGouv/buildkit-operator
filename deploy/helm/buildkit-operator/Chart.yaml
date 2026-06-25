@@ -12,6 +12,9 @@ keywords:
   - buildkit
   - ci
   - build-cache
-home: https://github.com/devthejo/buildkit-operator
+home: https://github.com/socialgouv/buildkit-operator
+sources:
+  - https://github.com/socialgouv/buildkit-operator
 maintainers:
-  - name: devthejo
+  - name: SocialGouv
+    url: https://github.com/socialgouv
