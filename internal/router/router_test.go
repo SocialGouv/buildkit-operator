@@ -16,7 +16,7 @@ func TestProjectKey_SameProjectConverges(t *testing.T) {
 		"http://github.com/org/repo",
 		"ssh://github.com/org/repo.git",
 		"  https://GitHub.com/ORG/repo  ",
-		"https://github.com:443/org/repo",   // explicit port must not fragment the cache
+		"https://github.com:443/org/repo", // explicit port must not fragment the cache
 		"ssh://git@github.com:22/org/repo.git",
 	}
 	for _, r := range same {
@@ -85,8 +85,8 @@ func TestNormalizeRepo(t *testing.T) {
 		"https://github.com/org/repo/":    "github.com/org/repo",
 		"ssh://git@gitlab.com/g/p.git":    "gitlab.com/g/p",
 		"https://github.com:443/org/repo": "github.com/org/repo", // strip explicit port
-		"ssh://git@gitlab.com:22/g/p.git": "gitlab.com/g/p",       // strip explicit ssh port
-		"git@github.com:org/repo.git":     "github.com/org/repo",  // scp colon is NOT a port
+		"ssh://git@gitlab.com:22/g/p.git": "gitlab.com/g/p",      // strip explicit ssh port
+		"git@github.com:org/repo.git":     "github.com/org/repo", // scp colon is NOT a port
 	}
 	for in, want := range cases {
 		if got := NormalizeRepo(in); got != want {
