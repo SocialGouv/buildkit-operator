@@ -109,6 +109,36 @@ func TestHandle_OIDCRequiresToken(t *testing.T) {
 	}
 }
 
+// Transition: with OIDC enabled AND a legacy bearer still configured, a caller presenting the legacy
+// token is accepted (zero-downtime migration); a wrong credential is still rejected.
+func TestHandle_OIDCLegacyBearerFallback(t *testing.T) {
+	f := newOIDCForge(t)
+	v, _ := identity.NewVerifier(identity.Config{Providers: []identity.Provider{{Type: "github", Issuer: f.srv.URL, Audience: "bko"}}})
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).Build()
+	srv := newTestServer(t, c)
+	srv.verifier = v
+	srv.authToken = "legacy-secret"
+	srv.log = logr.Discard()
+
+	body, _ := json.Marshal(router.RouteRequest{Repo: "github.com/org/repo", Arch: "amd64"})
+
+	ok := httptest.NewRequest(http.MethodPost, "/prewarm", bytes.NewReader(body))
+	ok.Header.Set("Authorization", "Bearer legacy-secret")
+	rec := httptest.NewRecorder()
+	srv.handlePrewarm(rec, ok)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("legacy bearer under OIDC should be accepted, got %d", rec.Code)
+	}
+
+	bad := httptest.NewRequest(http.MethodPost, "/prewarm", bytes.NewReader(body))
+	bad.Header.Set("Authorization", "Bearer wrong")
+	rec2 := httptest.NewRecorder()
+	srv.handlePrewarm(rec2, bad)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid creds under OIDC should be 401, got %d", rec2.Code)
+	}
+}
+
 // A non-allowlisted but validly-signed repo is forbidden (hard org gate).
 func TestHandle_OIDCAllowlistRejects(t *testing.T) {
 	f := newOIDCForge(t)

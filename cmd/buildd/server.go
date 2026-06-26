@@ -73,7 +73,9 @@ type reqIdentity struct {
 // identify authenticates the request and resolves its identity, in precedence order:
 //  1. admin break-glass token (distinct header) — trusts the request as-is;
 //  2. OIDC (when configured) — verifies the forge token, binds repo + derives untrusted, applies the
-//     allowlist (this is the secure default);
+//     allowlist (this is the secure default). If verification fails but a legacy bearer (authToken) is
+//     still configured and matches, it is accepted as a TRANSITION fallback so callers can migrate to
+//     OIDC with no downtime — drop auth.tokenSecret to enforce OIDC strictly;
 //  3. legacy bearer / open — only when OIDC is off (in-cluster).
 //
 // It returns the resolved identity plus an HTTP status + error to write on rejection (status 0 = ok).
@@ -89,13 +91,20 @@ func (s *routeServer) identify(r *http.Request) (reqIdentity, int, error) {
 	}
 	if s.verifier != nil {
 		id, err := s.verifier.Verify(r.Context(), bearerToken(r))
-		if err != nil {
-			return reqIdentity{}, http.StatusUnauthorized, err
+		if err == nil {
+			if !s.verifier.AllowRepo(id.Repo) {
+				return reqIdentity{}, http.StatusForbidden, fmt.Errorf("repo %q is not in the OIDC allowlist", id.Repo)
+			}
+			return reqIdentity{repo: id.Repo, untrusted: id.Untrusted, override: true}, 0, nil
 		}
-		if !s.verifier.AllowRepo(id.Repo) {
-			return reqIdentity{}, http.StatusForbidden, fmt.Errorf("repo %q is not in the OIDC allowlist", id.Repo)
+		// Transition fallback: while a legacy bearer (authToken) is still configured, accept it so CI
+		// consumers can migrate to OIDC at their own pace (zero-downtime rollout). Remove auth.tokenSecret
+		// once everyone mints tokens to enforce OIDC strictly (the secure end state).
+		if s.authToken != "" && bearerEquals(r, s.authToken) {
+			s.log.Info("legacy-bearer fallback (OIDC enabled; migrate this caller)", "path", r.URL.Path, "remote", clientIP(r))
+			return reqIdentity{override: false}, 0, nil
 		}
-		return reqIdentity{repo: id.Repo, untrusted: id.Untrusted, override: true}, 0, nil
+		return reqIdentity{}, http.StatusUnauthorized, err
 	}
 	if s.authToken != "" && !bearerEquals(r, s.authToken) {
 		return reqIdentity{}, http.StatusUnauthorized, errors.New("unauthorized")

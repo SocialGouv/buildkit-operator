@@ -100,6 +100,11 @@ need elevated rights to run Kata anyway). Disabling verification entirely is an 
 empty, OIDC is off and `/route` falls back to the legacy bearer (`auth.tokenSecret`) or open in-cluster
 use — keep that only for fully in-cluster deployments.
 
+**Zero-downtime migration.** Enabling OIDC while a legacy bearer (`auth.tokenSecret`) is still set keeps
+that bearer working as a fallback, so CI consumers migrate to token-minting at their own pace with no
+breakage; once everyone mints OIDC tokens, remove `auth.tokenSecret` to enforce OIDC strictly (the
+secure end state — the global bearer is then no longer accepted). Fallback use is logged per call.
+
 ## Where buildkit-operator is actually *more* secure than a shared daemon
 
 Fork-PR isolation in one picture — an untrusted build is seeded read-only from the project snapshot
