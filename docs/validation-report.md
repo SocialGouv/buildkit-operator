@@ -2,20 +2,24 @@
 
 End-to-end validation of buildkit-operator deployed on **OVH MKS `ovh-prod`**, exercised from both CI
 front-ends (GitHub Action + GitLab/PIC) and benchmarked for the cache features that are its reason to
-exist. Date: **2026-06-26**, release **v0.8.2**.
+exist. Date: **2026-06-26**, release **v0.8.3**.
 
-> TL;DR — every feature works and is exercised by a real build. Warm local cache gives a **measured
-> 3.6×** on a representative build (5/5 steps `CACHED`); the S3 cold cache lets a **brand-new daemon**
-> skip an expensive step entirely (a 30.5 s `RUN` → `CACHED` from S3). Two CI paths are green end-to-end
-> (GitHub example repo + the SocialGouv PIC behind its egress proxy), including a brand-new project's
-> cold start. Known operational caveats are listed at the end.
+> TL;DR — every feature is exercised by a real build and validated live (one exception: arm64, no node
+> on this cluster). Warm local cache gives a **measured 3.6×** (5/5 steps `CACHED`); the S3 cold cache
+> lets a **brand-new daemon** skip an expensive step (a 30.5 s `RUN` → `CACHED` from S3); untrusted
+> builds run in a **Kata microVM** (guest kernel 6.18.35). Both CI front-ends are green end-to-end
+> (GitHub example repo + the SocialGouv PIC behind its egress proxy). Caveats at the end.
 
-> **v0.8.2 robustness.** Two fixes hardened the cold-start path after this validation surfaced them:
-> (1) a fresh project now warms reliably — `buildd` stamps `LastBuildTime` on the object returned by
-> `Create` (an informer-cache `Get` right after `Create` could miss it and leave a warm-tier daemon
-> stuck `Idle`); (2) `/prewarm` now returns a `ready` flag so a proxy-tunnelled client polls it
-> (non-blocking) until warm — no request is ever held open past the proxy's idle-tunnel timeout, and a
-> daemon that never warms fails loudly instead of hanging. Both re-validated live (below).
+> **Robustness fixes surfaced by this validation** (each found live, fixed, re-validated):
+> - **v0.8.2** — (1) a fresh project warms reliably: `buildd` stamps `LastBuildTime` on the object
+>   returned by `Create` (an informer-cache `Get` right after `Create` could miss it and leave a
+>   warm-tier daemon stuck `Idle`); (2) `/prewarm` returns a `ready` flag so a proxy-tunnelled client
+>   polls it (non-blocking) until warm — no call held open past the proxy timeout.
+> - **v0.8.3** — **untrusted builds were 100% broken**: the reconciler reaped the ephemeral fork
+>   BuildProject in its birth window (created → `desired=0` for an instant → `IsForkKey && desired==0` →
+>   deleted) before its build registered, so `/route` hung. Fixed with a `CreationTimestamp` birth-window
+>   grace + a longer post-create backoff. Also: `AWS_EC2_METADATA_DISABLED` to silence the daemon's IMDS
+>   probe on OVH. Untrusted + Kata now validated end-to-end (below).
 
 ## 1. What is deployed (ovh-prod)
 
@@ -96,7 +100,7 @@ Reading:
 > Cache evidence is always logged — `importing cache manifest from s3:<key>` / `exporting cache to
 > Amazon S3 … sending cache export done`. A green build does **not** prove the cache worked; grep the log.
 
-## 4. Feature matrix (every feature exercised)
+## 4. Feature matrix (every feature exercised live)
 
 | Feature | Status | Evidence |
 |---|---|---|
@@ -104,24 +108,28 @@ Reading:
 | Repo normalization (`github.com/x` ≡ `https://github.com/x.git`) | ✅ | same key for URL/git/`.git` forms |
 | Monorepo isolation (`name`) | ✅ | `api` ≠ `web` → distinct daemon + cache |
 | Target isolation (`target`) | ✅ | distinct keys per Dockerfile target |
-| Multi-arch routing (`arch`) | ✅ | `amd64` ≠ `arm64` keys (one hot daemon per arch) |
-| Untrusted-fork isolation | ✅ | `ForkKey` ≠ canonical; fork daemons get **no S3 creds** (`!IsForkKey` gate) → can't poison the shared cache; Kata microVM runtime |
+| Multi-arch routing (`arch`) | ✅ key / ⚠️ arm64 unrun | `amd64` ≠ `arm64` keys; **no arm64 node on this cluster**, so an arm64 build couldn't run live |
+| **Untrusted-fork isolation in a Kata microVM** | ✅ | fork build ran `uname -a` → `Linux buildkitsandbox **6.18.35**` (guest kernel ≠ host 5.15), pod `runtimeClassName=kata-clh` on the Kata node, **no S3 creds** on the fork daemon (v0.8.3 fix — was 100% broken) |
+| `RUN --mount=type=cache` persistence | ✅ | build 1 wrote 100 files; build 2 (re-run) saw `CCACHE_BEFORE=100` — persisted on the daemon PVC |
+| Durable VolumeSnapshots (DR) | ✅ | enabling `snapshotEverySec` produced in-use Cinder snapshots, `ReadyToUse=true`, at cadence, `--keep-snapshots=3` |
+| Prometheus observability | ✅ | `/metrics` exposes `route_duration_seconds{warm,cold}`, `coldstart_seconds`, `snapshots_total` with real values |
+| HA control plane | ✅ | `buildd` 2/2 replicas + a held leader `Lease` |
 | Warm local cache (PVC) | ✅ | bench B: 5/5 `CACHED`, 3.6× |
 | S3 cold cache (cross-daemon / cold daemon) | ✅ | a 30.5 s `RUN` ran from scratch but came back `CACHED` from S3 on a brand-new daemon |
 | Scale-to-zero + PVC retention | ✅ | daemon seen `Idle` at 0 replicas, then re-attached hot (cache intact) by the next build |
 | Pre-warm + readiness | ✅ | `/prewarm` returns `202` immediately with `ready` + endpoint + cache; client polls it (non-blocking) to warm before routing |
 | Reliable warm-up from a fresh project | ✅ | new project `Scaling → Warm` with `LastBuildTime` stamped at create (v0.8.2 fix; no more silent stuck-`Idle`) |
-| Push + provenance/SBOM | ✅ | `--push` / `--provenance` / `--sbom` buildx flags wired in `build.sh` |
+| SLSA provenance + SBOM | ✅ | pushed image index carries an attestation manifest with `slsa.dev/provenance/v1` **and** `spdx.dev/Document` |
 | cosign keyless signing | ✅ | example-repo run pushes a signature to GHCR |
 
 ## 5. Reproducibility
 
-- **Chart**: `oci://ghcr.io/socialgouv/charts/buildkit-operator:0.8.2` (helm values documented in
-  `deploy/helm/buildkit-operator/values.yaml`); `buildd` live on image `sha-9190bb8` (v0.8.2).
+- **Chart**: `oci://ghcr.io/socialgouv/charts/buildkit-operator:0.8.3` (helm values documented in
+  `deploy/helm/buildkit-operator/values.yaml`); `buildd` live on image `sha-a790994` (v0.8.3, helm rev 20).
 - **Client**: `scripts/build.sh` (GitHub Action `action.yml`, GitLab component `templates/build.yml`),
-  pinned to `v0.8.2` / floating `v1`.
+  pinned to `v0.8.3` / floating `v1`.
 - **Certs**: `deploy/cert/create-certs.sh` (SANs include `*.bko.fabrique.social.gouv.fr`).
-- **CI**: `ci` (test+lint) + `images` (build + cosign sign) green for v0.8.2.
+- **CI**: `ci` (test+lint) + `images` (build + cosign sign) green for v0.8.3.
 
 ## 6. Known caveats (operational, non-blocking)
 
