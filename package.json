@@ -6,8 +6,13 @@
   "scripts": {
     "release": "release-it"
   },
+  "packageManager": "pnpm@11.9.0",
   "devDependencies": {
-    "@release-it/conventional-changelog": "^8.0.2",
-    "release-it": "^17.10.0"
+    "@release-it/conventional-changelog": "^11.0.1",
+    "release-it": "^20.2.0"
+  },
+  "engines": {
+    "node": ">=22.13",
+    "pnpm": ">=11"
   }
 }

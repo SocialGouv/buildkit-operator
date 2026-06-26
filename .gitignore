@@ -6,3 +6,7 @@ cover.out
 __debug_bin*
 .DS_Store
 node_modules/
+
+# devbox + direnv (committed: devbox.json, devbox.lock, .envrc)
+.devbox/
+.direnv/

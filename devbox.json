@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.17.3/.schema/devbox.schema.json",
+  "packages": [
+    "go@1.26",
+    "kubectl@latest",
+    "kubernetes-helm@latest",
+    "jq@latest",
+    "cosign@latest",
+    "nodejs@24"
+  ],
+  "env": {
+    "DEVBOX_COREPACK_ENABLED": "1"
+  },
+  "shell": {
+    "init_hook": [
+      "echo 'buildkit-operator devbox ready: go, node+pnpm (corepack), kubectl, helm, jq, cosign. controller-gen & golangci-lint stay pinned via go run in the Makefile. Run project commands with: devbox run -- <cmd>'"
+    ],
+    "scripts": {
+      "test":      ["make test"],
+      "lint":      ["make lint"],
+      "manifests": ["make manifests"],
+      "build":     ["make build"]
+    }
+  }
+}

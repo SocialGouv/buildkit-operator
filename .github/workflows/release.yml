@@ -26,8 +26,10 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
-      - run: npm ci --no-audit --no-fund # ci (not install) keeps the working dir clean for release-it
+          node-version: "lts/*"
+      # pnpm is provisioned by Corepack, pinned via the package.json "packageManager" field.
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile # frozen lockfile keeps the working dir clean for release-it
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
       - run: helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
       - run: |
@@ -35,9 +37,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
       - run: |
           if [ "${{ inputs.increment }}" = "none" ]; then
-            npx release-it --no-increment --ci
+            pnpm exec release-it --no-increment --ci
           else
-            npx release-it "${{ inputs.increment }}" --ci
+            pnpm exec release-it "${{ inputs.increment }}" --ci
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
