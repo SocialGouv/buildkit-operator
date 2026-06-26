@@ -19,6 +19,7 @@ on a real OVH Managed Kubernetes cluster (GRA9, Cinder gen2).
 | [platform-ovh-mks.md](platform-ovh-mks.md) | Platform constraints on OVH Managed Kubernetes: the Kyverno mutation that breaks rootless and its fix, node recycling, nested virt, gen2 Cinder, public-image pull, and synced-secret collisions. |
 | [storage-and-cold-cache.md](storage-and-cold-cache.md) | The three storage layers (warm PVC, durable VolumeSnapshots, **cold S3**), how the S3 cache is wired, and what it measurably buys (cold ≈ 9×). |
 | [performance.md](performance.md) | Methodology + measured build times (warm vs cold, with vs without S3). |
+| [validation-report.md](validation-report.md) | Dated end-to-end validation of the live ovh-prod deployment: both CI front-ends green (GitHub example repo + GitLab/PIC behind its egress proxy), measured cache benefit, a per-feature matrix, and known operational caveats. |
 | [comparison-buildkit-service.md](comparison-buildkit-service.md) | Side-by-side with the existing shared `buildkit-service` (architecture, security posture, performance, durability). |
 | [ci-integration.md](ci-integration.md) | The GitHub Action and the CI-agnostic core (GitHub/GitLab/any runner), public exposure (LB + mTLS + cert SANs + **bearer-token auth** + the `gateway-ip` escape hatch), **supply-chain attestations** (SLSA/SBOM/cosign), and the example repo. |
 | [benchmarks-phase0.md](benchmarks-phase0.md) | The Cinder gen2 storage benchmark that drives the config values (idle timeout, cold-start rate limit, fan-out viability). |
