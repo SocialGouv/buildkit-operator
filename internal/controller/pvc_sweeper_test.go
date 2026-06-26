@@ -32,8 +32,8 @@ func TestPVCSweeper_ReapsOrphansOnly(t *testing.T) {
 	nonCache := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data-something-0", Namespace: "ns", CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Hour))}}
 	objs := []client.Object{
 		live,
-		cachePVC("plive", time.Hour),   // live project → keep
-		cachePVC("porphan", time.Hour), // no project, old → reap
+		cachePVC("plive", time.Hour),    // live project → keep
+		cachePVC("porphan", time.Hour),  // no project, old → reap
 		cachePVC("pyoung", time.Minute), // no project but just created → keep (grace)
 		nonCache,
 	}

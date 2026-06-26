@@ -32,8 +32,8 @@ func newForge(t *testing.T) *forge {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":                 f.srv.URL,
-			"jwks_uri":               f.srv.URL + "/jwks",
+			"issuer":                                f.srv.URL,
+			"jwks_uri":                              f.srv.URL + "/jwks",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 		})
 	})
