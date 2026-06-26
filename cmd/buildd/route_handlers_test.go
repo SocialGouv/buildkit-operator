@@ -8,11 +8,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/builder"
 	"github.com/socialgouv/buildkit-operator/internal/router"
 	"golang.org/x/time/rate"
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -66,8 +69,42 @@ func TestHandlePrewarm_CreatesProjectNoInflight(t *testing.T) {
 	if bp.Status.InflightBuilds != 0 {
 		t.Errorf("InflightBuilds = %d after prewarm, want 0", bp.Status.InflightBuilds)
 	}
+	// Warm from birth: LastBuildTime is stamped at create so desiredReplicas keeps a warm-tier replica —
+	// the cold-start flake was a missing stamp (the daemon stayed Idle). It must be set and recent.
 	if bp.Status.LastBuildTime == nil {
-		t.Error("LastBuildTime not stamped by prewarm")
+		t.Fatal("LastBuildTime not stamped by prewarm")
+	}
+	if time.Since(bp.Status.LastBuildTime.Time) > time.Minute {
+		t.Errorf("LastBuildTime not recent: %v", bp.Status.LastBuildTime.Time)
+	}
+	// No daemon StatefulSet yet -> not ready; the client polls /prewarm on this until it flips true.
+	if resp.Ready {
+		t.Error("Ready = true with no daemon StatefulSet, want false")
+	}
+}
+
+// /prewarm reports Ready=true once the daemon StatefulSet has a ready replica, so a proxy-tunnelled
+// client can poll it (non-blocking) instead of holding a blocking /route open.
+func TestHandlePrewarm_ReadyWhenDaemonReady(t *testing.T) {
+	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: router.DaemonName(key), Namespace: "buildkit-operator"},
+		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+	}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(sts).Build()
+	srv := newTestServer(t, c)
+
+	body, _ := json.Marshal(router.RouteRequest{Repo: "github.com/org/repo", Arch: "amd64"})
+	rec := httptest.NewRecorder()
+	srv.handlePrewarm(rec, httptest.NewRequest(http.MethodPost, "/prewarm", bytes.NewReader(body)))
+
+	var resp router.RouteResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.Ready {
+		t.Error("Ready = false with a ready daemon StatefulSet, want true")
 	}
 }
 

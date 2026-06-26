@@ -86,6 +86,14 @@ avoid them.
   decrypts it into a normal `Secret`. To copy a Secret between namespaces without printing its values,
   pipe `kubectl get -o json | <edit metadata.namespace> | kubectl apply -f -` (values stay in the pipe).
 
+- **A controller-runtime client `Get` right after its own `Create` can return `NotFound`.** The default
+  client reads from the **informer cache**, which lags etcd by a beat — so a "create then immediately
+  Get-modify-Update" sequence intermittently drops the update (and `RetryOnConflict` won't save you: it
+  only retries on `Conflict`, not `NotFound`). Two fixes, use both: mutate the object **returned by
+  `Create`** (it already carries its ResourceVersion — no Get needed), and make follow-up touch loops
+  retry on `NotFound` **and** `Conflict`. This bit us as a cold-start flake: a freshly-created
+  BuildProject's warm-up `Status` stamp was dropped, so the daemon silently never scaled up.
+
 ## BuildKit
 
 - **Cache import/export is best-effort — a broken cache backend does NOT fail the build.** BuildKit logs

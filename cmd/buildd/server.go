@@ -141,10 +141,27 @@ func (s *routeServer) ensureBuildProject(ctx context.Context, spec bkov1.BuildPr
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
-	return s.c.Create(ctx, &bkov1.BuildProject{
+	created := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: spec.Key, Namespace: s.cfg.Namespace},
 		Spec:       spec,
-	})
+	}
+	if err := s.c.Create(ctx, created); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return nil // raced another /route or /prewarm for the same key — fine
+		}
+		return err
+	}
+	// Warm from birth: desiredReplicas only holds a warm-tier replica once LastBuildTime is set, so stamp
+	// it now on the JUST-CREATED object (it already carries its ResourceVersion) — not via a fresh Get,
+	// whose informer cache can still miss the new object and leave the daemon stuck Idle. That cache race
+	// is the cold-start flake: addInflight's Get returned NotFound right after Create, so the touch was
+	// dropped and the warm-tier project never scaled up.
+	now := metav1.Now()
+	created.Status.LastBuildTime = &now
+	if err := s.c.Status().Update(ctx, created); err != nil {
+		s.log.Error(err, "stamp LastBuildTime at create failed; relying on the addInflight touch", "key", spec.Key)
+	}
+	return nil
 }
 
 // ready reports whether the project's daemon already has a ready replica (warm fast path).

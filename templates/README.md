@@ -29,7 +29,7 @@ GitHub-hosted (remote include — needs the GitLab server to allow GitHub egress
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.1/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.2/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
       push: "true"
@@ -68,7 +68,7 @@ from — keep it pinned and in sync with the include).
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.1/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.2/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE/api:$CI_COMMIT_SHORT_SHA"
       name: api                  # monorepo: its own daemon + cache
@@ -84,7 +84,7 @@ by re-declaring the job's `rules:` (GitLab merges includes):
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.1/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.2/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE:mr-$CI_MERGE_REQUEST_IID"
       untrusted: "true"
@@ -134,12 +134,13 @@ end-to-end. This mirrors the shared `buildkit-service` `.build-buildkit-service`
 control-plane `/route` step added.
 
 **Cold start vs. the proxy's idle timeout.** A CONNECT proxy caps how long an idle tunnel stays open
-(~50s), but `/route` blocks until the project's daemon is warm (first build ≈ 1–2 min) — a single call
-would drop with `SSL_read: unexpected eof`. So when `BUILDKIT_OPERATOR_TUNNEL=1`, `build.sh` **polls
-`/route` in bounded attempts** (`--max-time` per try) until the daemon is warm. Tunables (sane defaults):
-`BUILDKIT_OPERATOR_ROUTE_TIMEOUT` (per-attempt cap, default `40`s when tunnelling — keep it under the
-proxy's timeout), `BUILDKIT_OPERATOR_ROUTE_INTERVAL` (`5`s), `BUILDKIT_OPERATOR_ROUTE_DEADLINE` (`900`s).
-To hide the wait entirely, `/prewarm` the daemon in a `.pre` job on `git push`.
+(~50s), but a daemon's first build cold-starts in ≈ 1–2 min — a single blocking call would drop with
+`SSL_read: unexpected eof`. So when `BUILDKIT_OPERATOR_TUNNEL=1`, `build.sh` first **polls `/prewarm`**
+— which returns immediately with a `ready` flag — until the daemon is warm, then routes. No request is
+ever held open past the proxy timeout, and a daemon that never warms fails loudly at the deadline. (A
+bounded `/route` poll stays as a backstop.) Tunables (sane defaults): `BUILDKIT_OPERATOR_ROUTE_INTERVAL`
+(`5`s poll), `BUILDKIT_OPERATOR_ROUTE_DEADLINE` (`900`s), `BUILDKIT_OPERATOR_ROUTE_TIMEOUT` (per-`/route`
+attempt cap, default `40`s when tunnelling — keep it under the proxy's timeout).
 
 ## Notes
 

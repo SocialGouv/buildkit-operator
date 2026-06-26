@@ -26,13 +26,15 @@ TARGET="${TARGET:-}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
 case "${UNTRUSTED:-false}" in true | 1 | yes) UNTRUSTED=true ;; *) UNTRUSTED=false ;; esac
 
-# api POSTs $2 (JSON) to the buildd path $1, adding the bearer token when one is configured.
+# api POSTs $2 (JSON) to the buildd path $1, adding the bearer token when one is configured. Bounded by
+# --max-time so a stalled proxy can't hang a non-blocking call (/prewarm, /complete) indefinitely.
 api() {
   if [ -n "${BUILDKIT_OPERATOR_TOKEN:-}" ]; then
-    curl -fsS -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" -H 'content-type: application/json' \
-      -H "authorization: Bearer $BUILDKIT_OPERATOR_TOKEN" -d "$2"
+    curl -fsS --max-time "${BUILDKIT_OPERATOR_API_TIMEOUT:-60}" -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" \
+      -H 'content-type: application/json' -H "authorization: Bearer $BUILDKIT_OPERATOR_TOKEN" -d "$2"
   else
-    curl -fsS -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" -H 'content-type: application/json' -d "$2"
+    curl -fsS --max-time "${BUILDKIT_OPERATOR_API_TIMEOUT:-60}" -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" \
+      -H 'content-type: application/json' -d "$2"
   fi
 }
 
@@ -74,10 +76,29 @@ route_call() {
   fi
 }
 
+# Cold-start without any long-blocking call: when tunnelling, warm the daemon via /prewarm — which
+# returns IMMEDIATELY with a `ready` flag — and poll that (cheap, never held open past the proxy's
+# idle-tunnel timeout) until ready. This also makes a daemon that never warms fail LOUDLY at the deadline
+# instead of hanging a blocking /route. The /route bounded-poll below stays as a backstop for the rare
+# case where the daemon scales back down between this check and the route call.
+if [ "${BUILDKIT_OPERATOR_TUNNEL:-}" = "1" ] || [ "${BUILDKIT_OPERATOR_WAIT_WARM:-}" = "1" ]; then
+  warm_deadline=$(( $(date +%s) + ${BUILDKIT_OPERATOR_ROUTE_DEADLINE:-900} ))
+  while :; do
+    if [ "$(api /prewarm "$route_payload" 2>/dev/null | jq -r '.ready // false')" = "true" ]; then
+      echo "buildkit-operator: daemon warm"; break
+    fi
+    if [ "$(date +%s)" -ge "$warm_deadline" ]; then
+      echo "buildkit-operator: daemon not warm before deadline (prewarm)" >&2; exit 1
+    fi
+    echo "buildkit-operator: prewarming daemon…"
+    sleep "${BUILDKIT_OPERATOR_ROUTE_INTERVAL:-5}"
+  done
+fi
+
 # A single blocking /route is fine on a direct connection, but a CONNECT-proxy tunnel
 # (BUILDKIT_OPERATOR_TUNNEL=1) caps idle tunnels (commonly ~50s), so a cold start (PVC provision + image
-# pull, ~1-2 min) drops mid-wait with an SSL EOF. When tunnelling, poll /route in bounded attempts (each
-# under the proxy's tunnel timeout) until the daemon is warm; on a direct connection, one unbounded call.
+# pull, ~1-2 min) drops mid-wait with an SSL EOF. When tunnelling we have already polled /prewarm to
+# warm above; the bounded /route poll here is the backstop. On a direct connection, one unbounded call.
 route_timeout="${BUILDKIT_OPERATOR_ROUTE_TIMEOUT-$([ "${BUILDKIT_OPERATOR_TUNNEL:-}" = "1" ] && echo 40 || echo "")}"
 route_deadline=$(( $(date +%s) + ${BUILDKIT_OPERATOR_ROUTE_DEADLINE:-900} ))
 while :; do

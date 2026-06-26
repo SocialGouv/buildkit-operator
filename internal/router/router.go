@@ -31,6 +31,11 @@ type RouteResponse struct {
 	Key       string `json:"key"`
 	Endpoint  string `json:"endpoint"`
 	Namespace string `json:"namespace"`
+	// Ready reports whether the daemon already has a ready replica. /route only returns once the daemon
+	// is ready (always true there), but /prewarm returns immediately, so a client behind a proxy can poll
+	// /prewarm (cheap, non-blocking) on this flag until the daemon is warm — instead of holding a blocking
+	// /route open longer than the proxy's idle-tunnel timeout allows.
+	Ready bool `json:"ready"`
 	// Cache, when non-nil, is the project's cold cache the client should add to the build. It carries
 	// NO credentials: the daemon holds them (AWS env from a Secret), so the cache config is centralized
 	// in buildd instead of duplicated across every CI caller's secrets.

@@ -9,18 +9,21 @@ import (
 
 	"github.com/go-logr/logr"
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 )
 
 // addInflight adjusts Status.InflightBuilds by delta (floored at 0) and stamps LastBuildTime now. It
-// re-Gets and retries on conflict: a single Status().Update that lost a 409 race with the reconciler
-// would leave the count wrong, so the project could scale down mid-build (or never scale down). A
-// terminal failure (all retries exhausted) is logged — silently dropping it would skew the count, and
-// only the --max-build-seconds safety net would eventually paper over it.
+// re-Gets and retries on conflict AND not-found: a Status().Update that lost a 409 race with the
+// reconciler would leave the count wrong (the project could scale down mid-build, or never scale down),
+// and right after /route|/prewarm creates the project the informer cache can still miss it, so a plain
+// Get returns NotFound — retrying lets the cache catch up instead of dropping the touch (which would
+// leave a warm-tier project stuck Idle). A terminal failure (all retries exhausted) is logged.
 func (s *routeServer) addInflight(ctx context.Context, key string, delta int32) {
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	retriable := func(err error) bool { return apierrors.IsConflict(err) || apierrors.IsNotFound(err) }
+	err := retry.OnError(retry.DefaultBackoff, retriable, func() error {
 		var bp bkov1.BuildProject
 		if err := s.c.Get(ctx, types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp); err != nil {
 			return err
