@@ -57,8 +57,11 @@ inputs:
   push:
     description: "Push the result to the registry."
     default: "false"
+  gateway-host:
+    description: "Optional: the gateway's public domain (e.g. bkod.example.com). When set, the daemon endpoint is reached at buildkitd-<key>.<gateway-host> over real wildcard DNS — preferred over gateway-ip (IP-independent, survives a gateway LB IP change)."
+    default: ""
   gateway-ip:
-    description: "Optional: gateway LoadBalancer IP, to map the gateway hostname for this run when there is no wildcard DNS yet (testing/bootstrap)."
+    description: "Optional: gateway LoadBalancer IP, to map the gateway hostname for this run when there is no wildcard DNS yet (testing/bootstrap). Prefer gateway-host when wildcard DNS exists."
     default: ""
   provenance:
     description: "SLSA provenance attestation, e.g. 'mode=max' (needs push: true). Empty = off."
@@ -117,6 +120,7 @@ runs:
         UNTRUSTED: ${{ inputs.untrusted }}
         TAGS: ${{ inputs.tags }}
         PUSH: ${{ inputs.push }}
+        BUILDKIT_OPERATOR_GATEWAY_HOST: ${{ inputs.gateway-host }}
         GATEWAY_IP: ${{ inputs.gateway-ip }}
         PROVENANCE: ${{ inputs.provenance }}
         SBOM: ${{ inputs.sbom }}
