@@ -14,7 +14,8 @@ exemption it needs ([ADR 0006](adr/0006-namespace-topology.md)):
 | `buildkit-builds` | per-project daemons + forks, their certs/config/mirror, the `BuildProject` CRs | `securityContextPolicy` |
 | `buildkit-system` | Kata node plumbing (kata-deploy + vcpu-tune), only when sandboxing forks | `securityContextPolicy` + `disallow-host-path` |
 
-The chart renders the first two (`createNamespaces: true`) and places each resource accordingly;
+The chart creates the **builds** namespace (`createNamespaces: true`) and places each resource
+accordingly; the **operator** namespace is the Helm release namespace (`--create-namespace`), and
 `buildkit-system` is created with the Kata install ([deploy/kata/](../deploy/kata/)). Override names via
 `namespaces.{operator,builds}`.
 
@@ -28,7 +29,7 @@ task manifests && kubectl apply -f deploy/crd
 deploy/cert/create-certs.sh buildkit-builds
 kubectl -n buildkit-builds apply -f deploy/cert/.certs/*-secret.yaml
 
-# 3. control plane + namespaces (chart renders buildkit-operator + buildkit-builds)
+# 3. control plane (chart creates the buildkit-builds ns; operator ns = release ns via --create-namespace)
 helm upgrade --install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --create-namespace
 
 # 4. (optional) warm node-pool headroom so wake-ups don't trigger node autoscaling

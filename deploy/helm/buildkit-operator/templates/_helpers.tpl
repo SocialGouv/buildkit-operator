@@ -27,11 +27,19 @@ its workloads need:
 (The Kata node plumbing lives in a third namespace, buildkit-system, installed out-of-band — see
 deploy/kata/, not this chart.)
 */}}
+{{- /* nil-safe: with `helm upgrade --reuse-values`, .Values.namespaces may be absent, so a plain
+       .Values.namespaces.operator would nil-pointer (and `and`/`dig` don't help here — `and` isn't
+       short-circuit and `dig` rejects the common.Values type). Nested `with` only descends when each
+       level is present. */ -}}
 {{- define "buildkit-operator.operatorNamespace" -}}
-{{- .Values.namespaces.operator | default "buildkit-operator" -}}
+{{- $ns := "buildkit-operator" -}}
+{{- with .Values.namespaces }}{{- with .operator }}{{- $ns = . }}{{- end }}{{- end -}}
+{{- $ns -}}
 {{- end -}}
 {{- define "buildkit-operator.buildsNamespace" -}}
-{{- .Values.namespaces.builds | default "buildkit-builds" -}}
+{{- $ns := "buildkit-builds" -}}
+{{- with .Values.namespaces }}{{- with .builds }}{{- $ns = . }}{{- end }}{{- end -}}
+{{- $ns -}}
 {{- end -}}
 
 {{/*
