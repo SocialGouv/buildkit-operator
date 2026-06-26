@@ -30,6 +30,9 @@ type routeServer struct {
 	// gatewayHost, when set, makes /route return the deterministic SNI endpoint
 	// <daemon>.<gatewayHost>:<port> for off-cluster CI (the shared SNI gateway). Empty = in-cluster.
 	gatewayHost string
+	// gatewayPort, when > 0, is the EXTERNAL port /route advertises for the gateway endpoint (e.g. 443
+	// when the gateway is fronted on 443 behind an egress proxy). 0 = use cfg.Port (the daemon port).
+	gatewayPort int32
 	// S3 cold cache (project policy): the shared bucket reference buildd hands to clients on /route.
 	// Credentials are NOT here — they live on the daemons (cfg.S3CredsSecret).
 	s3Bucket   string
@@ -147,7 +150,11 @@ func (s *routeServer) ready(ctx context.Context, key string) bool {
 // else the in-cluster Service DNS. No polling — the endpoint is computable from the key.
 func (s *routeServer) endpointFor(key string) string {
 	if s.gatewayHost != "" {
-		return router.EndpointHost(router.DaemonName(key)+"."+s.gatewayHost, s.cfg.Port)
+		port := s.cfg.Port
+		if s.gatewayPort > 0 {
+			port = s.gatewayPort
+		}
+		return router.EndpointHost(router.DaemonName(key)+"."+s.gatewayHost, port)
 	}
 	return router.Endpoint(key, s.cfg.Namespace, s.cfg.Port)
 }

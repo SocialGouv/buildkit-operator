@@ -171,6 +171,10 @@ resources:
 # *.<host> at the gateway LB; the daemon cert SAN must cover *.<host>. Empty host = in-cluster only.
 gateway:
   host: "" # e.g. builds.buildkit-operator.example.com
+  # External port off-cluster clients dial (the SNI endpoint /route returns). Empty = the daemon port
+  # (buildkit.port, 1234). Set to 443 to front the gateway on 443 — e.g. so runners behind an
+  # egress proxy can CONNECT-tunnel to it. The gateway still dials the daemons on buildkit.port internally.
+  externalPort: ""
   image:
     repository: ghcr.io/socialgouv/buildkit-operator-gateway
     # Empty = pin to the chart appVersion (immutable). The gateway is the public-facing LB front; never
@@ -193,6 +197,19 @@ gateway:
 service:
   port: 8080
   type: ClusterIP
+
+# Optional Ingress for the buildd /route API — terminates TLS on 443 under a public hostname, so
+# off-cluster runners that can only egress via an HTTPS proxy (e.g. a CI platform behind a CONNECT
+# proxy) can reach /route. buildd speaks plain HTTP; the Ingress does the TLS. Pair it with auth
+# (auth.tokenSecret) — /route provisions daemons. Leave disabled for the LoadBalancer/in-cluster paths.
+ingress:
+  enabled: false
+  className: "" # e.g. nginx / traefik (empty = cluster default)
+  host: "" # e.g. buildd.bko.fabrique.example.com
+  annotations: {} # e.g. cert-manager.io/cluster-issuer: letsencrypt
+  tls:
+    enabled: true
+    secretName: "" # TLS secret holding the host cert (cert-manager fills it from the annotation, or pre-create it)
   # SAFETY: exposing /route off-cluster (type: LoadBalancer) without auth lets anyone spin up daemons.
   # The chart REFUSES to render a LoadBalancer buildd Service unless you set auth.tokenSecret OR restrict
   # the source IPs here. Leave empty for in-cluster (ClusterIP) use.

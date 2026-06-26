@@ -1,0 +1,41 @@
+{{- if .Values.ingress.enabled }}
+{{- if not .Values.ingress.host }}{{ fail "ingress.enabled: set ingress.host" }}{{- end }}
+{{- if not .Values.auth.tokenSecret }}{{ fail "ingress.enabled exposes /route on a public host: set auth.tokenSecret (bearer token) — /route provisions daemons" }}{{- end }}
+# TLS front for the buildd /route API (443 -> the buildd Service :{{ .Values.service.port }}). Lets
+# off-cluster runners behind an HTTPS/CONNECT proxy reach /route. buildd serves plain HTTP; the
+# Ingress terminates TLS. Bearer-token auth is enforced by buildd on top.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-buildd
+  namespace: {{ include "buildkit-operator.operatorNamespace" . }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildd
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      {{- with .Values.ingress.tls.secretName }}
+      secretName: {{ . }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "buildkit-operator.fullname" . }}-buildd
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

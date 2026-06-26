@@ -19,6 +19,12 @@
 #   BUILDKIT_OPERATOR_BUILDD_URL, BUILDKIT_OPERATOR_CA, BUILDKIT_OPERATOR_CERT, BUILDKIT_OPERATOR_KEY,
 #   BUILDKIT_OPERATOR_TOKEN  (CA/CERT/KEY hold PEM; use "File" or masked variables).
 # When the gateway has no wildcard DNS yet, also set BUILDKIT_OPERATOR_GATEWAY_IP (maps the SNI host).
+#
+# Egress-proxy-only runners (e.g. a CI platform behind an HTTP CONNECT proxy on 443): set
+#   BUILDKIT_OPERATOR_HTTP_PROXY=host:port  + BUILDKIT_OPERATOR_TUNNEL=1
+# Then BUILDKIT_OPERATOR_BUILDD_URL must be an https://…:443 host (a buildd Ingress) and the gateway
+# must be fronted on 443 (chart: gateway.externalPort=443). curl(/route)+apk go through the proxy; the
+# daemon TCP is socat-tunnelled through it (mTLS validated against the real daemon host via servername).
 spec:
   inputs:
     job_name:
@@ -97,11 +103,26 @@ spec:
     BKO_REF: "$[[ inputs.ref ]]"
     BKO_SIGN: "$[[ inputs.sign ]]"
   before_script:
-    # docker:27 is alpine; install the script's deps. (curl + jq + git; buildx ships with the image.)
-    - command -v curl >/dev/null && command -v jq >/dev/null && command -v git >/dev/null || apk add --no-cache curl jq git
+    # docker:27 is alpine; install the script's deps (curl + jq + git; socat for the proxy tunnel;
+    # buildx ships with the image). When the runner is egress-proxy-only (BUILDKIT_OPERATOR_HTTP_PROXY
+    # set), route apk + curl through it — and the build script tunnels the daemon connection via socat.
+    - |
+      if [ -n "${BUILDKIT_OPERATOR_HTTP_PROXY:-}" ]; then
+        export http_proxy="http://${BUILDKIT_OPERATOR_HTTP_PROXY}" https_proxy="http://${BUILDKIT_OPERATOR_HTTP_PROXY}"
+        export HTTP_PROXY="$http_proxy" HTTPS_PROXY="$https_proxy"
+        export no_proxy="127.0.0.1,localhost,${no_proxy:-}" NO_PROXY="127.0.0.1,localhost"
+      fi
+      command -v curl >/dev/null && command -v jq >/dev/null && command -v git >/dev/null && command -v socat >/dev/null || apk add --no-cache curl jq git socat
   script:
     # The gateway-IP escape hatch (no wildcard DNS yet) is read by the script from GATEWAY_IP.
     - export GATEWAY_IP="${BUILDKIT_OPERATOR_GATEWAY_IP:-}"
+    # Re-export the proxy for the build step (curl /route + socat tunnel; the script reads
+    # BUILDKIT_OPERATOR_HTTP_PROXY + BUILDKIT_OPERATOR_TUNNEL=1 itself).
+    - |
+      if [ -n "${BUILDKIT_OPERATOR_HTTP_PROXY:-}" ]; then
+        export http_proxy="http://${BUILDKIT_OPERATOR_HTTP_PROXY}" https_proxy="http://${BUILDKIT_OPERATOR_HTTP_PROXY}" HTTP_PROXY="http://${BUILDKIT_OPERATOR_HTTP_PROXY}" HTTPS_PROXY="http://${BUILDKIT_OPERATOR_HTTP_PROXY}"
+        export no_proxy="127.0.0.1,localhost" NO_PROXY="127.0.0.1,localhost"
+      fi
     # Single source of truth: the same build script the GitHub Action runs.
     - curl -fsSL "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/${BKO_REF}/scripts/build.sh" -o /tmp/bko-build.sh
     - sh /tmp/bko-build.sh

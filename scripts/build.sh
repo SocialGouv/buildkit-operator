@@ -63,10 +63,24 @@ if [ -n "${GATEWAY_IP:-}" ]; then
 fi
 
 # 2. Point a buildx remote builder at it over mTLS.
+# Egress-proxy tunnel (opt-in: BUILDKIT_OPERATOR_TUNNEL=1 + BUILDKIT_OPERATOR_HTTP_PROXY=host:port) — for
+# runners that can only reach the daemon through an HTTP CONNECT proxy (e.g. a CI platform on 443).
+# socat tunnels the daemon host:port through the proxy; buildx then connects to the local tunnel but
+# still validates TLS against the REAL daemon hostname (servername), so mTLS stays end-to-end.
+drv_addr="$endpoint"; srv_opt=""
+if [ "${BUILDKIT_OPERATOR_TUNNEL:-}" = "1" ] && [ -n "${BUILDKIT_OPERATOR_HTTP_PROXY:-}" ]; then
+  bk="${endpoint#tcp://}"; bkhost="${bk%%:*}"; bkport="${bk##*:}"
+  phost="${BUILDKIT_OPERATOR_HTTP_PROXY%%:*}"; pport="${BUILDKIT_OPERATOR_HTTP_PROXY##*:}"
+  command -v socat >/dev/null 2>&1 || apk add --no-cache socat >/dev/null 2>&1 || true
+  socat TCP-LISTEN:18080,fork,reuseaddr "PROXY:${phost}:${bkhost}:${bkport},proxyport=${pport}" &
+  sleep 2
+  drv_addr="tcp://127.0.0.1:18080"; srv_opt=",servername=${bkhost}"
+  echo "buildkit-operator: tunnel via ${phost}:${pport} -> ${bkhost}:${bkport}"
+fi
 docker buildx rm buildkit-operator >/dev/null 2>&1 || true
 docker buildx create --name buildkit-operator --driver remote \
-  --driver-opt "cacert=$certs/ca.pem,cert=$certs/cert.pem,key=$certs/key.pem" \
-  "$endpoint" --use >/dev/null
+  --driver-opt "cacert=$certs/ca.pem,cert=$certs/cert.pem,key=$certs/key.pem${srv_opt}" \
+  "$drv_addr" --use >/dev/null
 
 # 3. Assemble the buildx args. --metadata-file captures the resulting image digest so the Action can
 # expose it as an output (downstream sign/scan/deploy by digest).

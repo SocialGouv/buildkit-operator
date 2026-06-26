@@ -20,6 +20,8 @@ as component inputs (inputs are visible in the config). Mirror of the GitHub org
 | `BUILDKIT_OPERATOR_CA` / `_CERT` / `_KEY` | client mTLS CA / cert / key (PEM) |
 | `BUILDKIT_OPERATOR_TOKEN` | bearer token for `/route` (when buildd is exposed with auth) |
 | `BUILDKIT_OPERATOR_GATEWAY_IP` | *(optional)* gateway LoadBalancer IP — maps the SNI host when there is no wildcard DNS yet |
+| `BUILDKIT_OPERATOR_HTTP_PROXY` | *(optional)* `host:port` of an HTTP CONNECT proxy — for **egress-proxy-only** runners (see below) |
+| `BUILDKIT_OPERATOR_TUNNEL` | *(optional)* `1` to tunnel the daemon connection through the proxy |
 
 ## 2. Include the component
 
@@ -99,6 +101,27 @@ prewarm:
       -H "authorization: Bearer $BUILDKIT_OPERATOR_TOKEN" -H 'content-type: application/json'
       -d "{\"repo\":\"$CI_PROJECT_URL\",\"arch\":\"amd64\"}"
 ```
+
+## Behind an egress proxy (e.g. the SocialGouv PIC)
+
+Some CI platforms only let runners egress through an **HTTP CONNECT proxy on 443** — they cannot dial
+an arbitrary IP:port. To use buildkit-operator from there:
+
+1. **Expose buildd + gateway on 443** (chart, on the cluster side):
+   - gateway on 443: `--set gateway.externalPort=443` (it still dials daemons on the internal mTLS
+     port); point wildcard DNS `*.<gateway.host>` at the gateway LB.
+   - buildd `/route` behind a TLS Ingress on 443: `--set ingress.enabled=true --set
+     ingress.host=buildd.<domain> --set auth.tokenSecret=<secret>` (buildd speaks HTTP; the Ingress
+     terminates TLS). Use a public hostname the proxy will `CONNECT` to.
+2. **Set the proxy CI/CD variables** (in addition to the mTLS ones):
+   - `BUILDKIT_OPERATOR_BUILDD_URL` = `https://buildd.<domain>` (the Ingress, 443)
+   - `BUILDKIT_OPERATOR_HTTP_PROXY` = `host:port` of the CONNECT proxy
+   - `BUILDKIT_OPERATOR_TUNNEL` = `1`
+
+The job then routes `apk`/`curl(/route)` through the proxy and **socat-tunnels** the daemon TCP through
+the same proxy; mTLS is validated against the real daemon hostname (`servername`), so it stays
+end-to-end. This mirrors the shared `buildkit-service` `.build-buildkit-service` backend, with the
+control-plane `/route` step added.
 
 ## Notes
 

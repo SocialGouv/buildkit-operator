@@ -36,14 +36,16 @@ spec:
           image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - --listen=:{{ .Values.buildkit.port }}
+            # External listen port (what off-cluster clients dial). Defaults to the daemon port; set
+            # gateway.externalPort=443 to front the gateway on 443 (e.g. behind an egress proxy).
+            - --listen=:{{ .Values.gateway.externalPort | default .Values.buildkit.port }}
             - --health-listen=:8081
             - --domain={{ .Values.gateway.host }}
             - --namespace={{ include "buildkit-operator.buildsNamespace" . }}
-            - --daemon-port={{ .Values.buildkit.port }}
+            - --daemon-port={{ .Values.buildkit.port }} # internal: the gateway dials daemons on the mTLS port
           ports:
             - name: sni
-              containerPort: {{ .Values.buildkit.port }}
+              containerPort: {{ .Values.gateway.externalPort | default .Values.buildkit.port }}
               protocol: TCP
             - name: health
               containerPort: 8081
@@ -84,7 +86,7 @@ spec:
     app.kubernetes.io/component: gateway
   ports:
     - name: sni
-      port: {{ .Values.buildkit.port }}
-      targetPort: {{ .Values.buildkit.port }}
+      port: {{ .Values.gateway.externalPort | default .Values.buildkit.port }}
+      targetPort: {{ .Values.gateway.externalPort | default .Values.buildkit.port }}
       protocol: TCP
 {{- end }}

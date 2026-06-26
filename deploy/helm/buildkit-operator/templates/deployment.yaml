@@ -46,6 +46,9 @@ spec:
             - --leader-elect={{ .Values.leaderElection }}
             {{- if .Values.gateway.host }}
             - --gateway-host={{ .Values.gateway.host }}
+            {{- if .Values.gateway.externalPort }}
+            - --gateway-port={{ .Values.gateway.externalPort }} # /route advertises this external port
+            {{- end }}
             {{- end }}
             {{- if .Values.sandbox.runtimeClass }}
             - --sandbox-runtime-class={{ .Values.sandbox.runtimeClass }}

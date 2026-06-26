@@ -53,6 +53,7 @@ func main() {
 	flag.StringVar(&cfg.SandboxBuildkitImage, "sandbox-buildkit-image", "", "NON-rootless buildkit image for sandboxed (Kata) forks; empty = derived from --buildkit-image by stripping -rootless")
 	daemonScheduling := flag.String("daemon-scheduling", "", `JSON {"nodeSelector":{},"tolerations":[],"affinity":{}} to pin daemon pods to a dedicated build nodepool (empty = cluster default)`)
 	flag.StringVar(&gatewayHost, "gateway-host", "", "gateway domain for off-cluster CI: /route returns tcp://<daemon>.<gateway-host>:<port> (empty = in-cluster ClusterIP DNS)")
+	gatewayPort := flag.Int("gateway-port", 0, "external port for the gateway SNI endpoint /route returns (0 = same as --port; set 443 when the gateway is fronted on 443, e.g. behind an egress proxy)")
 	flag.StringVar(&cfg.SnapshotClass, "snapshot-class", "", "VolumeSnapshotClass for durability snapshots (empty = disabled)")
 	keepSnaps := flag.Int("keep-snapshots", 3, "durability snapshots retained per project")
 	maxCold := flag.Int("max-cold-starts", 8, "max concurrent cold-start attaches (bench C backpressure)")
@@ -136,7 +137,7 @@ func main() {
 	}
 	if err := mgr.Add(&routeServer{
 		c: mgr.GetClient(), cfg: cfg, addr: apiListen, wait: routeWait,
-		coldStartSem: make(chan struct{}, *maxCold), gatewayHost: gatewayHost,
+		coldStartSem: make(chan struct{}, *maxCold), gatewayHost: gatewayHost, gatewayPort: int32(*gatewayPort),
 		s3Bucket: *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
 		authToken: authToken, limiter: limiter, log: ctrl.Log.WithName("route"),
 	}); err != nil {
