@@ -164,6 +164,27 @@ func TestVerify_GitLab(t *testing.T) {
 	})
 }
 
+func TestVerify_Forgejo(t *testing.T) {
+	f := newForge(t)
+	v, err := NewVerifier(Config{Providers: []Provider{
+		{Type: "forgejo", Issuer: f.issuer(), Audience: "buildkit-operator", Host: "forge.example.com"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := f.sign(t, map[string]any{"aud": "buildkit-operator", "repository": "team/app", "ref": "refs/pull/2/head"})
+	id, err := v.Verify(context.Background(), tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Repo != "forge.example.com/team/app" {
+		t.Errorf("repo = %q", id.Repo)
+	}
+	if !id.Untrusted {
+		t.Error("forgejo pull_request build should be untrusted")
+	}
+}
+
 func TestVerify_UnknownIssuer(t *testing.T) {
 	known := newForge(t)
 	other := newForge(t) // a different issuer, NOT configured

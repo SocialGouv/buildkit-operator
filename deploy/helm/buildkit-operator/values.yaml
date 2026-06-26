@@ -288,6 +288,9 @@ oidc:
     # - type: gitlab   # built-in mapping: project_path claim, issuer host, unprotected ref => untrusted
     #   issuer: https://gitlab.example.com
     #   audience: buildkit-operator
+    # - type: forgejo  # built-in mapping (also "gitea"): repository claim, issuer host, PR ref => untrusted
+    #   issuer: https://forge.example.com
+    #   audience: buildkit-operator
   # Optional HARD org/repo gate applied AFTER signature verification (globs; trailing /* = prefix).
   # Empty = allow every verified repo (OIDC alone is the gate). A verified-but-unlisted repo gets 403.
   repoAllowlist: []

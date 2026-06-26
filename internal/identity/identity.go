@@ -93,6 +93,15 @@ func builtin(p Provider) (claimMapper, error) {
 			// feature branch) is untrusted.
 			untrusted: func(c map[string]any) bool { return asString(c["ref_protected"]) == "false" },
 		}, nil
+	case "forgejo", "gitea":
+		// Forgejo/Gitea Actions mirror the GitHub Actions OIDC token (repository claim, refs/pull/* on
+		// PRs) but the forge is self-hosted, so host comes from the issuer (not github.com). Override
+		// repoClaim if your instance differs.
+		return claimMapper{
+			repoClaim: orDefault(p.RepoClaim, "repository"),
+			host:      host,
+			untrusted: func(c map[string]any) bool { return strings.HasPrefix(asString(c["ref"]), "refs/pull/") },
+		}, nil
 	default:
 		if p.RepoClaim == "" || host == "" {
 			return claimMapper{}, fmt.Errorf("oidc provider %q: unknown type %q and no repoClaim/host override", p.Issuer, p.Type)

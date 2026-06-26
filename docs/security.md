@@ -88,7 +88,9 @@ job's environment, so there is **no extra runner egress**. On `/route` and `/pre
 4. optionally enforces a **repo allowlist** (`oidc.repoAllowlist`) — a verified-but-unlisted repo gets
    `403`, a hard org gate on who may use the service at all.
 
-Adding a forge (e.g. **Forgejo**) is adding one `oidc.providers` entry — the verifier is provider-keyed.
+Adding a forge is one `oidc.providers` entry — the verifier is provider-keyed. Built-in types:
+`github`, `gitlab`, and `forgejo`/`gitea` (Forgejo/Gitea Actions mirror the GitHub OIDC claims on a
+self-hosted host); any other forge works via explicit `repoClaim` + `host` overrides.
 
 **Break-glass.** A distinct admin credential (`oidc.adminTokenSecret`, sent in the
 `X-Buildkit-Operator-Admin-Token` header) bypasses OIDC and trusts the request as-is — for the manual
