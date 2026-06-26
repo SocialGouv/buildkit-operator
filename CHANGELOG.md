@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.1](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.8.1) (2026-06-26)
+
+### Bug Fixes
+
+* **build:** poll /route in bounded attempts when tunnelling through a proxy ([1862462](https://github.com/socialgouv/buildkit-operator/commit/186246275d695ee480ae968a4a82a9f8ea79447e))
+
 ## [0.8.0](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.8.0) (2026-06-26)
 
 ### Features
