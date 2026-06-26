@@ -36,12 +36,20 @@ api() {
   fi
 }
 
-# Client mTLS material → a private temp dir (buildx reads the files at create time).
+# Client mTLS material → a private temp dir (buildx reads the files at create time). Accepts either raw
+# PEM (GitHub secrets — multi-line OK) or a base64-encoded blob (GitLab masked variables can't hold
+# multi-line PEM, so the convention there is `base64 -w0` + masked_and_hidden) — auto-detected.
 certs="$(mktemp -d)"
 trap 'rm -rf "$certs"' EXIT
-printf '%s' "${BUILDKIT_OPERATOR_CA:?}"   > "$certs/ca.pem"
-printf '%s' "${BUILDKIT_OPERATOR_CERT:?}" > "$certs/cert.pem"
-printf '%s' "${BUILDKIT_OPERATOR_KEY:?}"  > "$certs/key.pem"
+wrcert() { # $1 dest file, $2 value (PEM or base64)
+  case "$2" in
+    -----BEGIN*) printf '%s' "$2" > "$1" ;;
+    *) printf '%s' "$2" | base64 -d > "$1" ;;
+  esac
+}
+wrcert "$certs/ca.pem"   "${BUILDKIT_OPERATOR_CA:?}"
+wrcert "$certs/cert.pem" "${BUILDKIT_OPERATOR_CERT:?}"
+wrcert "$certs/key.pem"  "${BUILDKIT_OPERATOR_KEY:?}"
 
 # 1. Route: ask buildd for this project's daemon endpoint (+ optional cold-cache reference). target is
 # part of the cache identity, so it MUST be sent (else two targets of one repo collide on one daemon).
