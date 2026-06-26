@@ -2,12 +2,20 @@
 
 End-to-end validation of buildkit-operator deployed on **OVH MKS `ovh-prod`**, exercised from both CI
 front-ends (GitHub Action + GitLab/PIC) and benchmarked for the cache features that are its reason to
-exist. Date: **2026-06-26**, release **v0.8.1**.
+exist. Date: **2026-06-26**, release **v0.8.2**.
 
 > TL;DR — every feature works and is exercised by a real build. Warm local cache gives a **measured
 > 3.6×** on a representative build (5/5 steps `CACHED`); the S3 cold cache lets a **brand-new daemon**
-> rebuild from cache instead of from scratch. Two CI paths are green end-to-end (GitHub example repo +
-> the SocialGouv PIC behind its egress proxy). Known operational caveats are listed at the end.
+> skip an expensive step entirely (a 30.5 s `RUN` → `CACHED` from S3). Two CI paths are green end-to-end
+> (GitHub example repo + the SocialGouv PIC behind its egress proxy), including a brand-new project's
+> cold start. Known operational caveats are listed at the end.
+
+> **v0.8.2 robustness.** Two fixes hardened the cold-start path after this validation surfaced them:
+> (1) a fresh project now warms reliably — `buildd` stamps `LastBuildTime` on the object returned by
+> `Create` (an informer-cache `Get` right after `Create` could miss it and leave a warm-tier daemon
+> stuck `Idle`); (2) `/prewarm` now returns a `ready` flag so a proxy-tunnelled client polls it
+> (non-blocking) until warm — no request is ever held open past the proxy's idle-tunnel timeout, and a
+> daemon that never warms fails loudly instead of hanging. Both re-validated live (below).
 
 ## 1. What is deployed (ovh-prod)
 
@@ -45,12 +53,14 @@ Both paths green **through the PIC CONNECT proxy** (`proxyweb…:8002`):
 | Run | Scenario | Result |
 |---|---|---|
 | warm | daemon already hot | **17s**, success |
-| cold | daemon deleted, full cold start | success — the client polls `/route` in bounded attempts (proxy idle-timeout ~50s) until warm, then builds |
+| cold (v0.8.1) | daemon deleted, full cold start | success — client polled `/route` in bounded attempts until warm |
+| cold (v0.8.2) | daemon idle, new `/prewarm` poll | success (46s) — trace: `prewarming daemon…` ×6 → `daemon warm` → routed → tunnel → S3 → build |
 
 Two PIC constraints were found and handled (see [lessons-learned.md](lessons-learned.md)): the GitLab
 **server blocks `include: remote:`** (allow-list) → the brick is vendored (`ci/build.sh` + inline job);
-and a blocking `/route` would drop on the proxy's idle timeout → **bounded `/route` polling** when
-`BUILDKIT_OPERATOR_TUNNEL=1` (shipped in v0.8.1).
+and no request may block past the proxy's idle timeout → the client warms the daemon by **polling
+`/prewarm`** (which returns a `ready` flag, v0.8.2) until ready, then routes — never holding a call open
+(a bounded `/route` poll remains as a backstop). Validated live through the PIC proxy.
 
 ## 3. Performance — cache benefit (measured)
 
@@ -73,12 +83,15 @@ Reading:
   `CACHED` — the layers came **from S3**, not from re-execution. On this particular build the wall-clock
   win is small (45 s ≈ 51 s) because the steps are cheap to re-run and the cached layers are biggish, so
   the S3 download roughly equals the rebuild cost.
-- **The S3 win scales with re-execution cost.** When a `RUN` step is expensive (a long compile) but its
-  layer is small, a cache hit skips the whole step for the price of a few bytes — that is where S3
-  matters most. On a heavier build the gap is dramatic: **≈ 9×** (4.5 s with the cold cache vs 41.8 s
-  from scratch), measured in [storage-and-cold-cache.md](storage-and-cold-cache.md). On the light build
-  above the steps were cheap to re-run, so the win was small — the metric to watch is *re-execution cost
-  avoided*, not raw wall-clock.
+- **The S3 win scales with re-execution cost.** When a `RUN` step is expensive but its layer is small, a
+  cache hit skips the whole step for the price of a few bytes — that is where S3 matters most. A focused
+  test (one `RUN` that does ~30 s of work, tiny layer) makes it unambiguous: on a from-scratch build the
+  step ran — `#10 … RUN … DONE 30.5s`; after deleting the BuildProject and rebuilding on a **brand-new
+  daemon with an empty PVC**, the *same* step came back **`#10 … CACHED`** (imported from S3, not
+  re-executed). So S3 turned a **30.5 s** step into a **~0 s** cache hit on a cold daemon. (Wall-clock is
+  dominated by the fresh daemon's cold start — PVC provision — which is orthogonal to caching and is
+  masked by `/prewarm` in real CI; the metric to watch is *re-execution avoided*.) A heavier build shows
+  the same effect at larger scale (≈ 9×, [storage-and-cold-cache.md](storage-and-cold-cache.md)).
 
 > Cache evidence is always logged — `importing cache manifest from s3:<key>` / `exporting cache to
 > Amazon S3 … sending cache export done`. A green build does **not** prove the cache worked; grep the log.
@@ -94,20 +107,21 @@ Reading:
 | Multi-arch routing (`arch`) | ✅ | `amd64` ≠ `arm64` keys (one hot daemon per arch) |
 | Untrusted-fork isolation | ✅ | `ForkKey` ≠ canonical; fork daemons get **no S3 creds** (`!IsForkKey` gate) → can't poison the shared cache; Kata microVM runtime |
 | Warm local cache (PVC) | ✅ | bench B: 5/5 `CACHED`, 3.6× |
-| S3 cold cache (cross-daemon / cold daemon) | ✅ | bench C: 5/5 `CACHED` on a fresh daemon, imported from S3 |
+| S3 cold cache (cross-daemon / cold daemon) | ✅ | a 30.5 s `RUN` ran from scratch but came back `CACHED` from S3 on a brand-new daemon |
 | Scale-to-zero + PVC retention | ✅ | daemon seen `Idle` at 0 replicas, then re-attached hot (cache intact) by the next build |
-| Pre-warm (mask cold start) | ✅ | `/prewarm` returns `202` immediately with endpoint + cache ref |
+| Pre-warm + readiness | ✅ | `/prewarm` returns `202` immediately with `ready` + endpoint + cache; client polls it (non-blocking) to warm before routing |
+| Reliable warm-up from a fresh project | ✅ | new project `Scaling → Warm` with `LastBuildTime` stamped at create (v0.8.2 fix; no more silent stuck-`Idle`) |
 | Push + provenance/SBOM | ✅ | `--push` / `--provenance` / `--sbom` buildx flags wired in `build.sh` |
 | cosign keyless signing | ✅ | example-repo run pushes a signature to GHCR |
 
 ## 5. Reproducibility
 
-- **Chart**: `oci://ghcr.io/socialgouv/charts/buildkit-operator:0.8.1` (helm values documented in
-  `deploy/helm/buildkit-operator/values.yaml`).
+- **Chart**: `oci://ghcr.io/socialgouv/charts/buildkit-operator:0.8.2` (helm values documented in
+  `deploy/helm/buildkit-operator/values.yaml`); `buildd` live on image `sha-9190bb8` (v0.8.2).
 - **Client**: `scripts/build.sh` (GitHub Action `action.yml`, GitLab component `templates/build.yml`),
-  pinned to `v0.8.1` / floating `v1`.
+  pinned to `v0.8.2` / floating `v1`.
 - **Certs**: `deploy/cert/create-certs.sh` (SANs include `*.bko.fabrique.social.gouv.fr`).
-- **CI**: `ci` (test+lint) + `images` (build + cosign sign) green for v0.8.1.
+- **CI**: `ci` (test+lint) + `images` (build + cosign sign) green for v0.8.2.
 
 ## 6. Known caveats (operational, non-blocking)
 
