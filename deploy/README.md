@@ -54,21 +54,22 @@ the copy.)
 
 ### (b) Mint and apply the mTLS certs
 
-`buildd` ↔ daemon and client ↔ daemon traffic is mutually authenticated. One
-daemon server cert with a **wildcard SAN** (`*.<ns>.svc`,
-`*.<ns>.svc.cluster.local`, `localhost`, `127.0.0.1`) covers every per-project
-Service the controller will ever create in the namespace.
+Client ↔ daemon traffic is mutually authenticated. One daemon server cert with a **wildcard SAN**
+(`*.<builds-ns>.svc`, `*.<builds-ns>.svc.cluster.local`, `localhost`, `127.0.0.1`) covers every
+per-project Service the controller creates. The certs go in the **builds** namespace
+(`buildkit-builds`) — that is where the daemons mount them:
 
 ```bash
-deploy/cert/create-certs.sh buildkit-operator       # <ns> defaults to "buildkit-operator"
-kubectl apply -f deploy/cert/.certs/buildkit-daemon-certs.yaml
-kubectl apply -f deploy/cert/.certs/buildkit-client-certs.yaml
+deploy/cert/create-certs.sh buildkit-builds          # the builds namespace (daemons live here)
+kubectl -n buildkit-builds apply -f deploy/cert/.certs/buildkit-daemon-certs.yaml
+kubectl -n buildkit-builds apply -f deploy/cert/.certs/buildkit-client-certs.yaml
 ```
 
-This produces two Secrets in the target namespace:
+This produces two Secrets in the **builds** namespace:
 - `buildkit-daemon-certs` (`ca.pem`/`cert.pem`/`key.pem`) — mounted by every
   per-project buildkitd daemon.
-- `buildkit-client-certs` (`ca.pem`/`cert.pem`/`key.pem`) — mounted by `buildd`.
+- `buildkit-client-certs` (`ca.pem`/`cert.pem`/`key.pem`) — distributed to CI runners
+  (the GitHub Action / `build` CLI) so they can mTLS-dial the daemons.
 
 The script prefers `mkcert`, falls back to `openssl`, is idempotent (an existing
 CA is reused so already-deployed client certs stay valid), and never touches your
@@ -88,25 +89,27 @@ binding, and the `buildkitd.toml` ConfigMap. Watch it roll out:
 kubectl -n buildkit-operator rollout status deploy/buildkit-operator-buildd
 ```
 
-Then create a `BuildProject` and watch the controller materialise its daemon:
+Then create a `BuildProject` and watch the controller materialise its daemon (in the **builds**
+namespace, where the chart placed the certs/config):
 
 ```bash
-kubectl -n buildkit-operator get buildprojects -w
-kubectl -n buildkit-operator get statefulset,svc,pvc -l app.kubernetes.io/name=buildkit-operator
+kubectl -n buildkit-builds get buildprojects -w
+kubectl -n buildkit-builds get statefulset,svc,pvc -l app.kubernetes.io/name=buildkit-operator
 ```
 
 ### (d) OVH gen2 storage / snapshot classes
 
-As noted in the prerequisites, `csi-cinder-high-speed-gen2` (StorageClass) and
-`csi-cinder-snapclass-v1` (VolumeSnapshotClass) are expected to **already exist**
-on the OVH cluster. They are the chart defaults
-(`defaults.storageClass`, `snapshotClassName`). If your cluster names them
-differently, override at install time:
+`csi-cinder-high-speed-gen2` (StorageClass) and `csi-cinder-snapclass-in-use-v1` (VolumeSnapshotClass)
+are expected to **already exist** on the OVH cluster. The **snapshot** class is a chart value
+(`snapshotClassName`); the **storage** class is a per-project field (`BuildProject.spec.storageClass`,
+CRD-defaulted to `csi-cinder-high-speed-gen2`) — not a chart-wide value. If your cluster names them
+differently:
 
 ```bash
+# snapshot class (chart-wide):
 helm install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --create-namespace \
-  --set defaults.storageClass=<your-sc> \
   --set snapshotClassName=<your-vsc>
+# storage class is set per BuildProject (or change the CRD default).
 ```
 
 ## Security profile & the Kyverno caveat
@@ -116,52 +119,26 @@ The per-project daemons default to **rootless** buildkit
 buildkit needs `seccompProfile: Unconfined` on the daemon pod (it manages its own
 user-namespaced sandbox).
 
-A restrictive admission policy — e.g. a Kyverno `restrict-seccomp` /
-Pod-Security-`restricted` baseline — will **reject** `seccompProfile: Unconfined`
-and block the daemons from starting. Two ways out:
+A restrictive admission policy — e.g. a Kyverno baseline that *forces*
+`allowPrivilegeEscalation: false` or rejects `seccompProfile: Unconfined` — blocks the daemons. The
+daemons run in the **`buildkit-builds`** namespace, so that is the namespace to exempt. Two ways out:
 
-1. **PolicyException (preferred):** grant the buildkit-operator namespace an exception for
-   the seccomp rule, scoped to the buildkitd pods. With Kyverno:
+1. **Namespace exemption (preferred):** exempt `buildkit-builds` from the offending policy. On a
+   platform that owns its ClusterPolicies via GitOps, add `buildkit-builds` to the policy's
+   `excludedNamespaces` (the control-plane namespace `buildkit-operator` needs **no** exemption — it is
+   fully hardened). Full matrix in [docs/security.md](../docs/security.md) and
+   [docs/operations.md](../docs/operations.md#kyverno-exemption). Where `PolicyException` is enabled you
+   can instead scope an exception to the buildkitd pods in `buildkit-builds`.
 
-   ```yaml
-   apiVersion: kyverno.io/v2
-   kind: PolicyException
-   metadata:
-     name: buildkit-operator-rootless-seccomp
-     namespace: buildkit-operator
-   spec:
-     exceptions:
-       - policyName: restrict-seccomp          # your cluster's policy name
-         ruleNames:
-           - "*"
-     match:
-       any:
-         - resources:
-             kinds: ["Pod"]
-             namespaces: ["buildkit-operator"]
-             selector:
-               matchLabels:
-                 app.kubernetes.io/name: buildkit-operator
-   ```
+2. **Fallback security profile:** the profile is **per-project**
+   (`BuildProject.spec.securityProfile`, CRD-defaulted to `rootless`) — not a chart-wide value. Set it
+   on the `BuildProject` (or change the CRD default) to `userns` or `privileged` so `Unconfined` is no
+   longer required:
 
-   (Adjust `policyName`/`ruleNames` to match the policy actually deployed on the
-   cluster.)
-
-2. **Fallback security profile:** if you cannot add an exception, switch the
-   profile so `Unconfined` is no longer required:
-
-   ```bash
-   helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator \
-     --set securityProfile=userns        # kubelet-assigned UID, UserNamespacesSupport
-   # or, last resort:
-   helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator \
-     --set securityProfile=privileged
-   ```
-
-   - `userns` needs the `UserNamespacesSupport` feature gate on kubelet +
-     kube-apiserver and uses `moby/buildkit:<ver>` (non-rootless) with
-     `hostUsers: false`.
-   - `privileged` runs the daemon privileged — only if nothing else is permitted.
+   - `userns` needs the `UserNamespacesSupport` feature gate on kubelet + kube-apiserver and uses
+     `moby/buildkit:<ver>` (non-rootless) with `hostUsers: false`.
+   - `privileged` runs the daemon privileged — only if nothing else is permitted. (Untrusted forks are
+     better isolated with the Kata sandbox runtime — see [docs/sandboxed-builds.md](../docs/sandboxed-builds.md).)
 
 ## Uninstall
 

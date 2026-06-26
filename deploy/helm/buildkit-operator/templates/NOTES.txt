@@ -36,10 +36,8 @@ Next steps:
      kubectl -n {{ include "buildkit-operator.buildsNamespace" . }} get buildprojects -w
      kubectl -n {{ include "buildkit-operator.buildsNamespace" . }} get statefulset,svc,pvc -l app.kubernetes.io/name=buildkit-operator
 
-Security profile in effect: {{ .Values.securityProfile }}
-{{- if eq .Values.securityProfile "rootless" }}
-  rootless buildkit requires seccompProfile: Unconfined on the daemon pods.
-  If a restrictive admission policy (e.g. Kyverno) blocks that, exempt the BUILDS namespace
-  {{ include "buildkit-operator.buildsNamespace" . }} (the operator namespace needs no exemption) or set
-  securityProfile=userns (or privileged) — see deploy/README.md.
-{{- end }}
+Security profile: per-project (BuildProject.spec.securityProfile, CRD-defaulted to "rootless").
+  Rootless buildkit requires allowPrivilegeEscalation UNSET + seccompProfile: Unconfined on the daemon
+  pods. If a restrictive admission policy (e.g. Kyverno) blocks that, exempt the BUILDS namespace
+  {{ include "buildkit-operator.buildsNamespace" . }} (the operator namespace needs no exemption), or set
+  spec.securityProfile=userns|privileged per project — see deploy/README.md and docs/security.md.

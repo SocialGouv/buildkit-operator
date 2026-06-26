@@ -66,7 +66,7 @@ With the `buildx` **remote** driver, cache export/import for `type=s3` runs **in
 not in the client. The client only passes the (credential-free) reference through. Consequences:
 
 - The S3 endpoint is resolved **daemon-side**, so it can be an **in-cluster** address
-  (`minio.buildkit-operator.svc:9000`) that an external GitHub-hosted runner cannot even reach. The runner
+  (`minio.buildkit-builds.svc:9000`) that an external GitHub-hosted runner cannot even reach. The runner
   never opens an S3 connection — the example CI log shows the in-cluster daemon doing it:
   `#8 importing cache manifest from s3:…`.
 - S3 credentials live on the **daemon pods** (a k8s Secret mounted as AWS env), never on the runner

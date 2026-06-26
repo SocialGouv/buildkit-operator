@@ -142,7 +142,7 @@ is guarded by mTLS (a valid client cert is required to complete the handshake).
 
 mTLS validates the daemon's hostname, so the **daemon certificate's SAN must cover the address the
 runner dials** — which, through the gateway, is `<daemon>.<gateway-host>`. The cert script
-([`deploy/cert/create-certs.sh`](../deploy/cert)) bakes in `*.buildkit-operator.svc`; for public exposure run
+([`deploy/cert/create-certs.sh`](../deploy/cert)) bakes in `*.buildkit-builds.svc` (the daemons' namespace); for public exposure run
 it with `GATEWAY_HOST=<gateway-host>` so it also adds the **wildcard SAN `*.<gateway-host>`** (one
 cert validates every daemon's SNI hostname). If the SAN is wrong you get TLS validation failures or
 `context deadline exceeded`. (The gateway terminates no TLS, so it needs no cert of its own — it only
@@ -155,7 +155,7 @@ no secrets). When buildd is set up with a bucket (`--s3-bucket …`), `/route` r
 cache reference (bucket/region/endpoint, prefix = the project key, **no credentials**) and the
 client adds `--cache-from/--cache-to type=s3` automatically. The **daemon** performs the S3 I/O, so:
 
-- the endpoint can be **in-cluster** (`http://minio.buildkit-operator.svc:9000`) — unreachable from the
+- the endpoint can be **in-cluster** (`http://minio.buildkit-builds.svc:9000`) — unreachable from the
   runner, yet it works, because the in-cluster daemon connects;
 - the AWS creds live on the **daemon pods** (a k8s Secret via `--s3-creds-secret`), never on the
   runner and never on the wire.

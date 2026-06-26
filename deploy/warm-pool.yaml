@@ -19,7 +19,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: buildkit-operator-warm-pool
-  namespace: buildkit-operator
+  namespace: buildkit-builds # reserve capacity where the per-project daemons land
   labels:
     app.kubernetes.io/name: buildkit-operator
     app.kubernetes.io/component: warm-pool

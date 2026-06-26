@@ -57,16 +57,18 @@ Kubernetes orchestration + the stock BuildKit client**, not low-level systems co
 flowchart LR
     ci["CI runner<br/>GitHub Action / build CLI"]
     s3[("S3 cold cache<br/>OVH Object Storage")]
-    subgraph ns["Kubernetes namespace: buildkit-operator"]
+    subgraph op["ns: buildkit-operator (control plane)"]
         buildd["buildd — control plane (HA)<br/>reconciler + /route /prewarm API"]
         gw["gateway<br/>shared SNI router (1 LB)"]
+    end
+    subgraph builds["ns: buildkit-builds (daemons)"]
         da["buildkitd · project A<br/>+ companion + gen2 PVC"]
         db["buildkitd · project B<br/>+ companion + gen2 PVC"]
-        buildd -- "reconciles<br/>STS + Service + PVC" --> da
-        buildd -- reconciles --> db
-        gw --> da
-        gw --> db
     end
+    buildd -- "reconciles<br/>STS + Service + PVC" --> da
+    buildd -- reconciles --> db
+    gw --> da
+    gw --> db
     ci -- "1. POST /route" --> buildd
     ci -- "2. buildx remote (mTLS)" --> gw
     da -. "layers" .-> s3
@@ -214,9 +216,9 @@ Prerequisites: a Kubernetes cluster with a CSI that supports snapshots (OVH MKS 
 # 1. CRDs
 task manifests && kubectl apply -f deploy/crd
 
-# 2. mTLS certs (wildcard SAN over the daemon Services)
-deploy/cert/create-certs.sh buildkit-operator
-kubectl -n buildkit-operator apply -f deploy/cert/.certs/*-secret.yaml
+# 2. mTLS certs (wildcard SAN over the daemon Services) — in the BUILDS namespace (daemons mount them)
+deploy/cert/create-certs.sh buildkit-builds
+kubectl -n buildkit-builds apply -f deploy/cert/.certs/*-secret.yaml
 
 # 3. control plane (buildd Deployment + RBAC + buildkitd.toml ConfigMap)
 helm upgrade --install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --create-namespace
@@ -239,7 +241,7 @@ apiVersion: buildkit-operator.socialgouv.github.io/v1alpha1
 kind: BuildProject
 metadata:
   name: p1a2b3c4d5e6f7a8        # = spec.key
-  namespace: buildkit-operator
+  namespace: buildkit-builds    # daemons + their BuildProjects live in the builds namespace
 spec:
   key: p1a2b3c4d5e6f7a8         # stable cache identity (set by the router)
   repo: github.com/acme/app     # normalized, informational
@@ -257,7 +259,7 @@ spec:
 status:
   phase: Warm                   # Pending | Warm | Idle | Scaling | Failed
   replicas: 1
-  endpoint: tcp://buildkitd-p1a2b3c4d5e6f7a8.buildkit-operator.svc:1234
+  endpoint: tcp://buildkitd-p1a2b3c4d5e6f7a8.buildkit-builds.svc:1234
   lastSnapshot: snap-...
 ```
 
