@@ -11,6 +11,7 @@ Service de build **BuildKit distribué** : un `buildkitd` **chaud par `(projet, 
 - **Toujours préfixer les commandes par `devbox run -- <cmd>`** (ou être dans `devbox shell` / un shell direnv-chargé) pour garantir les bonnes versions. Ex : `devbox run -- make test`, `devbox run -- go vet ./...`, `devbox run -- pnpm install --frozen-lockfile`. Raccourcis devbox dispo : `devbox run test|lint|manifests|build`.
 - **Node/pnpm** : pas de `npm`. pnpm est géré par corepack (champ `packageManager` de `package.json`). Installer les deps de release avec `devbox run -- pnpm install --frozen-lockfile`.
 - `controller-gen` et `golangci-lint` ne sont **pas** dans devbox : ils restent pinnés via `go run …@version` dans le `Makefile` (source de vérité unique des versions).
+- **Renovate** (`.github/renovate.json5`, preset `github>SocialGouv/renovate-config`) met à jour toutes les deps : go.mod, pnpm, Dockerfiles, GitHub Actions, devbox (nixhub). Les pins inline (controller-gen, golangci-lint, buildkit) sont annotés `# renovate:` + custom manager. Ne pas bumper à la main ce que Renovate gère.
 
 ## Tests k8s
 - Context **ovh-dev** (région GRA9, cluster **partagé** ⇒ toujours un **namespace dédié** + cleanup systématique).

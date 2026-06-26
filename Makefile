@@ -1,6 +1,7 @@
 # buildkit-operator — control plane for one hot vanilla buildkitd per (project, arch).
 
 MODULE        := github.com/socialgouv/buildkit-operator
+# renovate: datasource=go depName=sigs.k8s.io/controller-tools
 CONTROLLER_GEN := go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0
 IMG_BUILDD    ?= ghcr.io/socialgouv/buildkit-operator-buildd:dev
 IMG_COMPANION ?= ghcr.io/socialgouv/buildkit-operator-companion:dev
@@ -55,6 +56,7 @@ tidy:
 fmt:; go fmt ./...
 vet:; go vet ./...
 ## lint: golangci-lint (config .golangci.yml); same gate as CI.
+# renovate: datasource=go depName=github.com/golangci/golangci-lint/v2
 lint:; go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
 
 ## install: apply CRDs to the current kube context.

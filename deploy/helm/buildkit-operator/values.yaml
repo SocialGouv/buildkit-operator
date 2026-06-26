@@ -53,6 +53,7 @@ companion:
 # Pinned to a release (NOT master) for reproducible builds across the fleet.
 # Rootless variant by default to minimise breakout surface.
 buildkit:
+  # renovate: datasource=docker depName=moby/buildkit versioning=docker
   image: moby/buildkit:v0.31.1-rootless
   # gRPC port each per-project Service exposes (TCP + mTLS).
   port: 1234

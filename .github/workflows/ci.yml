@@ -37,4 +37,5 @@ jobs:
           cache: true
       # Build golangci-lint with the runner's Go (from go.mod, 1.26) rather than a prebuilt binary:
       # a prebuilt binary built with an older Go refuses a go.mod targeting a newer Go.
+      # renovate: datasource=go depName=github.com/golangci/golangci-lint/v2
       - run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...

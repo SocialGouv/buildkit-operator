@@ -2,6 +2,7 @@
 # image) so /readyz and the inode backstop can call `buildctl ... debug workers / prune`.
 # Keep BUILDKIT_VERSION aligned with the daemon image (buildd --buildkit-image) to avoid
 # buildctl/buildkitd version skew.
+# renovate: datasource=docker depName=moby/buildkit
 ARG BUILDKIT_VERSION=v0.31.1
 FROM golang:1.26@sha256:32c0e6e5c4f6707717051091b4d0b077464a679eaab563e11474efc5328e2aa5 AS build
 WORKDIR /src

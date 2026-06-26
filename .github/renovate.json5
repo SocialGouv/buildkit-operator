@@ -1,0 +1,58 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    // SocialGouv org defaults: maintenance schedule, Node restricted to LTS, dev/deploy grouping.
+    "github>SocialGouv/renovate-config",
+    ":dependencyDashboard",
+    ":semanticCommits", // align PR titles with our Conventional Commits / release-it changelog
+    "helpers:pinGitHubActionDigests", // keep .github/workflows actions pinned by SHA (+ # vX comment)
+  ],
+  // Native managers already cover everything that has a lockfile or a standard pin:
+  //   gomod (go.mod/go.sum) · npm (package.json + pnpm-lock.yaml) · dockerfile (golang/distroless
+  //   digests) · github-actions · devbox (devbox.json/devbox.lock via the nixhub datasource).
+  // The customManager below is ONLY for versions pinned inline that no native manager can see —
+  // each is opted in with a `# renovate:` annotation comment on the preceding line.
+  customManagers: [
+    {
+      customType: "regex",
+      description: "Inline tool/image pins annotated with `# renovate: datasource=… depName=…`",
+      managerFilePatterns: [
+        "/^Makefile$/",
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/",
+        "/(^|/)Dockerfile$/",
+        "/(^|/)values\\.yaml$/",
+      ],
+      matchStrings: [
+        "# renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+?)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n[^\\n]*?[@:=](?<currentValue>v?\\d[^\\s\"']*)",
+      ],
+      datasourceTemplate: "{{{datasource}}}",
+      depNameTemplate: "{{{depName}}}",
+      versioningTemplate: "{{#if versioning}}{{{versioning}}}{{/if}}",
+    },
+  ],
+  packageRules: [
+    {
+      // k8s.io/* and controller-runtime are release-coupled (a daemon/CRD API pair) — bump as one PR
+      // so the compatible set is reviewed together instead of drifting across separate updates.
+      description: "Group Kubernetes libraries",
+      matchManagers: ["gomod"],
+      matchPackageNames: ["k8s.io/**", "sigs.k8s.io/controller-runtime"],
+      groupName: "kubernetes",
+    },
+    {
+      // The companion Dockerfile ARG and the chart's buildkit.image MUST stay in lockstep
+      // (buildctl ↔ buildkitd version skew breaks the daemon). One PR moves both.
+      description: "Group buildkit (Dockerfile ARG + chart image)",
+      matchPackageNames: ["moby/buildkit"],
+      groupName: "buildkit",
+    },
+    {
+      // The devbox toolchain Node uses the nixhub datasource (not npm), so the org Node-LTS rule does
+      // not apply to it — keep it on LTS (even-numbered) majors here.
+      description: "Pin devbox Node to LTS (even) majors",
+      matchManagers: ["devbox"],
+      matchDepNames: ["nodejs"],
+      allowedVersions: "/^\\d*[02468]\\./",
+    },
+  ],
+}
