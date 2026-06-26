@@ -1,4 +1,18 @@
+# Changelog
 
+## [0.6.0](https://github.com/socialgouv/buildkit-operator/compare/v0.5.2...v0.6.0) (2026-06-26)
+
+### ⚠ BREAKING CHANGES
+
+* **deploy:** three-namespace topology (operator / builds / system) + founding ADRs
+
+### Features
+
+* **deploy:** three-namespace topology (operator / builds / system) + founding ADRs ([30c93dd](https://github.com/socialgouv/buildkit-operator/commit/30c93dd40ee23862880a3f824825b5da92aec4b5))
+
+### Bug Fixes
+
+* **helm:** nil-safe namespace helpers + only create builds ns ([644b4f4](https://github.com/socialgouv/buildkit-operator/commit/644b4f4f6cb3828eb55f209562bc78dd9227133c))
 
 ## [0.5.2](https://github.com/socialgouv/buildkit-operator/compare/v0.5.1...v0.5.2) (2026-06-25)
 
