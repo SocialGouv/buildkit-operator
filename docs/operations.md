@@ -22,7 +22,7 @@ The chart renders the first two (`createNamespaces: true`) and places each resou
 
 ```bash
 # 1. CRDs
-make manifests && kubectl apply -f deploy/crd
+task manifests && kubectl apply -f deploy/crd
 
 # 2. mTLS material — the daemons mount it, so it goes in the BUILDS namespace
 deploy/cert/create-certs.sh buildkit-builds
@@ -132,7 +132,7 @@ Pinned image tags follow the chart `appVersion`, so an upgrade is a chart bump:
 
 ```bash
 # re-apply CRDs first (they are NOT upgraded by `helm upgrade` — chart CRDs install once)
-make manifests && kubectl apply -f deploy/crd
+task manifests && kubectl apply -f deploy/crd
 
 helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --reuse-values
 kubectl -n buildkit-operator rollout status deploy/buildkit-operator-buildd

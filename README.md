@@ -212,7 +212,7 @@ Prerequisites: a Kubernetes cluster with a CSI that supports snapshots (OVH MKS 
 
 ```bash
 # 1. CRDs
-make manifests && kubectl apply -f deploy/crd
+task manifests && kubectl apply -f deploy/crd
 
 # 2. mTLS certs (wildcard SAN over the daemon Services)
 deploy/cert/create-certs.sh buildkit-operator
@@ -265,6 +265,24 @@ You rarely write these by hand — the GitHub Action / `build` CLI / `buildd` `/
 demand.
 
 ---
+
+## Development
+
+The dev toolchain is reproducible with [devbox](https://www.jetify.com/devbox) — the only thing you
+install by hand. It pins go, node (LTS) + pnpm (via corepack), kubectl, helm, jq, cosign and
+[go-task](https://taskfile.dev). With [direnv](https://direnv.net) (optional) the env auto-loads on
+`cd`; otherwise use `devbox shell` or prefix commands with `devbox run -- `.
+
+```bash
+devbox run -- task --list    # list tasks
+devbox run -- task test      # unit tests
+devbox run -- task manifests # regenerate CRDs + RBAC (commit the result)
+devbox run -- task lint      # golangci-lint (same gate as CI)
+```
+
+`controller-gen` and `golangci-lint` are pinned in [`Taskfile.yml`](Taskfile.yml) (run via `go run`,
+no separate install). Dependency updates are automated by Renovate
+([`.github/renovate.json5`](.github/renovate.json5)). See [CONTRIBUTING.md](CONTRIBUTING.md) for more.
 
 ## Documentation
 

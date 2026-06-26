@@ -4,11 +4,11 @@ This directory is the `controller-gen` output target for buildkit-operator's CRD
 populated by:
 
 ```bash
-make manifests
+task manifests
 ```
 
 which runs `controller-gen crd ... output:crd:artifacts:config=deploy/crd`
-(see the project `Makefile`). Expect:
+(see the project `Taskfile`). Expect:
 
 - `buildkit-operator.socialgouv.github.io_buildprojects.yaml`
 - `buildkit-operator.socialgouv.github.io_builds.yaml`

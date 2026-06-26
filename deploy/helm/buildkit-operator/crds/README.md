@@ -9,15 +9,15 @@ These CRD YAMLs are **generated**, not hand-written. They come from the
 kubebuilder markers on the API types (`api/v1alpha1/*_types.go`):
 
 ```bash
-make manifests
+task manifests
 ```
 
-`make manifests` runs `controller-gen crd ...` and writes the CRDs into
-`deploy/crd/` (see the project `Makefile`). To package them with the chart, copy
+`task manifests` runs `controller-gen crd ...` and writes the CRDs into
+`deploy/crd/` (see the project `Taskfile`). To package them with the chart, copy
 the generated files here before `helm install`/`helm package`:
 
 ```bash
-make manifests
+task manifests
 cp deploy/crd/*.yaml deploy/helm/buildkit-operator/crds/
 ```
 

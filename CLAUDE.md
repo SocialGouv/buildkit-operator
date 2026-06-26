@@ -8,9 +8,9 @@ Service de build **BuildKit distribué** : un `buildkitd` **chaud par `(projet, 
 
 ## Env de dev (devbox + direnv)
 - Toolchain reproductible via **devbox** (`devbox.json` + `devbox.lock`) : go, node LTS (24.x) + **pnpm via corepack** (`DEVBOX_COREPACK_ENABLED=1`), kubectl, helm, jq, cosign. `direnv` auto-charge l'env (`.envrc` généré par `devbox generate direnv`) ; `.devbox/` et `.direnv/` sont gitignorés.
-- **Toujours préfixer les commandes par `devbox run -- <cmd>`** (ou être dans `devbox shell` / un shell direnv-chargé) pour garantir les bonnes versions. Ex : `devbox run -- make test`, `devbox run -- go vet ./...`, `devbox run -- pnpm install --frozen-lockfile`. Raccourcis devbox dispo : `devbox run test|lint|manifests|build`.
+- **Toujours préfixer les commandes par `devbox run -- <cmd>`** (ou être dans `devbox shell` / un shell direnv-chargé) pour garantir les bonnes versions. Tâches via **go-task** : `devbox run -- task <name>` (`task --list`) — ex `task test`, `task manifests`, `task lint`, `task build`. Aussi `devbox run -- go vet ./...`, `devbox run -- pnpm install --frozen-lockfile`.
 - **Node/pnpm** : pas de `npm`. pnpm est géré par corepack (champ `packageManager` de `package.json`). Installer les deps de release avec `devbox run -- pnpm install --frozen-lockfile`.
-- `controller-gen` et `golangci-lint` ne sont **pas** dans devbox : ils restent pinnés via `go run …@version` dans le `Makefile` (source de vérité unique des versions).
+- `controller-gen` et `golangci-lint` ne sont **pas** dans devbox : ils restent pinnés via `go run …@version` dans le `Taskfile.yml` (source de vérité unique des versions).
 - **Renovate** (`.github/renovate.json5`, preset `github>SocialGouv/renovate-config`) met à jour toutes les deps : go.mod, pnpm, Dockerfiles, GitHub Actions, devbox (nixhub). Les pins inline (controller-gen, golangci-lint, buildkit) sont annotés `# renovate:` + custom manager. Ne pas bumper à la main ce que Renovate gère.
 
 ## Tests k8s

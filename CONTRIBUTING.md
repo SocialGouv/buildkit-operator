@@ -8,7 +8,7 @@ Thanks for helping improve buildkit-operator. This is the control plane (routing
 - **[devbox](https://www.jetify.com/devbox)** (required) — the single dependency you install by hand.
   It provides the whole pinned toolchain from `devbox.json` + `devbox.lock`: go, node LTS (24.x) +
   **pnpm via corepack**, kubectl, helm, jq, cosign. (`controller-gen` and `golangci-lint` are not in
-  devbox — they stay pinned via `go run …@version` in the `Makefile`.)
+  devbox — they stay pinned via `go run …@version` in the `Taskfile.yml`.)
 - **[direnv](https://direnv.net)** (optional) — auto-loads the devbox env when you `cd` into the repo
   (the committed `.envrc` was produced by `devbox generate direnv`; run `direnv allow` once). Without
   it, run `devbox shell` for an interactive shell, or prefix one-off commands with `devbox run -- <cmd>`.
@@ -21,13 +21,14 @@ Thanks for helping improve buildkit-operator. This is the control plane (routing
 
 - The control plane is in `cmd/` (`buildd`, `companion`, `gateway`, `build`), `internal/` (controller,
   builder, router, metrics) and `api/v1alpha1` (CRD types).
-- Common targets (prefix with `devbox run -- ` if not in a devbox/direnv shell):
+- Common tasks via [go-task](https://taskfile.dev) (prefix with `devbox run -- ` if not in a
+  devbox/direnv shell); `task --list` shows them all:
   ```bash
-  make manifests   # regenerate CRDs + RBAC from the +kubebuilder markers (commit the result)
-  make test        # go test ./...
-  go vet ./...
+  task manifests   # regenerate CRDs + RBAC from the +kubebuilder markers (commit the result)
+  task test        # go test ./...
+  task vet         # go vet ./...
   ```
-- After editing `api/v1alpha1` or the `+kubebuilder:` markers, run `make manifests` and commit the
+- After editing `api/v1alpha1` or the `+kubebuilder:` markers, run `task manifests` and commit the
   regenerated `deploy/crd` + chart `crds/` so they stay in sync.
 - Helm chart lives in `deploy/helm/buildkit-operator`; validate with `helm lint` and
   `helm template deploy/helm/buildkit-operator`.
@@ -42,7 +43,7 @@ Thanks for helping improve buildkit-operator. This is the control plane (routing
 ## Pull requests
 
 - Keep PRs focused; describe the why, not just the what.
-- CI builds the images and publishes docs; make sure `make test` and `go vet` pass locally first.
+- CI builds the images and publishes docs; make sure `task test` and `task vet` pass locally first.
 - This is a new project — no backward-compat constraints; prefer clean over additive.
 
 ## Releasing

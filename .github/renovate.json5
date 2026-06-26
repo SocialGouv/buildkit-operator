@@ -17,7 +17,7 @@
       customType: "regex",
       description: "Inline tool/image pins annotated with `# renovate: datasource=… depName=…`",
       managerFilePatterns: [
-        "/^Makefile$/",
+        "/^Taskfile\\.ya?ml$/",
         "/^\\.github/workflows/[^/]+\\.ya?ml$/",
         "/(^|/)Dockerfile$/",
         "/(^|/)values\\.yaml$/",

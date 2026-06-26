@@ -14,8 +14,8 @@ deploy/
   config/buildkitd.toml         # GC config mounted into every per-project daemon
   cert/create-certs.sh          # mints the shared mTLS material (wildcard daemon SAN)
   cert/.certs/                  # generated certs + Secret manifests (gitignored)
-  crd/                          # `make manifests` writes the generated CRDs here
-  rbac/                         # `make manifests` writes generated RBAC here (reference)
+  crd/                          # `task manifests` writes the generated CRDs here
+  rbac/                         # `task manifests` writes generated RBAC here (reference)
   helm/buildkit-operator/                # the Helm chart for the control plane
 ```
 
@@ -38,7 +38,7 @@ deploy/
 ### (a) Generate the CRDs
 
 ```bash
-make manifests
+task manifests
 ```
 
 This runs `controller-gen` and writes the CRDs to `deploy/crd/`. To have Helm

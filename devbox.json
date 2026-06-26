@@ -6,20 +6,21 @@
     "kubernetes-helm@latest",
     "jq@latest",
     "cosign@latest",
-    "nodejs@24"
+    "nodejs@24",
+    "go-task@latest"
   ],
   "env": {
     "DEVBOX_COREPACK_ENABLED": "1"
   },
   "shell": {
     "init_hook": [
-      "echo 'buildkit-operator devbox ready: go, node+pnpm (corepack), kubectl, helm, jq, cosign. controller-gen & golangci-lint stay pinned via go run in the Makefile. Run project commands with: devbox run -- <cmd>'"
+      "echo 'buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign. Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.'"
     ],
     "scripts": {
-      "test":      ["make test"],
-      "lint":      ["make lint"],
-      "manifests": ["make manifests"],
-      "build":     ["make build"]
+      "test":      ["task test"],
+      "lint":      ["task lint"],
+      "manifests": ["task manifests"],
+      "build":     ["task build"]
     }
   }
 }
