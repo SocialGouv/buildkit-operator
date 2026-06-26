@@ -117,6 +117,9 @@ an arbitrary IP:port. To use buildkit-operator from there:
    - `BUILDKIT_OPERATOR_BUILDD_URL` = `https://buildd.<domain>` (the Ingress, 443)
    - `BUILDKIT_OPERATOR_HTTP_PROXY` = `host:port` of the CONNECT proxy
    - `BUILDKIT_OPERATOR_TUNNEL` = `1`
+   - `BUILDKIT_OPERATOR_GATEWAY_HOST` = `<domain>` + (optional) `BUILDKIT_OPERATOR_GATEWAY_PORT=443` —
+     when the gateway is **multi-domain** (`gateway.extraDomains`) and this platform reaches it under a
+     different domain than buildd advertises; the client rebuilds the endpoint from the daemon key.
 
 The job then routes `apk`/`curl(/route)` through the proxy and **socat-tunnels** the daemon TCP through
 the same proxy; mTLS is validated against the real daemon hostname (`servername`), so it stays
