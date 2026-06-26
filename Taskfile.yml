@@ -47,9 +47,18 @@ tasks:
       - go build -o bin/build      ./cmd/build
 
   test:
-    desc: unit tests
+    desc: unit tests (emits cover.out for the coverage gate)
     cmds:
-      - go test ./... -count=1
+      - go test ./... -count=1 -coverprofile=cover.out -covermode=atomic
+
+  coverage:
+    desc: enforce the unit-test coverage gate (statement-weighted, excludes generated + bootstrap)
+    deps: [test]
+    vars:
+      # Initial floor: measured ~88% on the testable surface; raise once stabilized.
+      THRESHOLD: '85'
+    cmds:
+      - bash hack/coverage.sh cover.out {{.THRESHOLD}}
 
   lint:
     desc: golangci-lint (config .golangci.yml); same gate as CI

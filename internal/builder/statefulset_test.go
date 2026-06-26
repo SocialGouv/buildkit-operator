@@ -194,3 +194,48 @@ func TestStatefulSet_SandboxedForkPrivilegedNonRootless(t *testing.T) {
 		t.Errorf("canonical containers = %d, want 2 (buildkitd + companion)", count("p1"))
 	}
 }
+
+// TestService_PortsLabelsSelector pins the per-project Service: ClusterIP, the mTLS buildkit port
+// (both Port and TargetPort), and a selector that equals the pod labels so traffic lands on the daemon.
+func TestService_PortsLabelsSelector(t *testing.T) {
+	bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "p1", Arch: "amd64"}}
+	svc := Service(bp, Config{Namespace: "ns", Port: 1234})
+
+	if svc.Spec.Type != "ClusterIP" {
+		t.Errorf("Service type = %q, want ClusterIP", svc.Spec.Type)
+	}
+	if svc.Namespace != "ns" {
+		t.Errorf("Service namespace = %q, want ns", svc.Namespace)
+	}
+	if len(svc.Spec.Ports) != 1 {
+		t.Fatalf("want exactly one port, got %d", len(svc.Spec.Ports))
+	}
+	p := svc.Spec.Ports[0]
+	if p.Name != "buildkit" || p.Port != 1234 || p.TargetPort.IntVal != 1234 {
+		t.Errorf("port = %+v, want name=buildkit port/target=1234", p)
+	}
+	// The selector must equal the daemon's own labels, else the Service routes to nothing.
+	for k, v := range Labels(bp) {
+		if svc.Spec.Selector[k] != v {
+			t.Errorf("selector[%q] = %q, want %q", k, svc.Spec.Selector[k], v)
+		}
+	}
+}
+
+// TestService_ForkSelectorTargetsForkOnly documents that a fork Service selects on the plain daemon
+// labels (no untrusted marker): the per-key project-key label already uniquely targets the fork pod,
+// and a selector subset still matches the pod's superset of labels.
+func TestService_ForkSelectorTargetsForkOnly(t *testing.T) {
+	fork := "fork" + "p1"
+	bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: fork, Arch: "amd64"}}
+	svc := Service(bp, Config{Namespace: "ns", Port: 1234})
+	if _, ok := svc.Spec.Selector[LabelUntrusted]; ok {
+		t.Errorf("fork Service selector should not carry %s (project-key already disambiguates): %v",
+			LabelUntrusted, svc.Spec.Selector)
+	}
+	// The selector must equal the plain daemon labels exactly.
+	want := Labels(bp)
+	if len(svc.Spec.Selector) != len(want) {
+		t.Errorf("fork Service selector = %v, want plain daemon labels %v", svc.Spec.Selector, want)
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os/exec"
 	"syscall"
 	"time"
 )
@@ -111,7 +110,7 @@ func (s *state) prune(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "buildctl", "--addr", s.cfg.buildkitAddr, "prune", "--all")
+	cmd := execCommandContext(ctx, "buildctl", "--addr", s.cfg.buildkitAddr, "prune", "--all")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("buildctl prune --all: %w: %s", err, bytes.TrimSpace(out))

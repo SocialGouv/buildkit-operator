@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -42,22 +44,36 @@ func warnIfDaemonCertMissingGatewaySAN(restCfg *rest.Config, cfg builder.Config,
 		log.Info("gateway SAN check skipped: daemon certs Secret has no cert.pem/tls.crt", "secret", cfg.DaemonCertsSecret)
 		return
 	}
-	block, _ := pem.Decode(raw)
-	if block == nil {
-		log.Info("gateway SAN check skipped: cert is not PEM", "secret", cfg.DaemonCertsSecret)
+	covered, sans, err := certCoversGateway(raw, gatewayHost)
+	if err != nil {
+		log.Info("gateway SAN check skipped: "+err.Error(), "secret", cfg.DaemonCertsSecret)
 		return
+	}
+	if covered {
+		return
+	}
+	log.Info("WARNING: daemon cert has no SAN covering the gateway domain — off-cluster builds will fail TLS; regenerate certs (GATEWAY_HOST=<host> deploy/cert/create-certs.sh, or set gateway.host before issuing)",
+		"gateway_host", gatewayHost, "want_san", "*."+gatewayHost, "cert_sans", sans)
+}
+
+// certCoversGateway parses a PEM-encoded server cert and reports whether its DNS SANs cover the
+// gateway domain — either the wildcard "*.<host>" (how create-certs.sh issues it) or the bare host.
+// It returns the cert's SANs for logging. Pure, so it carries the SAN policy under test without a
+// live apiserver. A nil/non-PEM/unparseable input yields a descriptive error.
+func certCoversGateway(certPEM []byte, gatewayHost string) (bool, []string, error) {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return false, nil, errors.New("cert is not PEM")
 	}
 	crt, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		log.Info("gateway SAN check skipped: cannot parse cert", "err", err.Error())
-		return
+		return false, nil, fmt.Errorf("cannot parse cert: %w", err)
 	}
 	want := "*." + gatewayHost
 	for _, dns := range crt.DNSNames {
 		if dns == want || dns == gatewayHost {
-			return // covered
+			return true, crt.DNSNames, nil
 		}
 	}
-	log.Info("WARNING: daemon cert has no SAN covering the gateway domain — off-cluster builds will fail TLS; regenerate certs (GATEWAY_HOST=<host> deploy/cert/create-certs.sh, or set gateway.host before issuing)",
-		"gateway_host", gatewayHost, "want_san", want, "cert_sans", crt.DNSNames)
+	return false, crt.DNSNames, nil
 }

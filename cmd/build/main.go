@@ -54,6 +54,14 @@ import (
 	"github.com/socialgouv/buildkit-operator/internal/router"
 )
 
+// execCommand and execCommandContext are seams over os/exec so tests can stub the
+// docker/git/buildctl subprocess calls without a real binary on PATH. Production
+// code wires them to the stdlib; tests swap them and restore via defer.
+var (
+	execCommand        = exec.Command
+	execCommandContext = exec.CommandContext
+)
+
 // config holds the resolved CLI configuration. Cobra defaults are env-aware
 // (via envOr) so `--help` shows the value that will actually be used.
 type config struct {
@@ -261,7 +269,7 @@ func (cfg *config) resolveRepo(logger *slog.Logger) string {
 // gitRemoteURL best-effort reads remote.origin.url for the given context dir.
 // Any failure (no git, not a repo, no remote) yields "" and is non-fatal.
 func gitRemoteURL(dir string) string {
-	cmd := exec.Command("git", "-C", dir, "config", "--get", "remote.origin.url")
+	cmd := execCommand("git", "-C", dir, "config", "--get", "remote.origin.url")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -355,7 +363,7 @@ func ensureBuilder(ctx context.Context, builder, certsDir, endpoint string, logg
 	}
 
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := execCommandContext(ctx, "docker", args...)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err == nil {
 		logger.Info("created buildx builder", "builder", builder, "endpoint", endpoint)
@@ -370,8 +378,8 @@ func ensureBuilder(ctx context.Context, builder, certsDir, endpoint string, logg
 		return nil
 	}
 	logger.Info("buildx builder endpoint changed, recreating", "builder", builder, "endpoint", endpoint)
-	_ = exec.CommandContext(ctx, "docker", "buildx", "rm", builder).Run()
-	cmd = exec.CommandContext(ctx, "docker", args...)
+	_ = execCommandContext(ctx, "docker", "buildx", "rm", builder).Run()
+	cmd = execCommandContext(ctx, "docker", args...)
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -384,7 +392,7 @@ func ensureBuilder(ctx context.Context, builder, certsDir, endpoint string, logg
 // builderHasEndpoint reports whether the named buildx builder is configured for endpoint (parsed from
 // `docker buildx inspect`). A failure to inspect is treated as "not matching" so we recreate safely.
 func builderHasEndpoint(ctx context.Context, builder, endpoint string) bool {
-	out, err := exec.CommandContext(ctx, "docker", "buildx", "inspect", builder).Output()
+	out, err := execCommandContext(ctx, "docker", "buildx", "inspect", builder).Output()
 	if err != nil {
 		return false
 	}
@@ -463,7 +471,7 @@ func printDryRun(cfg *config, repo, arch string, resp router.RouteResponse, buil
 // runStreaming runs a command attached to the process's stdio so buildx
 // progress streams straight through to the user's terminal.
 func runStreaming(ctx context.Context, name string, args []string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := execCommandContext(ctx, name, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
