@@ -60,6 +60,11 @@ tasks:
     cmds:
       - bash hack/coverage.sh cover.out {{.THRESHOLD}}
 
+  test:e2e:
+    desc: end-to-end tests against a LIVE cluster (needs BKO_E2E_BUILDD_URL + KUBECONFIG; see test/e2e/README.md)
+    cmds:
+      - go test -tags e2e -count=1 -timeout 40m -v ./test/e2e/... {{.CLI_ARGS}}
+
   lint:
     desc: golangci-lint (config .golangci.yml); same gate as CI
     cmds:
