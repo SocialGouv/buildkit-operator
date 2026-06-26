@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.2](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.8.2) (2026-06-26)
+
+### Bug Fixes
+
+* **buildd:** warm a fresh project reliably + expose readiness on /prewarm ([9854008](https://github.com/socialgouv/buildkit-operator/commit/98540087cbfaa509fcedbd6b177d1b7b69441efa))
+
 ## [0.8.1](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.8.1) (2026-06-26)
 
 ### Bug Fixes
