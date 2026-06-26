@@ -6,12 +6,14 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -23,7 +25,11 @@ import (
 // leave a warm-tier project stuck Idle). A terminal failure (all retries exhausted) is logged.
 func (s *routeServer) addInflight(ctx context.Context, key string, delta int32) {
 	retriable := func(err error) bool { return apierrors.IsConflict(err) || apierrors.IsNotFound(err) }
-	err := retry.OnError(retry.DefaultBackoff, retriable, func() error {
+	// ~6.4s of retries (vs DefaultBackoff's ~40ms): the informer cache can lag etcd by a beat right after
+	// the project is created, so a too-short backoff drops the touch — and for an ephemeral fork that
+	// touch is what keeps it from being reaped before its build registers.
+	backoff := wait.Backoff{Steps: 8, Duration: 100 * time.Millisecond, Factor: 1.6, Jitter: 0.1}
+	err := retry.OnError(backoff, retriable, func() error {
 		var bp bkov1.BuildProject
 		if err := s.c.Get(ctx, types.NamespacedName{Name: key, Namespace: s.cfg.Namespace}, &bp); err != nil {
 			return err

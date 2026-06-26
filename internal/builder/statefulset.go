@@ -174,6 +174,10 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 		daemon.EnvFrom = append(daemon.EnvFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: cfg.S3CredsSecret}},
 		})
+		// Static creds are present, so short-circuit the AWS SDK's EC2 IMDS probe: off-EC2 (OVH) it
+		// hits 169.254.169.254, gets a 403, logs a noisy "falling back to IMDSv1" on every cache op,
+		// and pays the probe latency. Disabling IMDS keeps the credential chain to env-only.
+		daemon.Env = append(daemon.Env, corev1.EnvVar{Name: "AWS_EC2_METADATA_DISABLED", Value: "true"})
 	}
 
 	containers := []corev1.Container{daemon}

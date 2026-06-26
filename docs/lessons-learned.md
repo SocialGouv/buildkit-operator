@@ -94,6 +94,14 @@ avoid them.
   retry on `NotFound` **and** `Conflict`. This bit us as a cold-start flake: a freshly-created
   BuildProject's warm-up `Status` stamp was dropped, so the daemon silently never scaled up.
 
+- **A controller that reaps idle ephemeral children can reap one in its own birth window.** If "create
+  the child, then mark it active (status/owner stamp) a beat later" is split across two API calls, the
+  controller's informer can fire on the freshly-created child *before* the active mark lands — see it as
+  idle (replicas 0) and delete it, so the work it was created for never runs. Here untrusted fork
+  daemons were reaped microseconds after creation and every untrusted build hung. Guard the reaper with
+  a **birth-window grace** keyed on `CreationTimestamp` (don't reap a child younger than N), and
+  requeue-after so it's still reaped once genuinely idle.
+
 ## BuildKit
 
 - **Cache import/export is best-effort — a broken cache backend does NOT fail the build.** BuildKit logs

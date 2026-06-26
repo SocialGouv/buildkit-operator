@@ -69,6 +69,14 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// cascade removes the STS/Service). Forks are one-shot — nothing warm to keep — so this stops their
 	// retained PVCs and CRs from accumulating.
 	if router.IsForkKey(bp.Spec.Key) && desired == 0 {
+		// Birth-window guard: buildd creates the fork, then a beat later stamps LastBuildTime and
+		// increments inflight (and an informer-cache read can briefly lag right after the Create). On the
+		// very first reconcile a fresh fork therefore still shows inflight=0 / LastBuildTime=nil → desired
+		// 0; reaping it then would kill the daemon before its build ever registers (the untrusted build
+		// would hang). Hold off until the fork has had its chance, then reap only if still idle.
+		if age := time.Since(bp.CreationTimestamp.Time); age < forkReapGrace {
+			return ctrl.Result{RequeueAfter: forkReapGrace - age}, nil
+		}
 		return ctrl.Result{}, r.reapFork(ctx, &bp)
 	}
 
@@ -236,6 +244,11 @@ func templateHash(t corev1.PodTemplateSpec) string {
 }
 
 // desiredReplicas is the M2 elasticity decision: the hot tier stays at 1; otherwise
+// forkReapGrace is how long a freshly-created ephemeral fork is shielded from reaping, covering the
+// window between buildd's Create and its LastBuildTime stamp / inflight increment (plus informer-cache
+// lag). Once a build is in flight the fork lives on inflight; this only protects the birth window.
+const forkReapGrace = 90 * time.Second
+
 // 1 while a build is in flight or the project was active within IdleTimeoutSec, else 0
 // (scale-to-zero — the PVC is retained via volumeClaimTemplates, so the next build just
 // reattaches the warm cache; no restore). Idle timeout default seeded from bench B.

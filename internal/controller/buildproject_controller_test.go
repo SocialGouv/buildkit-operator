@@ -217,7 +217,7 @@ func TestReconcile_ReapsIdleFork(t *testing.T) {
 	fork := router.ForkKey(canonical)
 	old := metav1.NewTime(time.Now().Add(-time.Hour)) // idle past the fork window, inflight released
 	bp := &bkov1.BuildProject{
-		ObjectMeta: metav1.ObjectMeta{Name: fork, Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: fork, Namespace: ns, CreationTimestamp: old}, // past the birth-window grace
 		Spec:       bkov1.BuildProjectSpec{Key: fork, Arch: "amd64", Tier: bkov1.TierWarm, IdleTimeoutSec: bkov1.ForkIdleTimeoutSec},
 	}
 	bp.Status.LastBuildTime = &old
@@ -235,6 +235,33 @@ func TestReconcile_ReapsIdleFork(t *testing.T) {
 	var gonePVC corev1.PersistentVolumeClaim
 	if err := c.Get(context.Background(), types.NamespacedName{Name: router.CachePVCName(fork), Namespace: ns}, &gonePVC); err == nil {
 		t.Errorf("idle fork cache PVC should have been deleted")
+	}
+}
+
+// Birth-window guard: a freshly-created fork (no LastBuildTime / inflight yet → desired 0) must NOT be
+// reaped — buildd stamps it a beat after Create, and reaping immediately would kill the daemon before
+// its untrusted build ever registers (the cold-start flake that made untrusted builds hang).
+func TestReconcile_DoesNotReapNewbornFork(t *testing.T) {
+	s := testScheme(t)
+	ns := "buildkit-operator"
+	fork := router.ForkKey(router.ProjectKey("github.com/org/repo", "", "", "amd64"))
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: fork, Namespace: ns, CreationTimestamp: metav1.Now()}, // just born
+		Spec:       bkov1.BuildProjectSpec{Key: fork, Arch: "amd64", Tier: bkov1.TierWarm, IdleTimeoutSec: bkov1.ForkIdleTimeoutSec},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
+
+	res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: fork, Namespace: ns}})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if res.RequeueAfter <= 0 || res.RequeueAfter > forkReapGrace {
+		t.Errorf("RequeueAfter = %v, want a positive value within the grace window", res.RequeueAfter)
+	}
+	var still bkov1.BuildProject
+	if err := c.Get(context.Background(), types.NamespacedName{Name: fork, Namespace: ns}, &still); err != nil {
+		t.Errorf("newborn fork should NOT have been reaped: %v", err)
 	}
 }
 

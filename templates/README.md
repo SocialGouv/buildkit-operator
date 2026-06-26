@@ -29,7 +29,7 @@ GitHub-hosted (remote include — needs the GitLab server to allow GitHub egress
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.2/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.3/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
       push: "true"
@@ -68,7 +68,7 @@ from — keep it pinned and in sync with the include).
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.2/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.3/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE/api:$CI_COMMIT_SHORT_SHA"
       name: api                  # monorepo: its own daemon + cache
@@ -84,7 +84,7 @@ by re-declaring the job's `rules:` (GitLab merges includes):
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.2/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.3/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE:mr-$CI_MERGE_REQUEST_IID"
       untrusted: "true"

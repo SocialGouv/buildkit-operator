@@ -60,17 +60,33 @@ func TestStatefulSet_S3CredsAreTrustedOnly(t *testing.T) {
 	fork := router.ForkKey(canonical)
 	cfg := Config{Namespace: "ns", Port: 1234, S3CredsSecret: "buildkit-s3"}
 
-	envFrom := func(key string) []corev1.EnvFromSource {
+	daemonOf := func(key string) corev1.Container {
 		bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: key, Arch: "amd64"}}
-		return StatefulSet(bp, cfg).Spec.Template.Spec.Containers[0].EnvFrom
+		return StatefulSet(bp, cfg).Spec.Template.Spec.Containers[0]
+	}
+	hasEnv := func(c corev1.Container, name string) bool {
+		for _, e := range c.Env {
+			if e.Name == name {
+				return true
+			}
+		}
+		return false
 	}
 
-	trusted := envFrom(canonical)
-	if len(trusted) != 1 || trusted[0].SecretRef == nil || trusted[0].SecretRef.Name != "buildkit-s3" {
-		t.Fatalf("trusted daemon EnvFrom = %#v, want the configured S3 Secret", trusted)
+	trusted := daemonOf(canonical)
+	if len(trusted.EnvFrom) != 1 || trusted.EnvFrom[0].SecretRef == nil || trusted.EnvFrom[0].SecretRef.Name != "buildkit-s3" {
+		t.Fatalf("trusted daemon EnvFrom = %#v, want the configured S3 Secret", trusted.EnvFrom)
 	}
-	if got := envFrom(fork); len(got) != 0 {
-		t.Fatalf("fork daemon EnvFrom = %#v, want no S3 credentials", got)
+	// Off-EC2: disable the IMDS probe so the AWS SDK uses env creds only (no 403 + retry noise per op).
+	if !hasEnv(trusted, "AWS_EC2_METADATA_DISABLED") {
+		t.Error("trusted daemon missing AWS_EC2_METADATA_DISABLED env")
+	}
+	forkDaemon := daemonOf(fork)
+	if len(forkDaemon.EnvFrom) != 0 {
+		t.Fatalf("fork daemon EnvFrom = %#v, want no S3 credentials", forkDaemon.EnvFrom)
+	}
+	if hasEnv(forkDaemon, "AWS_EC2_METADATA_DISABLED") {
+		t.Error("fork daemon should not carry S3-related env (no creds at all)")
 	}
 }
 
