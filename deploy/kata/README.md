@@ -51,6 +51,16 @@ inside the VM (guest kernel 6.18 vs host 5.15), stable.
    kubectl apply -f deploy/kata/kata-clh-vcpu-tune.yaml
    ```
 
+   > ⚠️ **Deleting the `kata-deploy` DaemonSet tears the node down.** kata-deploy traps `SIGTERM` in
+   > PID 1 and runs the node cleanup on pod termination (removes `/opt/kata`, reverts the containerd
+   > config, drops the node label, restarts containerd). This is **not** a k8s `preStop` hook — the DS
+   > `lifecycle` is empty — so a `kubectl delete ds` looks safe but fully de-configures Kata. To
+   > **move** kata-deploy (e.g. between namespaces), treat it as a teardown + reinstall (a second
+   > containerd reconfigure), in a maintenance window. **Uninstall via `helm uninstall`** — do not delete
+   > the release secrets first, or its cluster-scoped objects (a ClusterRole, a ClusterRoleBinding, and
+   > ~24 `RuntimeClass`es) are orphaned and the next `helm install` fails with `invalid ownership
+   > metadata`. More gotchas in [../../docs/lessons-learned.md](../../docs/lessons-learned.md).
+
 4. **Enable it in the operator** — set `sandbox.runtimeClass: kata-clh` in the chart values. The
    operator then renders fork daemons as the non-rootless buildkit image, `privileged`, with the
    `kata-clh` RuntimeClass (which pins them to the kata node), and skips the companion sidecar.

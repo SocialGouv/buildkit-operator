@@ -43,6 +43,7 @@ nav:
   - Comparison vs buildkit-service: comparison-buildkit-service.md
   - Benchmarks (Phase 0): benchmarks-phase0.md
   - Operations: operations.md
+  - Lessons learned: lessons-learned.md
   - Decision records (ADR):
       - Overview: adr/README.md
       - 0001 Control plane over vanilla BuildKit: adr/0001-control-plane-over-vanilla-buildkit.md
