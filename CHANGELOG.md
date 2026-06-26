@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.8.0) (2026-06-26)
+
+### Features
+
+* **build:** accept base64-encoded mTLS certs (GitLab masked-variable convention) ([ff678ab](https://github.com/socialgouv/buildkit-operator/commit/ff678abe2dee41c097f224c93fa80df02e5cf277))
+* **gateway:** multi-domain — one gateway fronts several client populations ([031f29e](https://github.com/socialgouv/buildkit-operator/commit/031f29e48296c40119d210b8284480ee2f87193f))
+* off-cluster builds behind an egress proxy (gateway on 443 + buildd Ingress + CI tunnel) ([714dab1](https://github.com/socialgouv/buildkit-operator/commit/714dab1a30672c922d78e43a8afec598c0f8c184))
+
+### Bug Fixes
+
+* harden buildkit operator security ([6c5ea80](https://github.com/socialgouv/buildkit-operator/commit/6c5ea80ddbdcfa13e2a59c2adb2735da5baef083))
+
 ## [0.7.0](https://github.com/socialgouv/buildkit-operator/compare/v0.6.0...v0.7.0) (2026-06-26)
 
 ### Features
