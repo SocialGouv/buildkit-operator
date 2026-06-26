@@ -1,0 +1,113 @@
+# buildkit-operator — reusable GitLab CI/CD component to build a container image.
+#
+# It routes the build to the project's hot buildkitd (via buildd /route) and runs `docker buildx`
+# against that daemon over mTLS — warm cache + optional S3 cold cache, monorepo-aware. The build runs
+# on the REMOTE daemon, so the job needs only the docker CLI + buildx + curl + jq — NO privileged
+# docker:dind service.
+#
+# Usage (GitLab catalog component):
+#   include:
+#     - component: $CI_SERVER_FQDN/<mirror-path>/build@0.6.0
+#       inputs: { tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA", push: "true" }
+#
+# Usage (GitHub-hosted, remote include):
+#   include:
+#     - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v1/templates/build.yml"
+#       inputs: { tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA", push: "true" }
+#
+# The mTLS material + bearer token are read from MASKED CI/CD variables (set them at the group level):
+#   BUILDKIT_OPERATOR_BUILDD_URL, BUILDKIT_OPERATOR_CA, BUILDKIT_OPERATOR_CERT, BUILDKIT_OPERATOR_KEY,
+#   BUILDKIT_OPERATOR_TOKEN  (CA/CERT/KEY hold PEM; use "File" or masked variables).
+# When the gateway has no wildcard DNS yet, also set BUILDKIT_OPERATOR_GATEWAY_IP (maps the SNI host).
+spec:
+  inputs:
+    job_name:
+      default: buildkit-operator-build
+      description: Name of the generated job.
+    stage:
+      default: build
+      description: Pipeline stage the job runs in.
+    image:
+      default: docker:27
+      description: Image with the docker CLI + buildx (curl/jq/git are installed at runtime). No dind needed.
+    tags:
+      description: Image tag(s), whitespace-separated (e.g. "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA").
+    buildd_url:
+      default: "$BUILDKIT_OPERATOR_BUILDD_URL"
+      description: buildd /route API URL. Defaults to the CI/CD variable of the same name.
+    repo:
+      default: "$CI_PROJECT_URL"
+      description: Project identity = the cache key (normalized by the router). Default = this GitLab project URL.
+    name:
+      default: ""
+      description: Optional monorepo component — gives each image its own daemon + cache.
+    arch:
+      default: amd64
+      description: "Build architecture: amd64 | arm64."
+    context:
+      default: "."
+      description: Build context path.
+    dockerfile:
+      default: ""
+      description: Dockerfile path (default = Dockerfile in the context).
+    target:
+      default: ""
+      description: Dockerfile target stage.
+    untrusted:
+      default: "false"
+      description: Untrusted (fork/MR) build — route to an ephemeral daemon, no write-back to the shared cache.
+    push:
+      default: "false"
+      description: Push the result to the registry.
+    provenance:
+      default: ""
+      description: "SLSA provenance, e.g. 'mode=max' (needs push: true). Empty = off."
+    sbom:
+      default: "false"
+      description: "Generate an SBOM attestation (needs push: true)."
+    sign:
+      default: "false"
+      description: "cosign keyless-sign the pushed tags (needs push: true; uses GitLab OIDC id_tokens)."
+    ref:
+      default: v1
+      description: buildkit-operator git ref the build script is fetched from (keep in sync with the include).
+
+---
+# To gate the job, re-declare it in your pipeline with `rules:`/`needs:` — GitLab merges includes.
+"$[[ inputs.job_name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.image ]]
+  # Keyless cosign needs a Sigstore-audience OIDC token (only used when sign=true).
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  variables:
+    BUILDKIT_OPERATOR_BUILDD_URL: "$[[ inputs.buildd_url ]]"
+    REPO: "$[[ inputs.repo ]]"
+    NAME: "$[[ inputs.name ]]"
+    ARCH: "$[[ inputs.arch ]]"
+    BUILD_CONTEXT: "$[[ inputs.context ]]"
+    DOCKERFILE: "$[[ inputs.dockerfile ]]"
+    TARGET: "$[[ inputs.target ]]"
+    UNTRUSTED: "$[[ inputs.untrusted ]]"
+    TAGS: "$[[ inputs.tags ]]"
+    PUSH: "$[[ inputs.push ]]"
+    PROVENANCE: "$[[ inputs.provenance ]]"
+    SBOM: "$[[ inputs.sbom ]]"
+    BKO_REF: "$[[ inputs.ref ]]"
+    BKO_SIGN: "$[[ inputs.sign ]]"
+  before_script:
+    # docker:27 is alpine; install the script's deps. (curl + jq + git; buildx ships with the image.)
+    - command -v curl >/dev/null && command -v jq >/dev/null && command -v git >/dev/null || apk add --no-cache curl jq git
+  script:
+    # The gateway-IP escape hatch (no wildcard DNS yet) is read by the script from GATEWAY_IP.
+    - export GATEWAY_IP="${BUILDKIT_OPERATOR_GATEWAY_IP:-}"
+    # Single source of truth: the same build script the GitHub Action runs.
+    - curl -fsSL "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/${BKO_REF}/scripts/build.sh" -o /tmp/bko-build.sh
+    - sh /tmp/bko-build.sh
+    # Optional keyless signature of each pushed tag (image must be pushed).
+    - |
+      if [ "$BKO_SIGN" = "true" ] && [ "$PUSH" = "true" ]; then
+        command -v cosign >/dev/null || { apk add --no-cache cosign 2>/dev/null || wget -qO /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 && chmod +x /usr/local/bin/cosign; }
+        for t in $TAGS; do echo "cosign sign $t"; cosign sign --yes "$t"; done
+      fi

@@ -51,6 +51,31 @@ The cold cache needs **no** client config: it is a project policy on buildd, ret
 and applied automatically (see [the S3 section below](#s3-from-ci--zero-client-config) and
 [storage-and-cold-cache.md](storage-and-cold-cache.md)).
 
+## GitLab CI/CD component
+
+The GitLab counterpart is a reusable, importable **CI/CD component** —
+[`templates/build.yml`](../templates/build.yml) (full docs in [templates/README.md](../templates/README.md)).
+It runs the **same** [`scripts/build.sh`](../scripts/build.sh) as the Action, so there is no duplicated
+build logic, and — because the build runs on the remote daemon — the job needs only `docker buildx +
+curl + jq`, **no privileged `docker:dind`**.
+
+Set the mTLS material + token as **masked/File** group CI/CD variables
+(`BUILDKIT_OPERATOR_BUILDD_URL`, `BUILDKIT_OPERATOR_CA`/`_CERT`/`_KEY`, `BUILDKIT_OPERATOR_TOKEN`), then:
+
+```yaml
+include:
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v1/templates/build.yml"
+    inputs:
+      tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      push: "true"
+```
+
+That generates a `buildkit-operator-build` job. Inputs mirror the Action (`repo` defaults to
+`$CI_PROJECT_URL` = the cache key; plus `name`, `arch`, `context`, `dockerfile`, `target`, `untrusted`,
+`provenance`, `sbom`, `sign`, …). If the repo is mirrored into a GitLab instance, the same file is
+consumable as a catalog component: `include: { component: "$CI_SERVER_FQDN/<path>/build@<version>" }`.
+Untrusted-MR builds and pre-warming are covered in [templates/README.md](../templates/README.md).
+
 ## The CI-agnostic core: `scripts/build.sh`
 
 The Action is a thin wrapper around `scripts/build.sh` — a small POSIX script that any CI able to
