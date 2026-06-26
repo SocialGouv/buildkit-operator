@@ -19,6 +19,22 @@ named buildkit-operator to avoid "buildkit-operator-buildkit-operator".
 {{- end -}}
 
 {{/*
+Namespaces. Three-namespace topology, split by trust/role so each carries only the Kyverno exemption
+its workloads need:
+  - operator: the control plane (buildd + gateway). Hardened; needs NO privileged exemption.
+  - builds:   the per-project build daemons (+ untrusted forks) and their certs/config/mirror. Needs
+              the securityContext exemption (rootless relaxes allowPrivilegeEscalation).
+(The Kata node plumbing lives in a third namespace, buildkit-system, installed out-of-band — see
+deploy/kata/, not this chart.)
+*/}}
+{{- define "buildkit-operator.operatorNamespace" -}}
+{{- .Values.namespaces.operator | default "buildkit-operator" -}}
+{{- end -}}
+{{- define "buildkit-operator.buildsNamespace" -}}
+{{- .Values.namespaces.builds | default "buildkit-builds" -}}
+{{- end -}}
+
+{{/*
 ServiceAccount name: explicit value, else the fullname.
 */}}
 {{- define "buildkit-operator.serviceAccountName" -}}

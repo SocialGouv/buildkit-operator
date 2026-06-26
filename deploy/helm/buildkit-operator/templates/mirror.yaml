@@ -5,7 +5,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-mirror
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: mirror
@@ -20,7 +20,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-mirror
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: mirror
@@ -71,7 +71,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-mirror
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: mirror

@@ -1,0 +1,26 @@
+{{- if .Values.createNamespaces }}
+{{- /*
+Render the two namespaces the chart targets. `helm install --namespace <operator>` only creates the
+release namespace, so the builds namespace must be created somehow — this does it (and labels both,
+which doubles as a stable target for the platform's Kyverno exemptions). Set createNamespaces=false
+when they are provisioned out-of-band (GitOps / platform). The Kata node plumbing namespace
+(buildkit-system) is NOT created here — it is installed with kata-deploy (see deploy/kata/).
+*/}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "buildkit-operator.operatorNamespace" . }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/part-of: buildkit-operator
+    buildkit-operator.socialgouv.github.io/role: operator # control plane; no privileged exemption needed
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "buildkit-operator.buildsNamespace" . }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/part-of: buildkit-operator
+    buildkit-operator.socialgouv.github.io/role: builds # runs untrusted build code; needs the securityContext Kyverno exemption
+{{- end }}

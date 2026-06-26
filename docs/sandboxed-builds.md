@@ -62,6 +62,22 @@ sandbox:
   runtimeClass: kata-clh
 ```
 
+!!! warning "Installing Kata modifies the node (containerd restart)"
+    `kata-deploy` is not a passive add-on: on each targeted node it installs the Kata binaries to
+    `/opt/kata` (hostPath) and **reconfigures + RESTARTS containerd** to register the kata runtime
+    handlers. A containerd restart does **not** kill running containers, but the node's CRI
+    control-plane blips for a few seconds — schedule a **maintenance window**, and keep it scoped to
+    the **dedicated build nodepool** (never shared nodes that host other teams' workloads). The
+    `kata-clh-vcpu-tune` DaemonSet, by contrast, does **not** restart containerd (Kata reads its config
+    per-sandbox). This is the same node-level footprint Sysbox would have required — the difference is
+    Kata confines it to a dedicated pool and a dedicated namespace.
+
+The Kata plumbing runs in its own **`buildkit-system`** namespace (privileged + hostPath), which must
+be added to the platform's `disallow-host-path` Kyverno exemption — unlike `kube-system` it is not
+exempt by default. This is deliberate (least privilege / clean ownership); see
+[deploy/kata/README.md](../deploy/kata/README.md) and
+[ADR 0006](adr/0006-namespace-topology.md).
+
 ## Operational notes
 
 - **Cold start** is slower than runc (VM boot + first image pull), and on a *busy* shared node the

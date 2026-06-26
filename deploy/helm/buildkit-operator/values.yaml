@@ -4,11 +4,22 @@
 # controller at runtime from BuildProject custom resources — they are never
 # templated here.
 
-# Namespace the control plane runs in. Used for resource metadata and as the
-# value of the BUILDKIT_OPERATOR_NAMESPACE env handed to buildd (the namespace it watches
-# and creates per-project daemons in). Create it with --create-namespace, or
-# point at an existing one.
-namespace: buildkit-operator
+# Three-namespace topology, split by trust/role so each namespace carries ONLY the Kyverno exemption
+# its workloads need (least privilege):
+#   - operator: the control plane (buildd + gateway). Hardened (nonroot, readOnlyRootFS, caps drop ALL)
+#               — needs NO privileged/securityContext exemption.
+#   - builds:   the per-project build daemons (+ untrusted forks) and their certs/config/mirror. This is
+#               where untrusted build code runs; it needs the securityContext exemption (rootless
+#               buildkit relaxes allowPrivilegeEscalation + seccomp/apparmor).
+# The Kata node plumbing lives in a THIRD namespace (buildkit-system), installed out-of-band — see
+# deploy/kata/, it is not part of this chart.
+namespaces:
+  operator: buildkit-operator
+  builds: buildkit-builds
+# Render the two Namespace objects (labelled) as part of the chart. Set false if they are created
+# out-of-band (e.g. by GitOps / the platform). `helm install --namespace <operator>` only creates the
+# release namespace; the builds namespace must exist, so keep this on unless you pre-create it.
+createNamespaces: true
 
 # buildd runs HA: >1 replica with leader election (only the leader reconciles; the /route API
 # is served by every replica behind the Service).

@@ -5,7 +5,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-gateway
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.operatorNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
@@ -39,7 +39,7 @@ spec:
             - --listen=:{{ .Values.buildkit.port }}
             - --health-listen=:8081
             - --domain={{ .Values.gateway.host }}
-            - --namespace={{ .Values.namespace }}
+            - --namespace={{ include "buildkit-operator.buildsNamespace" . }}
             - --daemon-port={{ .Values.buildkit.port }}
           ports:
             - name: sni
@@ -68,7 +68,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-gateway
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.operatorNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway

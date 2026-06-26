@@ -2,10 +2,28 @@
 # scoped to the build nodepool so every node — including MKS replacements — gets Kata automatically.
 # Pair with deploy/kata/kata-clh-vcpu-tune.yaml (the ≥4-vCPU guest floor) which applies as a plain DaemonSet.
 #
-# NOTE: the chart declares a node-feature-discovery dependency. We disable it (enabled: false), but
-# Flux still resolves chart deps — ensure your cluster can reach the NFD Helm repo, or vendor the chart.
-# Argo CD users: an Application pointing at path tools/packaging/kata-deploy/helm-chart/kata-deploy with
-# the same values works equivalently.
+# WARNING: kata-deploy installs node binaries to /opt/kata AND reconfigures + RESTARTS containerd on
+# every targeted node (to register the kata runtime handlers). Running pods survive a containerd
+# restart (it does not kill containers), but the node's control-plane blips — schedule a maintenance
+# window and keep this scoped to the dedicated build nodepool (never shared nodes). See deploy/kata/README.md.
+#
+# NOTE: it runs in the dedicated `buildkit-system` namespace (privileged + hostPath), which — unlike
+# kube-system — is NOT in the platform's default host-access exemptions, so buildkit-system must be added
+# to BOTH the `securityContextPolicy` and `disallow-host-path` Kyverno excludedNamespaces (the privileged
+# installer is invalid once allowPrivilegeEscalation is mutated to false). See deploy/kata/README.md.
+#
+# The chart declares a node-feature-discovery dependency. We disable it (enabled: false), but Flux still
+# resolves chart deps — ensure your cluster can reach the NFD Helm repo, or vendor the chart. Argo CD
+# users: an Application pointing at path tools/packaging/kata-deploy/helm-chart/kata-deploy with the same
+# values works equivalently.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: buildkit-system
+  labels:
+    app.kubernetes.io/part-of: buildkit-operator
+    buildkit-operator.socialgouv.github.io/role: system # Kata node plumbing; needs the disallow-host-path exemption
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -25,7 +43,7 @@ apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: kata-deploy
-  namespace: kube-system
+  namespace: buildkit-system
 spec:
   interval: 1h
   chart:

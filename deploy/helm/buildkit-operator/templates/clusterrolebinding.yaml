@@ -12,4 +12,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ include "buildkit-operator.serviceAccountName" . }}
-    namespace: {{ .Values.namespace }}
+    namespace: {{ include "buildkit-operator.operatorNamespace" . }}

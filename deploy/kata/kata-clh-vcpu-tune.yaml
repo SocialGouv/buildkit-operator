@@ -9,15 +9,20 @@
 # This DaemonSet keeps `default_vcpus`/`default_memory` patched on every kata node (idempotent, and
 # re-applied periodically so a kata-deploy upgrade that rewrites the defaults gets corrected). It is
 # scoped to nodes kata-deploy has finished installing on (label katacontainers.io/kata-runtime=true),
-# runs in kube-system (Kyverno-exempt for the hostPath), and only edits the kata-clh config files.
+# runs in the dedicated `buildkit-system` namespace, and only edits the kata-clh config files.
 #
+# NOTE: `buildkit-system` is NOT in the platform's default host-access exemptions (unlike kube-system),
+# so this privileged + hostPath DaemonSet requires `buildkit-system` in BOTH the Kyverno
+# `securityContextPolicy` and `disallow-host-path` excludedNamespaces — see deploy/kata/README.md.
+#
+#   kubectl create namespace buildkit-system   # if not already created
 #   kubectl apply -f deploy/kata/kata-clh-vcpu-tune.yaml
 #
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: kata-clh-vcpu-tune
-  namespace: kube-system
+  namespace: buildkit-system
   labels: { app: kata-clh-vcpu-tune }
 spec:
   selector:

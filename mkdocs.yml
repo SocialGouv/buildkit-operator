@@ -43,3 +43,11 @@ nav:
   - Comparison vs buildkit-service: comparison-buildkit-service.md
   - Benchmarks (Phase 0): benchmarks-phase0.md
   - Operations: operations.md
+  - Decision records (ADR):
+      - Overview: adr/README.md
+      - 0001 Control plane over vanilla BuildKit: adr/0001-control-plane-over-vanilla-buildkit.md
+      - 0002 Reject distributed snapshotter: adr/0002-reject-distributed-snapshotter.md
+      - 0003 Scale-to-zero + retained PVC: adr/0003-scale-to-zero-retained-pvc.md
+      - 0004 Shared SNI gateway: adr/0004-shared-sni-gateway.md
+      - 0005 Kata for untrusted forks: adr/0005-kata-clh-for-untrusted-forks.md
+      - 0006 Namespace topology: adr/0006-namespace-topology.md

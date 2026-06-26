@@ -116,3 +116,11 @@ The existing `buildkit-service` has **no** S3 (and no registry) cache layer. Eve
 (HPA scale-up, consistent-hash rebalance, restart) pays the full from-scratch path. S3 is precisely
 the cold-start answer it lacks. See
 [comparison-buildkit-service.md](comparison-buildkit-service.md) and [performance.md](performance.md).
+
+## Further reading
+
+- [Advanced BuildKit caching](https://www.augmentedmind.de/2023/11/19/advanced-buildkit-caching/) — a
+  thorough walk-through of layer caching vs `RUN --mount=type=cache` and the remote-cache backends
+  (registry, S3, gha) this design builds on.
+- [BuildKit cache docs & examples](https://github.com/moby/buildkit/tree/master/examples) — upstream
+  reference, including the registry/S3 cache exporters.

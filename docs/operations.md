@@ -1,8 +1,22 @@
 # Operations runbook
 
-How to deploy, expose, secure, observe, and tear down buildkit-operator. Commands assume the namespace
-`buildkit-operator` and a kubeconfig context pinned per call (on a shared cluster, **always** pass
-`--context` so you never touch the wrong cluster).
+How to deploy, expose, secure, observe, and tear down buildkit-operator. Pin a kubeconfig context per
+call (on a shared cluster, **always** pass `--context` so you never touch the wrong cluster).
+
+## Namespaces
+
+buildkit-operator uses **three** namespaces, split by trust/role so each carries only the admission
+exemption it needs ([ADR 0006](adr/0006-namespace-topology.md)):
+
+| Namespace | Holds | Kyverno exemption |
+|---|---|---|
+| `buildkit-operator` | control plane: buildd + gateway (Deployments, Service, SA, RBAC, Lease, PDBs) | **none** |
+| `buildkit-builds` | per-project daemons + forks, their certs/config/mirror, the `BuildProject` CRs | `securityContextPolicy` |
+| `buildkit-system` | Kata node plumbing (kata-deploy + vcpu-tune), only when sandboxing forks | `securityContextPolicy` + `disallow-host-path` |
+
+The chart renders the first two (`createNamespaces: true`) and places each resource accordingly;
+`buildkit-system` is created with the Kata install ([deploy/kata/](../deploy/kata/)). Override names via
+`namespaces.{operator,builds}`.
 
 ## Deploy
 
@@ -10,16 +24,20 @@ How to deploy, expose, secure, observe, and tear down buildkit-operator. Command
 # 1. CRDs
 make manifests && kubectl apply -f deploy/crd
 
-# 2. mTLS material (daemon + client cert Secrets)
-deploy/cert/create-certs.sh buildkit-operator
-kubectl -n buildkit-operator apply -f deploy/cert/.certs/*-secret.yaml
+# 2. mTLS material — the daemons mount it, so it goes in the BUILDS namespace
+deploy/cert/create-certs.sh buildkit-builds
+kubectl -n buildkit-builds apply -f deploy/cert/.certs/*-secret.yaml
 
-# 3. control plane (buildd Deployment + RBAC + buildkitd.toml ConfigMap)
+# 3. control plane + namespaces (chart renders buildkit-operator + buildkit-builds)
 helm upgrade --install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --create-namespace
 
 # 4. (optional) warm node-pool headroom so wake-ups don't trigger node autoscaling
 kubectl apply -f deploy/warm-pool.yaml
 ```
+
+> Step 2 must run **after** step 3 the first time if `createNamespaces` makes the builds namespace
+> (or create it first: `kubectl create namespace buildkit-builds`). With cert-manager the chart mints
+> the certs into the builds namespace for you — skip step 2.
 
 Default Helm values worth knowing: `replicaCount: 2`, `leaderElection: true`, `service.type:
 ClusterIP` (daemons are always ClusterIP; off-cluster CI uses the SNI gateway — see below),
@@ -37,25 +55,32 @@ set `certManager.enabled=true`. The chart renders the daemon + client `Certifica
 `certs.{daemon,client}SecretName` Secrets, and buildd is started with `--cert-manager-certs` so it
 remaps cert-manager's `tls.crt`/`tls.key`/`ca.crt` onto the `cert.pem`/`key.pem`/`ca.pem` filenames the
 daemon reads (no daemon change). With no PKI, `certManager.ca.create=true` bootstraps a self-signed CA
-(a namespaced Issuer) in the operator namespace; otherwise point `certManager.issuerRef` at your own CA
-issuer. The daemon cert covers `*.<namespace>.svc` + (when set) `*.<gateway.host>`. Distribute the
-generated **client** Secret's `tls.crt`/`tls.key`/`ca.crt` to CI (the Action's `cert`/`key`/`ca`).
+(a namespaced Issuer) in the **builds** namespace (where the daemons mount the certs); otherwise point
+`certManager.issuerRef` at your own CA issuer. The daemon cert covers `*.<builds-namespace>.svc` + (when
+set) `*.<gateway.host>`. Distribute the generated **client** Secret's `tls.crt`/`tls.key`/`ca.crt` to CI
+(the Action's `cert`/`key`/`ca`).
 
 ## Kyverno exemption
 
 On a platform that mutates pods to `allowPrivilegeEscalation: false` (fabrique's Kyverno
-`add-custom-mas-securitycontext`), rootless buildkit crash-loops. Exempt the namespace — the
-precedented pattern (see `arc-runners`). **Do this via GitOps**, not a live edit:
+`add-custom-mas-securitycontext`), rootless buildkit crash-loops. Exempt the **builds** namespace (the
+control-plane namespace needs nothing). **Do this via GitOps**, not a live edit. In the platform Kyverno
+values (`apps-infra`, `kyverno/ovh-prod.values.yaml`) — the list **replaces**, not merges:
 
 ```yaml
-# in the ClusterPolicy's rule match/exclude — add the buildkit-operator namespace
-exclude:
-  any:
-    - resources:
-        namespaces: [buildkit-operator]
+kyverno:
+  securityContextPolicy:
+    excludedNamespaces:
+      - kube-system
+      - prometheus-operator
+      - buildkit-builds    # per-project daemons (rootless) + privileged Kata forks
+      # - buildkit-system  # only if sandboxing forks (Kata) — see deploy/kata/README.md
 ```
 
-Rationale and alternatives in [security.md](security.md#admission-policy-kyverno--restricted-pss).
+When sandboxing untrusted forks, `buildkit-system` additionally needs the `disallow-host-path`
+exemption — full matrix in [deploy/kata/README.md](../deploy/kata/README.md). Rationale and alternatives
+in [security.md](security.md#admission-policy-kyverno--restricted-pss) and
+[ADR 0006](adr/0006-namespace-topology.md).
 
 ## Expose publicly (for external CI runners)
 
@@ -79,8 +104,8 @@ This renders the gateway Deployment + its single LoadBalancer Service, and makes
 2. **Daemon cert SAN** — regenerate the daemon cert covering `*.builds.example.com` and re-apply the
    Secret, or daemons fail mTLS validation from outside:
    ```bash
-   GATEWAY_HOST=builds.example.com deploy/cert/create-certs.sh buildkit-operator
-   kubectl -n buildkit-operator apply -f deploy/cert/.certs/*-secret.yaml
+   GATEWAY_HOST=builds.example.com deploy/cert/create-certs.sh buildkit-builds
+   kubectl -n buildkit-builds apply -f deploy/cert/.certs/*-secret.yaml
    ```
 3. **Wildcard DNS** — point `*.builds.example.com` at the gateway LB IP; or, until that record
    exists, pass the runner the gateway IP via the Action's `gateway-ip` input (escape hatch).
@@ -125,9 +150,9 @@ restart. Roll back with `helm rollback buildkit-operator -n buildkit-operator`.
 - **mkcert / openssl** (`create-certs.sh`): no auto-renewal — regenerate and re-apply before expiry,
   then restart daemons so they re-read the cert:
   ```bash
-  GATEWAY_HOST=builds.example.com deploy/cert/create-certs.sh buildkit-operator   # GATEWAY_HOST optional
-  kubectl -n buildkit-operator apply -f deploy/cert/.certs/*-secret.yaml
-  kubectl -n buildkit-operator rollout restart statefulset -l app.kubernetes.io/component=buildkitd
+  GATEWAY_HOST=builds.example.com deploy/cert/create-certs.sh buildkit-builds   # GATEWAY_HOST optional
+  kubectl -n buildkit-builds apply -f deploy/cert/.certs/*-secret.yaml
+  kubectl -n buildkit-builds rollout restart statefulset -l app.kubernetes.io/component=buildkitd
   ```
   Redistribute the **client** Secret to CI if the CA changed. Keep `renewBefore < duration` when using
   cert-manager (a `renewBefore` ≥ `duration` never renews).
@@ -143,9 +168,9 @@ warm-pool/idle-timeout tuning); `buildkit_operator_coldstart_seconds` isolates t
 `route_duration_seconds` covers all routes.
 
 ```bash
-kubectl -n buildkit-operator get buildproject          # PHASE (Warm/Idle/...), REPLICAS, ENDPOINT per project
-kubectl -n buildkit-operator get volumesnapshot        # durability snapshots
-kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd -f
+kubectl -n buildkit-builds   get buildproject          # PHASE (Warm/Idle/...), REPLICAS, ENDPOINT per project
+kubectl -n buildkit-builds   get volumesnapshot        # durability snapshots
+kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd -f   # buildd runs in the operator ns
 ```
 
 ## Lifecycle behaviours to expect
@@ -176,8 +201,8 @@ buildkit-operator does **not** deploy an object store; point it at OVH Object St
 S3-compatible endpoint. The cold cache is configured **once on buildd**, not per build job:
 
 ```bash
-# the bucket Secret (AWS creds) the DAEMONS use for the s3 backend
-kubectl -n buildkit-operator create secret generic buildkit-operator-s3 \
+# the bucket Secret (AWS creds) the DAEMONS use for the s3 backend — in the BUILDS namespace
+kubectl -n buildkit-builds create secret generic buildkit-operator-s3 \
   --from-literal=AWS_ACCESS_KEY_ID=… --from-literal=AWS_SECRET_ACCESS_KEY=…
 
 helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator \
@@ -196,12 +221,12 @@ is not part of the chart. See [storage-and-cold-cache.md](storage-and-cold-cache
 ## Tear down cleanly (shared cluster hygiene)
 
 ```bash
-kubectl -n buildkit-operator delete buildproject --all          # cascades StatefulSets/(ClusterIP)Services/PVCs
-kubectl -n buildkit-operator delete pvc -l app.kubernetes.io/name=buildkit-operator   # if any PVCs linger
-helm uninstall buildkit-operator -n buildkit-operator
+kubectl -n buildkit-builds   delete buildproject --all          # cascades StatefulSets/(ClusterIP)Services/PVCs
+kubectl -n buildkit-builds   delete pvc -l app.kubernetes.io/name=buildkit-operator   # if any PVCs linger
+helm uninstall buildkit-operator -n buildkit-operator            # removes the control plane + chart-made namespaces
 # verify no orphans:
 kubectl get pv | grep buildkit-operator
-kubectl -n buildkit-operator get volumesnapshotcontent 2>/dev/null
+kubectl get volumesnapshotcontent 2>/dev/null | grep buildkit || true
 ```
 
 Daemon Services are `ClusterIP`, so deleting `BuildProject`s frees no LoadBalancers. The only public

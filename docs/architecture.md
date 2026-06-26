@@ -8,16 +8,25 @@ the daemon's content store, snapshots, and bbolt metadata are vanilla.
 ```mermaid
 flowchart LR
     ci["CI runner<br/>GitHub Action / build CLI"]
-    subgraph ns["Kubernetes namespace: buildkit-operator"]
+    subgraph op["ns: buildkit-operator (control plane)"]
         buildd["buildd (Deployment ×2, HA)<br/>reconciler (leader) + /route /prewarm (all)"]
         gw["gateway<br/>shared SNI router (1 LB)"]
-        sts["StatefulSet-of-1 per (project, arch)<br/>buildkitd (vanilla) + companion<br/>+ Cinder gen2 PVC (warm cache)<br/>Service :1234 — always ClusterIP"]
-        buildd -- "reconciles / scales / snapshots" --> sts
-        gw --> sts
     end
+    subgraph builds["ns: buildkit-builds (daemons)"]
+        sts["StatefulSet-of-1 per (project, arch)<br/>buildkitd (vanilla) + companion<br/>+ Cinder gen2 PVC (warm cache)<br/>Service :1234 — always ClusterIP"]
+    end
+    buildd -- "reconciles / scales / snapshots" --> sts
+    gw --> sts
     ci -- "POST /route (endpoint)" --> buildd
     ci -- "buildx remote (TCP + mTLS)" --> gw
 ```
+
+> **Namespaces.** The control plane (buildd + gateway) runs in `buildkit-operator`; the per-project
+> daemons, their certs/config and the `BuildProject` CRs live in `buildkit-builds`; the Kata node
+> plumbing (when sandboxing untrusted forks) is in a third namespace, `buildkit-system`. The split is
+> by trust/role so each namespace carries only the admission exemption it needs — see
+> [ADR 0006](adr/0006-namespace-topology.md). buildd creates daemons in the builds namespace but takes
+> its leader-election Lease in the operator namespace (via the `POD_NAMESPACE` downward API).
 
 ## The routing key — the one invariant that matters
 
@@ -125,3 +134,14 @@ SNI instead of allocating one LB each.
 - No concurrently-writable cache **between** daemons — that does not exist in BuildKit. Across
   daemons we share **layers** (via S3, see [storage-and-cold-cache.md](storage-and-cold-cache.md));
   `RUN --mount=type=cache` mounts stay per-daemon by design.
+
+## Further reading
+
+- [BuildKit — official docs & examples](https://github.com/moby/buildkit#readme) and the
+  [`examples/` directory](https://github.com/moby/buildkit/tree/master/examples) (Kubernetes
+  StatefulSet, certs, consistent-hash — the M1 references this design builds on).
+- [Advanced BuildKit caching](https://www.augmentedmind.de/2023/11/19/advanced-buildkit-caching/) —
+  a deep dive into layer vs cache-mount caching and remote cache backends; useful background for the
+  cache-identity and cold-cache choices ([ADR 0001](adr/0001-control-plane-over-vanilla-buildkit.md),
+  [storage-and-cold-cache.md](storage-and-cold-cache.md)).
+- Decision records: [docs/adr/](adr/README.md).

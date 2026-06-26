@@ -9,7 +9,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-daemon-egress
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -54,7 +54,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-fork-egress
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:

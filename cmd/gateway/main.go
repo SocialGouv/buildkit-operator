@@ -38,7 +38,7 @@ func main() {
 	flag.StringVar(&listen, "listen", ":1234", "TCP listen address")
 	flag.StringVar(&healthListen, "health-listen", ":8081", "HTTP address for /healthz and /readyz")
 	flag.StringVar(&g.domain, "domain", os.Getenv("BUILDKIT_OPERATOR_GATEWAY_DOMAIN"), "gateway domain; the SNI is <daemon>.<domain> (required)")
-	flag.StringVar(&g.namespace, "namespace", envOr("BUILDKIT_OPERATOR_NAMESPACE", "buildkit-operator"), "namespace the daemons run in")
+	flag.StringVar(&g.namespace, "namespace", envOr("BUILDKIT_OPERATOR_NAMESPACE", "buildkit-builds"), "namespace the per-project daemons run in (the 'builds' ns the SNI backend resolves into)")
 	flag.IntVar(&g.port, "daemon-port", 1234, "daemon mTLS port")
 	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent connections (0 = unlimited; bounds resource use under abuse)")
 	flag.Parse()

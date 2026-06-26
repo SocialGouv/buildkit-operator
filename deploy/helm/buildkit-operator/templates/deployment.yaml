@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-buildd
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.operatorNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: buildd
@@ -31,7 +31,7 @@ spec:
           # it only hands the ConfigMap/Secret *names* to the builder, which mounts them into
           # the per-project daemon pods it reconciles.
           args:
-            - --namespace={{ .Values.namespace }}
+            - --namespace={{ include "buildkit-operator.buildsNamespace" . }}
             - --buildkit-image={{ .Values.buildkit.image }}
             - --companion={{ .Values.companion.enabled }}
             - --companion-image={{ .Values.companion.image.repository }}:{{ .Values.companion.image.tag | default .Chart.AppVersion }}
@@ -73,15 +73,21 @@ spec:
             - --s3-endpoint={{ .Values.s3.endpoint }}
             - --s3-creds-secret={{ .Values.s3.credsSecret }}
             {{- end }}
-          {{- if .Values.auth.tokenSecret }}
-          # Bearer-token auth for /route (read from a Secret, not a flag, so it isn't in the pod spec).
           env:
+            # buildd creates daemons in --namespace (the builds ns) but its leader-election Lease must
+            # live in the namespace buildd RUNS in (the operator ns) — handed in via the downward API.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.auth.tokenSecret }}
+            # Bearer-token auth for /route (read from a Secret, not a flag, so it isn't in the pod spec).
             - name: BUILDKIT_OPERATOR_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.tokenSecret }}
                   key: token
-          {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

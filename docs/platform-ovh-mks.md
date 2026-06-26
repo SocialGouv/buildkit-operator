@@ -23,15 +23,21 @@ The platform ships cluster-wide Kyverno `ClusterPolicy` objects that materially 
 - **`add-custom-mas-securitycontext`** *mutates* every container's securityContext to
   `allowPrivilegeEscalation: false` (+ `runAsNonRoot: true`, drop `NET_RAW`). This **breaks rootless
   buildkit**: rootlesskit's setuid `newuidmap` needs `no_new_privs` OFF, and fails with
-  `newuidmap: Could not set caps`. **Fix**: add the daemon namespace to the policy's `exclude` list
-  (alongside the pre-excluded `kube-system`, `prometheus-operator`).
+  `newuidmap: Could not set caps`. It also makes a **privileged** container invalid (privileged +
+  `allowPrivilegeEscalation:false` is rejected). **Fix**: add the relevant namespace to the policy's
+  `exclude`/`excludedNamespaces` list (the list **replaces**, not merges).
   - **`PolicyException` is disabled cluster-wide** ("PolicyException resources would not be processed
     until it is enabled") — so a namespace exclusion on the policy itself is the only lever.
-  - A live `kubectl patch` of the policy is config drift — track the exclusion in GitOps.
-  - A container that *explicitly* sets `privileged: true` (e.g. a Kata fork daemon, or the kata-deploy
-    installer) is not blocked by these policies; `kube-system` is exempt, so privileged installers run
-    there cleanly.
+  - A live `kubectl patch` of the policy is config drift — track the exclusion in GitOps (`apps-infra`).
 - `disallow-host-path` (Audit), `disallow-host-ipc-ipd-network` (Enforce), `presence-of-securitycontext`.
+- **buildkit-operator's three namespaces each need a different exemption** (least privilege — see
+  [ADR 0006](adr/0006-namespace-topology.md)):
+
+  | Namespace | Workloads | Exempt from |
+  |---|---|---|
+  | `buildkit-operator` | control plane (buildd, gateway), hardened | — (nothing) |
+  | `buildkit-builds` | per-project daemons + privileged Kata forks | `securityContextPolicy` |
+  | `buildkit-system` | Kata node plumbing (privileged + hostPath) | `securityContextPolicy` **and** `disallow-host-path` (like `kube-system`) |
 - **Secret-sync policies** generate shared secrets into *every* namespace (observed: a
   `buildkit-client-certs`, plus wildcard/registry secrets). This **collides** with the chart's default
   cert secret names → use product-prefixed names (`certs.daemonSecretName` / `certs.clientSecretName`).
@@ -68,8 +74,12 @@ The CCM updates the Octavia listener **in place** (no LB recreation, the externa
 ## Sandboxed (Kata) runtime on MKS
 
 - Install Kata with `kata-deploy` (Helm), `node-feature-discovery.enabled=false`, scoped to the build
-  nodepool, tolerating its taint. It reconfigures and restarts containerd on the node, but **running
-  pods survive the restart** (≈ zero downtime), so it can be rolled onto a node already serving work.
+  nodepool, tolerating its taint, into the dedicated **`buildkit-system`** namespace (exempt it from
+  `securityContextPolicy` + `disallow-host-path`, like `kube-system`).
+  - ⚠️ It installs `/opt/kata` (hostPath) and **reconfigures + RESTARTS containerd** on the node to
+    register the runtime handlers. **Running pods survive** the restart (it doesn't kill containers),
+    but the node's CRI control-plane blips — do it in a **maintenance window**, on the **dedicated
+    build nodepool only**. `kata-clh-vcpu-tune` does **not** restart containerd (per-sandbox config).
 - Use **`kata-clh`** (cloud-hypervisor), not `kata-qemu`, and tune the guest to **≥ 4 vCPUs** — under
   nested virt a slow/under-provisioned guest misses containerd's CRI `get state` deadline and the VM is
   killed. Full rationale + setup: [sandboxed-builds.md](sandboxed-builds.md) and

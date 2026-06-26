@@ -14,7 +14,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: {{ $fullname }}-selfsign
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -24,7 +24,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ $fullname }}-ca
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -39,7 +39,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: {{ $fullname }}-ca
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -51,7 +51,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ $fullname }}-daemon
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -61,8 +61,8 @@ spec:
   privateKey: { algorithm: ECDSA, size: 256 }
   usages: [server auth, key encipherment, digital signature]
   dnsNames:
-    - "*.{{ .Values.namespace }}.svc"
-    - "*.{{ .Values.namespace }}.svc.cluster.local"
+    - "*.{{ include "buildkit-operator.buildsNamespace" . }}.svc"
+    - "*.{{ include "buildkit-operator.buildsNamespace" . }}.svc.cluster.local"
     - localhost
     {{- if .Values.gateway.host }}
     - "*.{{ .Values.gateway.host }}" # SNI host through the shared gateway
@@ -75,7 +75,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ $fullname }}-client
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:

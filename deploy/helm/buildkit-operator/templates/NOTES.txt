@@ -1,7 +1,9 @@
 buildkit-operator {{ .Chart.AppVersion }} — control plane installed.
 
 Release : {{ .Release.Name }}
-Namespace: {{ .Values.namespace }}
+Namespaces:
+  operator (control plane) : {{ include "buildkit-operator.operatorNamespace" . }}
+  builds (daemons + certs) : {{ include "buildkit-operator.buildsNamespace" . }}
 
 What was installed (cluster-wide control plane ONLY):
   - buildd Deployment + Service (HTTP /route API + /healthz on :{{ .Values.service.port }})
@@ -14,30 +16,30 @@ BuildProject custom resources — they are not part of this release.
 
 Next steps:
 
-1. Confirm the mTLS Secrets exist in this namespace (minted by
+1. Confirm the mTLS Secrets exist in the BUILDS namespace (the daemons mount them; minted by
    deploy/cert/create-certs.sh and applied before install):
 
-     kubectl -n {{ .Values.namespace }} get secret {{ .Values.certs.daemonSecretName }} {{ .Values.certs.clientSecretName }}
+     kubectl -n {{ include "buildkit-operator.buildsNamespace" . }} get secret {{ .Values.certs.daemonSecretName }} {{ .Values.certs.clientSecretName }}
 
    If they are missing, run:
 
-     deploy/cert/create-certs.sh {{ .Values.namespace }}
+     deploy/cert/create-certs.sh {{ include "buildkit-operator.buildsNamespace" . }}
      kubectl apply -f deploy/cert/.certs/buildkit-daemon-certs.yaml
      kubectl apply -f deploy/cert/.certs/buildkit-client-certs.yaml
 
-2. Watch buildd come up:
+2. Watch buildd come up (it runs in the OPERATOR namespace):
 
-     kubectl -n {{ .Values.namespace }} rollout status deploy/{{ include "buildkit-operator.fullname" . }}-buildd
+     kubectl -n {{ include "buildkit-operator.operatorNamespace" . }} rollout status deploy/{{ include "buildkit-operator.fullname" . }}-buildd
 
-3. Create a BuildProject and watch the controller materialise its daemon:
+3. Create a BuildProject and watch the controller materialise its daemon (in the BUILDS namespace):
 
-     kubectl -n {{ .Values.namespace }} get buildprojects -w
-     kubectl -n {{ .Values.namespace }} get statefulset,svc,pvc -l app.kubernetes.io/name=buildkit-operator
+     kubectl -n {{ include "buildkit-operator.buildsNamespace" . }} get buildprojects -w
+     kubectl -n {{ include "buildkit-operator.buildsNamespace" . }} get statefulset,svc,pvc -l app.kubernetes.io/name=buildkit-operator
 
 Security profile in effect: {{ .Values.securityProfile }}
 {{- if eq .Values.securityProfile "rootless" }}
   rootless buildkit requires seccompProfile: Unconfined on the daemon pods.
-  If a restrictive admission policy (e.g. Kyverno) blocks that, either add a
-  PolicyException for namespace {{ .Values.namespace }} or set
+  If a restrictive admission policy (e.g. Kyverno) blocks that, exempt the BUILDS namespace
+  {{ include "buildkit-operator.buildsNamespace" . }} (the operator namespace needs no exemption) or set
   securityProfile=userns (or privileged) — see deploy/README.md.
 {{- end }}

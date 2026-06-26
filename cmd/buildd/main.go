@@ -42,7 +42,7 @@ func main() {
 		gatewayHost string
 	)
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context to target (empty = current-context)")
-	flag.StringVar(&cfg.Namespace, "namespace", "buildkit-operator", "namespace the daemons run in")
+	flag.StringVar(&cfg.Namespace, "namespace", "buildkit-builds", "namespace the per-project daemons + BuildProjects + their certs/config live in (the 'builds' ns, distinct from the operator ns buildd runs in)")
 	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.31.1-rootless", "buildkitd image (vanilla)")
 	flag.StringVar(&cfg.CompanionImage, "companion-image", "ghcr.io/socialgouv/buildkit-operator-companion:dev", "companion sidecar image")
 	flag.StringVar(&cfg.DaemonCertsSecret, "daemon-certs-secret", "buildkit-daemon-certs", "mTLS server certs secret")
@@ -100,12 +100,19 @@ func main() {
 		warnIfDaemonCertMissingGatewaySAN(restCfg, cfg, gatewayHost, log)
 	}
 
+	// buildd creates daemons + BuildProjects in cfg.Namespace (the 'builds' ns), but its own
+	// leader-election Lease belongs in the namespace buildd RUNS in (the 'operator' ns) — handed in via
+	// the downward API (POD_NAMESPACE). Fall back to cfg.Namespace for a single-namespace install.
+	leaderNS := os.Getenv("POD_NAMESPACE")
+	if leaderNS == "" {
+		leaderNS = cfg.Namespace
+	}
 	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                  scheme,
 		Metrics:                 metricsserver.Options{BindAddress: *metricsAddr}, // M4 observability
 		LeaderElection:          *leaderElect,                                     // HA: only the leader reconciles
 		LeaderElectionID:        "buildkit-operator-buildd.buildkit-operator.socialgouv.github.io",
-		LeaderElectionNamespace: cfg.Namespace,
+		LeaderElectionNamespace: leaderNS,
 	})
 	if err != nil {
 		log.Error(err, "unable to start manager")
