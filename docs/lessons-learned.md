@@ -116,6 +116,38 @@ avoid them.
 - **MKS b2 nodes expose nested virtualization** (`/dev/kvm`, CPU `vmx`), so Kata microVMs run — with the
   clh + ≥4-vCPU caveats above. The guest kernel differs from the host kernel.
 
+## Networking, DNS & egress-proxy CI
+
+- **external-dns `service` source needs node RBAC — adding the arg alone crash-loops it.** The Helm chart
+  derives the ClusterRole from `sources`, so enabling `--source=service` *via the chart* also grants
+  `nodes` (+ `services`/`endpoints`/`pods`) `list,watch`. If you flip the arg with a **live patch** (or
+  any path that doesn't re-render RBAC), external-dns dies with `failed to sync *v1.Node: context
+  deadline exceeded` and **all DNS reconciliation stops** (shared component!). Patch the ClusterRole in
+  the same change, or sync via the chart — never the arg alone.
+- **external-dns + Azure DNS + a wildcard record = the TXT registry record is rejected.** A wildcard
+  `*.foo` A record is fine, but the ownership TXT becomes `external-dns.*.foo`, which Azure rejects
+  (`record set relative name '...' is invalid`, HTTP 400) — every reconcile re-errors. The **A record
+  still resolves** (it's re-upserted; `policy=sync` only deletes records it *owns* via TXT, and an
+  untracked one is left alone), so it's benign-but-noisy. The proper fix is `--txt-wildcard-replacement`
+  (substitutes `*` in TXT names) — but it's a **global** flag affecting every wildcard that instance
+  manages, so coordinate it platform-wide rather than patching it in for one record.
+- **A blocking control-plane call dies against a CONNECT-proxy's idle timeout.** Egress-proxy-only CI
+  (e.g. an HTTP `CONNECT` proxy on 443) caps how long an idle tunnel stays open (~50s observed). A
+  control endpoint that *blocks* server-side (here `/route` waits for a cold daemon, ~1–2 min) is dropped
+  mid-wait with `OpenSSL SSL_read: ... unexpected eof` (curl 56) / a timeout (curl 28). Fix on the
+  **client**: poll in **bounded attempts** (each `--max-time` < the proxy's tunnel timeout) until ready,
+  instead of one long request. Keep the single blocking call only for direct (non-proxied) clients.
+- **nginx Ingress `proxy-read-timeout` defaults to 60s** — too low for an endpoint that *legitimately*
+  blocks (cold-start). Raise it (`nginx.ingress.kubernetes.io/proxy-read-timeout: "300"`) — but note this
+  only covers the *Ingress* hop; an upstream CONNECT proxy has its **own**, separate timeout (above).
+- **GitLab `include: remote:` is fetched by the GitLab *server*, behind an allow-list.** On a locked-down
+  instance the server denies it (`Remote file could not be fetched because URL is blocked: ... not on the
+  Allow List`) and the pipeline fails with **0 jobs and no YAML error** — confirm with `POST
+  /projects/:id/ci/lint`. Deliver a reusable CI brick to such platforms as a **vendored/`local` include**
+  or a **CI/CD Catalog component** (mirror the repo into that GitLab), not a GitHub remote include.
+  Runtime fetches (the runner pulling a script) ride the *runner's* proxy instead — a different egress
+  path with different rules; vendor those too if the runner's proxy doesn't allow the source host.
+
 ## Release toolchain
 
 - **conventional-changelog bumps a `feat!`/breaking commit to MAJOR even pre-1.0** (→ `1.0.0`). For a

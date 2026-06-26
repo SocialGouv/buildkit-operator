@@ -60,7 +60,39 @@ route_payload="$(jq -nc \
   --arg arch "$ARCH" \
   --argjson untrusted "$UNTRUSTED" \
   '{repo:$repo,name:$name,target:$target,arch:$arch,untrusted:$untrusted}')"
-resp="$(api /route "$route_payload")"
+
+# route_call POSTs /route, writing the body to $certs/route.json and printing the HTTP status. $1 caps
+# the attempt (--max-time, empty = no cap). buildd's /route BLOCKS server-side until the daemon is warm.
+route_call() {
+  if [ -n "${BUILDKIT_OPERATOR_TOKEN:-}" ]; then
+    curl -sS -o "$certs/route.json" -w '%{http_code}' ${1:+--max-time "$1"} \
+      -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/route" -H 'content-type: application/json' \
+      -H "authorization: Bearer $BUILDKIT_OPERATOR_TOKEN" -d "$route_payload"
+  else
+    curl -sS -o "$certs/route.json" -w '%{http_code}' ${1:+--max-time "$1"} \
+      -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/route" -H 'content-type: application/json' -d "$route_payload"
+  fi
+}
+
+# A single blocking /route is fine on a direct connection, but a CONNECT-proxy tunnel
+# (BUILDKIT_OPERATOR_TUNNEL=1) caps idle tunnels (commonly ~50s), so a cold start (PVC provision + image
+# pull, ~1-2 min) drops mid-wait with an SSL EOF. When tunnelling, poll /route in bounded attempts (each
+# under the proxy's tunnel timeout) until the daemon is warm; on a direct connection, one unbounded call.
+route_timeout="${BUILDKIT_OPERATOR_ROUTE_TIMEOUT-$([ "${BUILDKIT_OPERATOR_TUNNEL:-}" = "1" ] && echo 40 || echo "")}"
+route_deadline=$(( $(date +%s) + ${BUILDKIT_OPERATOR_ROUTE_DEADLINE:-900} ))
+while :; do
+  hc="$(route_call "$route_timeout")" && rc=0 || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$hc" = 200 ]; then resp="$(cat "$certs/route.json")"; break; fi
+  # Transient (retry): a curl error (timeout/proxy-EOF/reset → rc≠0) or buildd 502/503/504 while warming.
+  if [ "$rc" -ne 0 ] || [ "$hc" = 502 ] || [ "$hc" = 503 ] || [ "$hc" = 504 ]; then
+    if [ "$(date +%s)" -ge "$route_deadline" ]; then
+      echo "buildkit-operator: daemon not warm before deadline (last curl=$rc http=$hc)" >&2; exit 1
+    fi
+    echo "buildkit-operator: daemon warming (curl=$rc http=$hc), retrying /route…"
+    sleep "${BUILDKIT_OPERATOR_ROUTE_INTERVAL:-5}"; continue
+  fi
+  echo "buildkit-operator: /route failed HTTP $hc: $(cat "$certs/route.json" 2>/dev/null)" >&2; exit 1
+done
 endpoint="$(printf '%s' "$resp" | jq -r .endpoint)"
 key="$(printf '%s' "$resp" | jq -r .key)"
 echo "buildkit-operator: routed $REPO${NAME:+/$NAME} ($ARCH${UNTRUSTED:+, untrusted=$UNTRUSTED}) -> $endpoint"

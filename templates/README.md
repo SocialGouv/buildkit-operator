@@ -25,11 +25,11 @@ as component inputs (inputs are visible in the config). Mirror of the GitHub org
 
 ## 2. Include the component
 
-GitHub-hosted (remote include — works today):
+GitHub-hosted (remote include — needs the GitLab server to allow GitHub egress; see the note below):
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.7.0/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.1/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
       push: "true"
@@ -44,6 +44,13 @@ include:
 ```
 
 That generates a `buildkit-operator-build` job in the `build` stage.
+
+> **Locked-down GitLab (allow-list / no GitHub egress).** `include: remote:` is fetched by the GitLab
+> **server**, which may deny external hosts (`URL is blocked: ... not on the Allow List` → a pipeline with
+> **0 jobs**; confirm with `POST /projects/:id/ci/lint`). There, **mirror the repo** and use the Catalog
+> `component:` form above, or **vendor** `templates/build.yml` + `scripts/build.sh` into your repo and
+> `include: local:` them. Likewise, if the runner's egress proxy doesn't allow `raw.githubusercontent.com`,
+> vendor `build.sh` rather than letting the job fetch it. (This is how the SocialGouv PIC is wired.)
 
 ## Inputs
 
@@ -61,7 +68,7 @@ from — keep it pinned and in sync with the include).
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.7.0/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.1/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE/api:$CI_COMMIT_SHORT_SHA"
       name: api                  # monorepo: its own daemon + cache
@@ -77,7 +84,7 @@ by re-declaring the job's `rules:` (GitLab merges includes):
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.7.0/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.1/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE:mr-$CI_MERGE_REQUEST_IID"
       untrusted: "true"
@@ -125,6 +132,14 @@ The job then routes `apk`/`curl(/route)` through the proxy and **socat-tunnels**
 the same proxy; mTLS is validated against the real daemon hostname (`servername`), so it stays
 end-to-end. This mirrors the shared `buildkit-service` `.build-buildkit-service` backend, with the
 control-plane `/route` step added.
+
+**Cold start vs. the proxy's idle timeout.** A CONNECT proxy caps how long an idle tunnel stays open
+(~50s), but `/route` blocks until the project's daemon is warm (first build ≈ 1–2 min) — a single call
+would drop with `SSL_read: unexpected eof`. So when `BUILDKIT_OPERATOR_TUNNEL=1`, `build.sh` **polls
+`/route` in bounded attempts** (`--max-time` per try) until the daemon is warm. Tunables (sane defaults):
+`BUILDKIT_OPERATOR_ROUTE_TIMEOUT` (per-attempt cap, default `40`s when tunnelling — keep it under the
+proxy's timeout), `BUILDKIT_OPERATOR_ROUTE_INTERVAL` (`5`s), `BUILDKIT_OPERATOR_ROUTE_DEADLINE` (`900`s).
+To hide the wait entirely, `/prewarm` the daemon in a `.pre` job on `git push`.
 
 ## Notes
 

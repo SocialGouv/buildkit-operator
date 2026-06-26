@@ -221,7 +221,11 @@ ingress:
   enabled: false
   className: "" # e.g. nginx / traefik (empty = cluster default)
   host: "" # e.g. buildd.bko.fabrique.example.com
-  annotations: {} # e.g. cert-manager.io/cluster-issuer: letsencrypt
+  # e.g. cert-manager.io/cluster-issuer: letsencrypt
+  # /route blocks until the daemon is Ready, so the FIRST build of a project cold-starts (PVC provision
+  # + image pull, ~1-2 min) — raise the proxy read timeout above the default 60s or that request 504s at
+  # the proxy: nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+  annotations: {}
   # Only set true if TLS is terminated by an upstream load balancer/proxy before this Ingress.
   allowInsecure: false
   tls:

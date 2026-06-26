@@ -12,7 +12,7 @@
 #
 # Usage (GitHub-hosted, remote include):
 #   include:
-#     - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.7.0/templates/build.yml"
+#     - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.1/templates/build.yml"
 #       inputs: { tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA", push: "true" }
 #
 # The mTLS material + bearer token are read from MASKED CI/CD variables (set them at the group level):
@@ -75,7 +75,7 @@ spec:
       default: "false"
       description: "cosign keyless-sign the pushed tags (needs push: true; uses GitLab OIDC id_tokens)."
     ref:
-      default: v0.7.0
+      default: v0.8.1
       description: Exact buildkit-operator git tag/commit the build script is fetched from (keep in sync with the include).
 
 ---
