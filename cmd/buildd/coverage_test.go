@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,7 +11,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/builder"
@@ -139,6 +142,48 @@ func TestHandleRoute_WarmReturnsEndpoint(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), key) {
+		t.Errorf("response missing key %q: %s", key, rec.Body.String())
+	}
+}
+
+// TestHandleRoute_ColdStartBecomesReady exercises the cold path's SUCCESS branch: the daemon is not
+// ready on the warm-fast-path check, so /route enters cold-start gating and polls waitReady — which
+// then sees the daemon flip Ready and returns 200. A Get interceptor models the flip: the first
+// StatefulSet read (the s.ready fast-path probe) reports 0 ready replicas, later reads report 1, so
+// waitReady succeeds on its first poll without sleeping.
+func TestHandleRoute_ColdStartBecomesReady(t *testing.T) {
+	key := canonicalSpec(router.RouteRequest{Repo: "github.com/o/r", Arch: "amd64"}).Key
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: router.DaemonName(key), Namespace: "buildkit-operator"},
+		// Stored as not-ready; the interceptor decides what each Get observes.
+	}
+	gets := 0
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(sts).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, cl client.WithWatch, k client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if err := cl.Get(ctx, k, obj, opts...); err != nil {
+					return err
+				}
+				if s, ok := obj.(*appsv1.StatefulSet); ok {
+					gets++
+					if gets >= 2 { // 1st Get = the warm-path probe (cold); from the 2nd on, Ready
+						s.Status.ReadyReplicas = 1
+					}
+				}
+				return nil
+			},
+		}).Build()
+	srv := newTestServer(t, c)
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"repo":"github.com/o/r","arch":"amd64"}`)
+	srv.handleRoute(rec, httptest.NewRequest(http.MethodPost, "/route", body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cold-start success: status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), key) {
 		t.Errorf("response missing key %q: %s", key, rec.Body.String())

@@ -22,9 +22,9 @@ func TestPeekClientHelloSNI_Errors(t *testing.T) {
 		name string
 		in   []byte
 	}{
-		{"short header", []byte{0x16, 0x03}},                       // < 5 bytes: ReadFull fails
-		{"not handshake", []byte{0x15, 0x03, 0x01, 0x00, 0x02, 1}}, // 0x15 = alert, not 0x16
-		{"zero length", []byte{0x16, 0x03, 0x01, 0x00, 0x00}},      // declared length 0
+		{"short header", []byte{0x16, 0x03}},                              // < 5 bytes: ReadFull fails
+		{"not handshake", []byte{0x15, 0x03, 0x01, 0x00, 0x02, 1}},        // 0x15 = alert, not 0x16
+		{"zero length", []byte{0x16, 0x03, 0x01, 0x00, 0x00}},             // declared length 0
 		{"truncated body", []byte{0x16, 0x03, 0x01, 0x00, 0x10, 1, 2, 3}}, // says 16, only 3 follow
 	}
 	for _, tt := range tests {
