@@ -25,7 +25,10 @@ jobs:
         run: |
           unformatted="$(gofmt -l $(git ls-files '*.go'))"
           if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
-      - run: go test -race ./... -count=1
+      - name: unit tests (race) + coverage gate
+        run: |
+          go test -race ./... -count=1 -coverprofile=cover.out -covermode=atomic
+          bash hack/coverage.sh cover.out 85
 
   lint:
     runs-on: ubuntu-latest

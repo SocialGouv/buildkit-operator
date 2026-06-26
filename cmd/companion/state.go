@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
-	"os/exec"
 	"sync/atomic"
 	"time"
 )
@@ -55,7 +54,7 @@ func (s *state) probeWorkers(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "buildctl", "--addr", s.cfg.buildkitAddr, "debug", "workers")
+	cmd := execCommandContext(ctx, "buildctl", "--addr", s.cfg.buildkitAddr, "debug", "workers")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("buildctl debug workers: %w: %s", err, bytes.TrimSpace(out))

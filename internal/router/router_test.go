@@ -122,3 +122,51 @@ func TestDaemonNameAndEndpoint(t *testing.T) {
 		t.Errorf("Endpoint = %q, want %q", got, want)
 	}
 }
+
+// TestForkKeyAndIsForkKey covers the fork-marker round trip: ForkKey produces a key IsForkKey
+// recognizes, while canonical and clone keys are not mistaken for forks.
+func TestForkKeyAndIsForkKey(t *testing.T) {
+	canonical := ProjectKey("github.com/org/repo", "", "", "amd64")
+	fork := ForkKey(canonical)
+	if !IsForkKey(fork) {
+		t.Errorf("IsForkKey(%q) = false, want true", fork)
+	}
+	if IsForkKey(canonical) {
+		t.Errorf("IsForkKey(%q) = true for a canonical key, want false", canonical)
+	}
+	if IsForkKey(CloneKey(canonical, 0)) {
+		t.Error("a clone key must not be mistaken for a fork key")
+	}
+}
+
+// TestCloneKey checks that fan-out clone keys are deterministic, distinct per index, and distinct
+// from the canonical key — each clone is an independent sibling daemon.
+func TestCloneKey(t *testing.T) {
+	canonical := ProjectKey("github.com/org/repo", "", "", "amd64")
+	c0, c1 := CloneKey(canonical, 0), CloneKey(canonical, 1)
+	if c0 == c1 {
+		t.Error("clone keys for different indices must differ")
+	}
+	if c0 == canonical || c1 == canonical {
+		t.Error("clone keys must differ from the canonical key")
+	}
+	if CloneKey(canonical, 0) != c0 {
+		t.Error("CloneKey must be deterministic")
+	}
+}
+
+// TestCachePVCName pins the retained cache PVC name to the StatefulSet's ordinal-0 template
+// (cache-<daemon>-0); it persists across scale-to-zero, so the name must stay stable.
+func TestCachePVCName(t *testing.T) {
+	k := ProjectKey("github.com/org/repo", "", "", "amd64")
+	if got, want := CachePVCName(k), "cache-"+DaemonName(k)+"-0"; got != want {
+		t.Errorf("CachePVCName = %q, want %q", got, want)
+	}
+}
+
+// TestEndpointHost covers the gateway SNI endpoint formatting used for off-cluster CI.
+func TestEndpointHost(t *testing.T) {
+	if got, want := EndpointHost("buildkitd-p0123.gw.example.com", 443), "tcp://buildkitd-p0123.gw.example.com:443"; got != want {
+		t.Errorf("EndpointHost = %q, want %q", got, want)
+	}
+}
