@@ -19,13 +19,22 @@ inputs:
     description: "Client mTLS private key (PEM)."
     required: true
   token:
-    description: "Bearer token for the buildd /route API (required if buildd is exposed off-cluster with auth)."
+    description: >-
+      Fallback credential for the /route API when OIDC isn't used: a legacy bearer token, OR a break-glass
+      admin token (see admin-token). Leave empty when buildd enforces OIDC (the recommended setup) — the
+      action mints a GitHub OIDC token automatically. Requires the caller job to set permissions.id-token: write.
     default: ""
+  admin-token:
+    description: "Break-glass admin token (sent in the X-Buildkit-Operator-Admin-Token header) — bypasses OIDC. For ops only."
+    default: ""
+  oidc-audience:
+    description: "Audience for the GitHub OIDC token minted for buildd /route auth. Must match buildd's provider audience. Empty = don't mint (use token/admin-token)."
+    default: "buildkit-operator"
   tags:
     description: "Image tag(s), whitespace-separated (e.g. ghcr.io/org/app:sha)."
     required: true
   repo:
-    description: "Project identity = the cache key. Defaults to the GitHub repository."
+    description: "Project identity = the cache key. Defaults to the GitHub repository. IGNORED when buildd enforces OIDC (the verified repo claim is authoritative); used only on the legacy/admin path."
     default: ${{ github.repository }}
   name:
     description: "Optional monorepo component — gives each image its own daemon + cache."
@@ -70,6 +79,26 @@ runs:
   using: composite
   steps:
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+    # Mint a GitHub OIDC identity token for buildd /route auth — buildd verifies its signature and binds
+    # the build to ${{ github.repository }} server-side, so a leaked token can't impersonate another repo.
+    # Needs the caller job's permissions.id-token: write; degrades to the `token` input when absent.
+    - id: auth
+      shell: bash
+      env:
+        BKO_OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
+        BKO_TOKEN_INPUT: ${{ inputs.token }}
+      run: |
+        token=""
+        if [ -n "${BKO_OIDC_AUDIENCE:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${BKO_OIDC_AUDIENCE}" | jq -r '.value // empty')
+          [ -n "$token" ] && echo "buildkit-operator: using GitHub OIDC identity token (audience=${BKO_OIDC_AUDIENCE})"
+        fi
+        [ -z "$token" ] && token="${BKO_TOKEN_INPUT}"
+        if [ -n "$token" ]; then
+          echo "::add-mask::$token"
+          echo "BUILDKIT_OPERATOR_TOKEN=$token" >> "$GITHUB_ENV"
+        fi
     - id: build
       shell: bash
       env:
@@ -77,7 +106,8 @@ runs:
         BUILDKIT_OPERATOR_CA: ${{ inputs.ca }}
         BUILDKIT_OPERATOR_CERT: ${{ inputs.cert }}
         BUILDKIT_OPERATOR_KEY: ${{ inputs.key }}
-        BUILDKIT_OPERATOR_TOKEN: ${{ inputs.token }}
+        # BUILDKIT_OPERATOR_TOKEN is set by the auth step above (OIDC JWT or the token input).
+        BUILDKIT_OPERATOR_ADMIN_TOKEN: ${{ inputs.admin-token }}
         REPO: ${{ inputs.repo }}
         NAME: ${{ inputs.name }}
         ARCH: ${{ inputs.arch }}

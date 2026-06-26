@@ -64,9 +64,39 @@ securityContext:
   capabilities: { drop: [ALL] }
 ```
 
-It needs no volumes and no privileges — it only reads/writes CRDs and hands ConfigMap/Secret
+It mounts only the OIDC policy ConfigMap (when configured) and otherwise hands ConfigMap/Secret
 **names** to the daemon pods it renders. RBAC is scoped to its own CRDs plus the
 StatefulSet/Service/PVC/VolumeSnapshot/Lease verbs it actually uses.
+
+## Project identity is server-verified (OIDC)
+
+The cache identity of a build is its `repo` (and whether it is `untrusted`). If `/route` simply trusted
+those fields from the request body, any caller holding the `/route` credential could **claim another
+project's repo**, route to its canonical daemon, read/poison its warm + S3 cache, and run code where the
+shared S3 credentials live. A single global bearer token makes that a one-secret compromise.
+
+buildd closes this by binding identity to a **forge-signed OIDC token** (secure default, configured via
+`oidc.providers`). GitHub Actions and GitLab CI both mint these natively — the token is already in the
+job's environment, so there is **no extra runner egress**. On `/route` and `/prewarm` buildd:
+
+1. **verifies** the JWT signature against the issuer's JWKS (cached), plus audience + expiry;
+2. **overwrites** the request's `repo` with the verified claim (GitHub `repository`, GitLab
+   `project_path`, host-qualified + normalized to the *same* cache key as before) — the client can no
+   longer self-declare it, so a build can only ever reach **its own** project's daemon;
+3. **derives `untrusted`** server-side (a PR / unprotected-ref build is forced untrusted — it can only
+   ever *add* isolation, never drop it);
+4. optionally enforces a **repo allowlist** (`oidc.repoAllowlist`) — a verified-but-unlisted repo gets
+   `403`, a hard org gate on who may use the service at all.
+
+Adding a forge (e.g. **Forgejo**) is adding one `oidc.providers` entry — the verifier is provider-keyed.
+
+**Break-glass.** A distinct admin credential (`oidc.adminTokenSecret`, sent in the
+`X-Buildkit-Operator-Admin-Token` header) bypasses OIDC and trusts the request as-is — for the manual
+`build` CLI and in-cluster ops, held only by operators who already control the buildd Deployment (they
+need elevated rights to run Kata anyway). Disabling verification entirely is an explicit, audited
+`oidc.disable` (admin-only, since it reopens the self-declared-repo trust). When `oidc.providers` is
+empty, OIDC is off and `/route` falls back to the legacy bearer (`auth.tokenSecret`) or open in-cluster
+use — keep that only for fully in-cluster deployments.
 
 ## Where buildkit-operator is actually *more* secure than a shared daemon
 
@@ -85,9 +115,9 @@ isolation**, which a single shared `buildkitd` cannot offer:
 
 | Risk on a shared daemon | buildkit-operator |
 |---|---|
-| **Cross-project cache poisoning** — any project's build can write cache that another project reads. | Each `(project, arch)` gets its **own daemon and its own PVC**. There is no shared writable cache to poison across projects. |
+| **Cross-project cache poisoning** — any project's build can write cache that another project reads. | Each `(project, arch)` gets its **own daemon and its own PVC**, and `/route` binds the project identity to a **verified OIDC claim** (see above) — a caller cannot route to another project's daemon even with a valid credential. There is no shared writable cache to poison across projects. |
 | **Untrusted fork PRs** run with the same cache-write access as trusted builds. | `untrusted: true` routes to a `ForkKey` daemon: **ephemeral, seeded read-only from the project snapshot, with no write-back**. A malicious fork cannot poison the project's warm cache. The fork spec comes from the shared `DeriveChild(parent, snapshot, ForkChild, key)` policy — the *same* derivation the fan-out uses (`CloneChild`), so isolation behaviour can't silently diverge between the two paths. |
-| **Untrusted forks share the daemons' full internet egress.** | Two opt-in layers, applied to fork daemons *only* (canonical builds keep full speed): (1) `networkPolicy.forkEgressStrict` gives forks an **internet-less** egress — DNS + the explicit allowlist only, so base images come **only** through the in-cluster pull-through mirror and the build cannot exfiltrate to arbitrary hosts; (2) `sandbox.runtimeClass` runs forks under a **sandboxed runtime** (Sysbox/gVisor/Kata). Both target untrusted pods via the `untrusted=true` label the operator stamps on fork daemons. |
+| **Untrusted forks share the daemons' full internet egress.** | Two layers, applied to fork daemons *only* (canonical builds keep full speed): (1) `networkPolicy.forkEgressStrict` (**default on**) gives forks an **internet-less** egress — DNS (restricted to the `kube-dns` pods, not every namespace) + the explicit allowlist only, so base images come **only** through the in-cluster pull-through mirror and the build cannot exfiltrate to arbitrary hosts; (2) `sandbox.runtimeClass` runs forks under a **sandboxed runtime** (Sysbox/gVisor/Kata). Both target untrusted pods via the `untrusted=true` label the operator stamps on fork daemons. |
 | **Noisy-neighbour / contention** — one heavy build starves others sharing the daemon. | Dedicated daemon per project; no sharing of CPU/store with unrelated builds. |
 | **mTLS endpoint is a single shared trust domain.** | Per-daemon Service; the daemon cert can be scoped, and fork daemons are separate endpoints. |
 
@@ -103,10 +133,18 @@ isolation**, which a single shared `buildkitd` cannot offer:
 - **Public exposure is two authenticated LBs.** Off-cluster CI reaches every daemon through a
   **single** SNI gateway LoadBalancer (not one LB per daemon); daemons stay `ClusterIP` and mTLS is
   end-to-end (the gateway terminates no TLS), so a valid **client cert** is required to build. The
-  separate `/route` API LoadBalancer is **bearer-token** gated (`auth.tokenSecret`, constant-time
-  compared) — mandatory once it is internet-facing, since `/route` provisions daemons. External
-  surface is fixed and small regardless of project count; keep both LBs off (in-cluster runners only)
-  when you don't need internet-facing builds.
+  gateway caps pre-auth connections (`gateway.maxConns`) so an unauthenticated flood can't exhaust it.
+  The separate `/route` API is **identity-verified** (OIDC, above), with the legacy bearer / admin token
+  as the in-cluster fallback. Prefer the **TLS Ingress** for public `/route` access — the raw L4
+  `service.type: LoadBalancer` serves plain HTTP, so the chart refuses it unless you set **both**
+  `service.loadBalancerSourceRanges` (an IP allowlist) **and** `auth.tokenSecret`. External surface is
+  fixed and small regardless of project count; keep both off (in-cluster runners only) when you don't
+  need internet-facing builds.
+- **Retained cache PVCs are GC'd when their project disappears.** A project's cache PVC is retained
+  across scale-to-zero (so the warm cache survives), which means it is *not* owner-ref-collected when its
+  BuildProject is deleted. A leader-only sweeper reclaims any cache PVC with no live BuildProject (fork
+  PVCs also auto-delete via the StatefulSet retention policy), so an externally-deleted project or a
+  crash mid-reap can't leak storage.
 - **The live exemption is platform state.** The Kyverno exemption must be tracked in GitOps; an
   undocumented live edit is config drift.
 - **S3 cold-cache credentials live on the daemon as env vars.** When `s3.credsSecret` is set, the AWS

@@ -33,9 +33,16 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
             except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10]
-    # Cluster DNS.
+    # Cluster DNS — restricted to the CoreDNS/kube-dns pods in kube-system (NOT every namespace, so a
+    # build RUN step cannot use UDP/TCP 53 to reach arbitrary in-cluster pods). namespaceSelector AND
+    # podSelector in one peer means "kube-dns pods in kube-system".
     - to:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
@@ -65,9 +72,16 @@ spec:
       {{ $untrusted }}: "true"
   policyTypes: [Egress]
   egress:
-    # Cluster DNS.
+    # Cluster DNS — restricted to the CoreDNS/kube-dns pods in kube-system (NOT every namespace, so a
+    # build RUN step cannot use UDP/TCP 53 to reach arbitrary in-cluster pods). namespaceSelector AND
+    # podSelector in one peer means "kube-dns pods in kube-system".
     - to:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }

@@ -1,0 +1,16 @@
+{{- if .Values.oidc.providers }}
+# OIDC identity policy for the /route API, mounted into buildd as --oidc-config. Secure-by-default: with
+# providers set, buildd REQUIRES a forge-signed token and binds the verified repo claim (the client can
+# no longer self-declare its repo). Editing this ConfigMap (or oidc.disable) is an admin-only operation.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-oidc
+  namespace: {{ include "buildkit-operator.operatorNamespace" . }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildd
+data:
+  oidc.yaml: |
+    {{- dict "providers" .Values.oidc.providers "repoAllowlist" (.Values.oidc.repoAllowlist | default list) "disable" .Values.oidc.disable | toYaml | nindent 4 }}
+{{- end }}

@@ -15,6 +15,7 @@ import (
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/builder"
 	"github.com/socialgouv/buildkit-operator/internal/controller"
+	"github.com/socialgouv/buildkit-operator/internal/identity"
 	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -64,9 +65,18 @@ func main() {
 	healthPort := flag.Int("health-port", 8080, "companion health port")
 	flag.DurationVar(&routeWait, "route-wait", 180*time.Second, "max wait for a daemon to become Ready on /route")
 	leaderElect := flag.Bool("leader-elect", false, "enable leader election for HA (run >1 replica; only the leader reconciles)")
-	// Bearer-token auth for the /route API. Sourced from an env var (not a flag default visible in the
-	// pod spec / process list) so it can come from a mounted Secret. Empty = no auth (in-cluster only).
+	// OIDC identity verification (secure default): when providers are configured, /route + /prewarm
+	// require a forge-signed token and the verified repo claim REPLACES the client's self-declared repo
+	// (untrusted is derived server-side). Config comes from a mounted ConfigMap file (--oidc-config) and/or
+	// BUILDKIT_OPERATOR_OIDC_* env — both admin-only surfaces, so relaxing/disabling it needs Deployment
+	// access (the operator already holds that to run Kata). See internal/identity.
+	oidcConfigPath := flag.String("oidc-config", "", "path to a mounted OIDC config file (ConfigMap, YAML/JSON: providers, repoAllowlist, disable). Overlaid by BUILDKIT_OPERATOR_OIDC_* env")
+	// Legacy bearer-token auth for the /route API, used ONLY when OIDC is off. Sourced from an env var
+	// (not a flag default visible in the pod spec / process list) so it can come from a mounted Secret.
 	authToken := os.Getenv("BUILDKIT_OPERATOR_AUTH_TOKEN")
+	// Break-glass admin token (distinct header X-Buildkit-Operator-Admin-Token): bypasses OIDC and trusts
+	// the request's repo/untrusted — for the manual CLI / in-cluster ops. Env-sourced (mounted Secret).
+	adminToken := os.Getenv("BUILDKIT_OPERATOR_ADMIN_TOKEN")
 	maxBuildSec := flag.Int("max-build-seconds", 7200, "safety net: inflight builds older than this stop pinning a daemon warm (a missed /complete won't leak a hot daemon forever)")
 	// Rate limit for the routing API: a token bucket shared across /route, /prewarm and /complete that
 	// caps how fast a single caller (or a compromised token) can churn BuildProjects / attaches. 0 = off.
@@ -88,6 +98,22 @@ func main() {
 	if err := cfg.SchedulingFromJSON(*daemonScheduling); err != nil {
 		log.Error(err, "invalid --daemon-scheduling")
 		panic(err)
+	}
+
+	oidcCfg, err := identity.LoadConfig(*oidcConfigPath)
+	if err != nil {
+		log.Error(err, "invalid OIDC config")
+		panic(err)
+	}
+	verifier, err := identity.NewVerifier(oidcCfg)
+	if err != nil {
+		log.Error(err, "invalid OIDC providers")
+		panic(err)
+	}
+	if verifier != nil {
+		log.Info("OIDC identity verification ENABLED", "providers", len(oidcCfg.Providers), "allowlistSize", len(oidcCfg.RepoAllowlist))
+	} else {
+		log.Info("OIDC identity verification OFF — /route trusts the caller's repo (bearer/admin token auth only); enable it via --oidc-config for off-cluster CI")
 	}
 
 	restCfg, err := crconfig.GetConfigWithContext(kubeContext)
@@ -133,6 +159,13 @@ func main() {
 		panic(err)
 	}
 
+	// Leader-only backstop GC for orphaned cache PVCs (a project's retained PVC outlives an
+	// externally-deleted BuildProject or a crash mid-reap; this reclaims them).
+	if err := mgr.Add(&controller.PVCSweeper{Client: mgr.GetClient(), Namespace: cfg.Namespace}); err != nil {
+		log.Error(err, "unable to add pvc sweeper")
+		panic(err)
+	}
+
 	var limiter *rate.Limiter
 	if *apiRateLimit > 0 {
 		limiter = rate.NewLimiter(rate.Limit(*apiRateLimit), *apiRateBurst)
@@ -141,7 +174,8 @@ func main() {
 		c: mgr.GetClient(), cfg: cfg, addr: apiListen, wait: routeWait,
 		coldStartSem: make(chan struct{}, *maxCold), gatewayHost: gatewayHost, gatewayPort: int32(*gatewayPort),
 		s3Bucket: *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
-		authToken: authToken, limiter: limiter, log: ctrl.Log.WithName("route"),
+		verifier: verifier, authToken: authToken, adminToken: adminToken,
+		limiter: limiter, log: ctrl.Log.WithName("route"),
 	}); err != nil {
 		log.Error(err, "unable to add route server")
 		panic(err)

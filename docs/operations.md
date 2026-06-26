@@ -85,23 +85,39 @@ in [security.md](security.md#admission-policy-kyverno--restricted-pss) and
 
 ## Expose publicly (for external CI runners)
 
+On a public `/route`, prefer **OIDC identity verification**: buildd verifies the forge-signed id_token
+the CI client mints natively (GitHub Action / GitLab component — no shared secret to distribute), then
+**overwrites** the request's `repo` with the verified claim (GitHub `repository`, GitLab `project_path`)
+and derives `untrusted` server-side, so a caller cannot impersonate another repo or poison its cache.
+
 ```bash
-# the /route bearer token (REQUIRED once /route is on a public LB) — no trailing newline, so the
-# client and the Secret compare byte-for-byte (a stray "\n" is a silent 401).
-kubectl -n buildkit-operator create secret generic buildkit-operator-auth \
+# break-glass admin token (bypasses OIDC, trusts the request's repo/untrusted) — for the manual
+# `build` CLI and in-cluster ops. No trailing newline (a stray "\n" compares unequal → silent 401).
+kubectl -n buildkit-operator create secret generic buildkit-operator-admin \
   --from-literal=token="$(openssl rand -hex 32 | tr -d '\n')"
 
 helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator \
   --set service.type=LoadBalancer \                 # buildd /route reachable externally
   --set gateway.host=builds.example.com \           # shared SNI gateway: one LB fronts every daemon
-  --set auth.tokenSecret=buildkit-operator-auth      # bearer-token auth on /route (Secret key: token)
+  --set oidc.providers[0].type=github \             # verify GitHub OIDC id_tokens (also: type=gitlab)
+  --set oidc.providers[1].type=gitlab \
+  --set 'oidc.repoAllowlist[0]=github.com/socialgouv/*' \   # optional hard org gate (unlisted → 403)
+  --set oidc.adminTokenSecret=buildkit-operator-admin       # break-glass header X-Buildkit-Operator-Admin-Token
 ```
 
 This renders the gateway Deployment + its single LoadBalancer Service, and makes buildd return
 `tcp://<daemon>.builds.example.com:1234` from `/route`. Daemons stay `ClusterIP`. Then:
 
-1. **Bearer token** — hand the `token` value to CI (Action input `token` / env
-   `BUILDKIT_OPERATOR_TOKEN`). Without auth on a public `/route`, anyone can spin up daemons.
+1. **OIDC on `/route`** — `oidc.providers` is the auth: each CI client mints its own id_token (the
+   Action needs `permissions: id-token: write`; the GitLab component declares an `id_tokens:` entry),
+   buildd checks signature against the issuer JWKS + audience + expiry, and the verified claim sets
+   `repo`/`untrusted`. Add `oidc.repoAllowlist` (globs like `github.com/socialgouv/*`) for a hard org
+   gate — a verified-but-unlisted repo gets HTTP 403. The `oidc.adminTokenSecret` token bypasses OIDC
+   for break-glass/CLI (`X-Buildkit-Operator-Admin-Token`); `oidc.disable: true` is the admin-only
+   switch to turn verification off. **Legacy fallback**: with `oidc.providers` empty, `/route` falls
+   back to the shared `auth.tokenSecret` bearer (env `BUILDKIT_OPERATOR_TOKEN`) or open in-cluster use —
+   keep that only for fully in-cluster deployments. Without any auth on a public `/route`, anyone can
+   spin up daemons and poison caches.
 2. **Daemon cert SAN** — regenerate the daemon cert covering `*.builds.example.com` and re-apply the
    Secret, or daemons fail mTLS validation from outside:
    ```bash
@@ -194,7 +210,7 @@ kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd -f   # buildd 
 | `/route` returns **504** to CI | The daemon didn't become Ready within `--route-wait` (cold start slower than the client/route timeout), or cold-start backpressure (`--max-cold-starts`) queued it. | Raise the client route timeout (Action `route-wait`) and/or `--max-cold-starts`; pre-warm on push (`/prewarm`) to hide attach latency. Check `buildkit_operator_coldstarts_inflight` near the cap. |
 | `/route` or `/prewarm` returns **429** | The routing-API rate limit tripped (`--api-rate-limit` / `--api-rate-burst`). A genuine CI burst or a misbehaving/compromised caller. | If legitimate, raise `--api-rate-limit`. If not, the audit log identifies the caller (below). Set `--api-rate-limit=0` to disable (not recommended on a public LB). |
 | Off-cluster builds fail TLS (cert error) right after enabling the gateway | The daemon cert has no `*.<gateway.host>` SAN. buildd logs a **`WARNING: daemon cert has no SAN covering the gateway domain`** at startup when `gateway.host` is set. | Regenerate the cert with the SAN and re-apply (see [Expose publicly](#expose-publicly-for-external-ci-runners) step 2), then `rollout restart` the daemons. Confirm the boot warning is gone. |
-| Want to know **who** built / called `/route` | Each `/route` logs the resolved key, repo, `untrusted` flag and caller IP (`X-Forwarded-For` first hop behind the LB, else peer); auth failures log as `unauthorized`. The bearer token is never logged. | `kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd | grep -E '"route"|unauthorized'`. |
+| Want to know **who** built / called `/route` | Each `/route` logs the resolved key, repo (the OIDC-verified claim when verification is on), `untrusted` flag and caller IP (`X-Forwarded-For` first hop behind the LB, else peer); OIDC/allowlist rejections log as `denied`, other auth failures as `unauthorized`, and break-glass calls as `admin-token used`. No token (OIDC id_token, bearer, or admin) is ever logged. | `kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd | grep -E '"route"|denied|unauthorized|admin-token used'`. |
 
 ## S3 cold cache (optional, external) — a buildd policy
 

@@ -22,9 +22,10 @@ const maxRouteRequestBytes int64 = 8 << 10
 // error itself. Returns ok=false when the caller should return immediately — the shared preamble for
 // the POST handlers.
 func (s *routeServer) decodeReq(w http.ResponseWriter, r *http.Request) (router.RouteRequest, bool) {
-	if !s.authorized(r) {
-		s.log.Info("unauthorized", "path", r.URL.Path, "remote", clientIP(r))
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	id, status, err := s.identify(r)
+	if err != nil {
+		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "err", err.Error())
+		http.Error(w, http.StatusText(status), status)
 		return router.RouteRequest{}, false
 	}
 	if !s.allow(w) {
@@ -38,6 +39,13 @@ func (s *routeServer) decodeReq(w http.ResponseWriter, r *http.Request) (router.
 	if err := decodeJSON(w, r, &req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return router.RouteRequest{}, false
+	}
+	// OIDC path: the verified token is the SOLE source of identity — overwrite the client's self-declared
+	// repo with the forge-signed one, and only ever ADD untrusted isolation (a fork/PR build can't claim
+	// trusted). This is what kills cross-repo cache poisoning. Validation runs on the final (bound) repo.
+	if id.override {
+		req.Repo = id.repo
+		req.Untrusted = req.Untrusted || id.untrusted
 	}
 	if err := validateRouteRequest(req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
@@ -201,9 +209,11 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 // bounded by the reconciler's --max-build-seconds safety net, which stops stale inflight from pinning
 // a daemon warm forever.
 func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
-	if !s.authorized(r) {
-		s.log.Info("unauthorized", "path", r.URL.Path, "remote", clientIP(r))
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	// /complete only decrements an inflight counter by key; it needs an authenticated caller but not repo
+	// binding (the key was already returned by a verified /route), so the identity override is ignored.
+	if _, status, err := s.identify(r); err != nil {
+		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "err", err.Error())
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
 	if !s.allow(w) {

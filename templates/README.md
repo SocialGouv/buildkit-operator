@@ -11,14 +11,18 @@ counterpart to the [GitHub Action](../action.yml). The build runs on the project
 
 ## 1. Set the CI/CD variables (once, at the group level)
 
-The mTLS material + bearer token are **secrets** — pass them as **masked/File** CI/CD variables, not
-as component inputs (inputs are visible in the config). Mirror of the GitHub org secrets:
+The mTLS material is **secret** — pass it as **masked/File** CI/CD variables, not as component inputs
+(inputs are visible in the config). The `/route` credential, by contrast, is no longer a shared token:
+the component auto-mints a GitLab OIDC id_token (`BUILDKIT_OPERATOR_ID_TOKEN`, via an `id_tokens:` entry
+with audience from the `oidc_audience` input, default `buildkit-operator`) and sends it as the `/route`
+credential — nothing to distribute. buildd verifies the forge-signed JWT and derives `repo`/`untrusted`
+from the verified claim. Mirror of the GitHub org secrets:
 
 | Variable | Value |
 |---|---|
 | `BUILDKIT_OPERATOR_BUILDD_URL` | buildd `/route` API URL (e.g. `http://<lb-ip>:8080`) |
 | `BUILDKIT_OPERATOR_CA` / `_CERT` / `_KEY` | client mTLS CA / cert / key (PEM) |
-| `BUILDKIT_OPERATOR_TOKEN` | bearer token for `/route` (when buildd is exposed with auth) |
+| `BUILDKIT_OPERATOR_ADMIN_TOKEN` | *(optional)* break-glass admin token (sent as `X-Buildkit-Operator-Admin-Token`) — bypasses OIDC and trusts the request's `repo`/`untrusted`; for non-OIDC / in-cluster ops. A legacy shared `BUILDKIT_OPERATOR_TOKEN` bearer is still honoured when buildd has no OIDC providers configured. |
 | `BUILDKIT_OPERATOR_GATEWAY_IP` | *(optional)* gateway LoadBalancer IP — maps the SNI host when there is no wildcard DNS yet |
 | `BUILDKIT_OPERATOR_HTTP_PROXY` | *(optional)* `host:port` of an HTTP CONNECT proxy — for **egress-proxy-only** runners (see below) |
 | `BUILDKIT_OPERATOR_TUNNEL` | *(optional)* `1` to tunnel the daemon connection through the proxy |
@@ -57,8 +61,10 @@ That generates a `buildkit-operator-build` job in the `build` stage.
 `tags` is the only required input. Everything else has a sensible default (see
 [`build.yml`](build.yml) `spec.inputs`):
 
-`job_name`, `stage`, `image`, `repo` (default `$CI_PROJECT_URL` = the cache key), `name` (monorepo
-component), `arch` (`amd64`/`arm64`), `context`, `dockerfile`, `target`, `untrusted`, `push`,
+`job_name`, `stage`, `image`, `repo` (default `$CI_PROJECT_URL` — buildd overwrites it with the verified
+OIDC `project_path` claim, so it is advisory under OIDC), `oidc_audience` (default `buildkit-operator` —
+the audience of the auto-minted `/route` id_token; must match a buildd `oidc.providers` entry), `name`
+(monorepo component), `arch` (`amd64`/`arm64`), `context`, `dockerfile`, `target`, `untrusted`, `push`,
 `provenance`, `sbom`, `sign`, `ref` (the exact buildkit-operator tag/commit the build script is fetched
 from — keep it pinned and in sync with the include).
 
@@ -102,11 +108,15 @@ component needed:
 prewarm:
   stage: .pre
   image: curlimages/curl
+  id_tokens:
+    BUILDKIT_OPERATOR_ID_TOKEN: { aud: buildkit-operator }
   script:
+    # the token is the OIDC id_token (buildd derives repo from its verified claim); use
+    # `-H "X-Buildkit-Operator-Admin-Token: $BUILDKIT_OPERATOR_ADMIN_TOKEN"` for break-glass instead.
     - >
       curl -fsS -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/prewarm"
-      -H "authorization: Bearer $BUILDKIT_OPERATOR_TOKEN" -H 'content-type: application/json'
-      -d "{\"repo\":\"$CI_PROJECT_URL\",\"arch\":\"amd64\"}"
+      -H "authorization: Bearer $BUILDKIT_OPERATOR_ID_TOKEN" -H 'content-type: application/json'
+      -d "{\"arch\":\"amd64\"}"
 ```
 
 ## Behind an egress proxy (e.g. the SocialGouv PIC)
@@ -118,8 +128,10 @@ an arbitrary IP:port. To use buildkit-operator from there:
    - gateway on 443: `--set gateway.externalPort=443` (it still dials daemons on the internal mTLS
      port); point wildcard DNS `*.<gateway.host>` at the gateway LB.
    - buildd `/route` behind a TLS Ingress on 443: `--set ingress.enabled=true --set
-     ingress.host=buildd.<domain> --set auth.tokenSecret=<secret>` (buildd speaks HTTP; the Ingress
-     terminates TLS). Use a public hostname the proxy will `CONNECT` to.
+     ingress.host=buildd.<domain>` plus auth on `/route` — recommended `--set oidc.providers[0].type=gitlab`
+     (verifies the auto-minted id_token); the legacy `--set auth.tokenSecret=<secret>` bearer is the
+     fallback for OIDC-less setups (buildd speaks HTTP; the Ingress terminates TLS). Use a public
+     hostname the proxy will `CONNECT` to.
 2. **Set the proxy CI/CD variables** (in addition to the mTLS ones):
    - `BUILDKIT_OPERATOR_BUILDD_URL` = `https://buildd.<domain>` (the Ingress, 443)
    - `BUILDKIT_OPERATOR_HTTP_PROXY` = `host:port` of the CONNECT proxy

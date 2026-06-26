@@ -1,6 +1,9 @@
 {{- if eq .Values.service.type "LoadBalancer" }}
-  {{- if and (not .Values.auth.tokenSecret) (not .Values.service.loadBalancerSourceRanges) }}
-    {{- fail "service.type=LoadBalancer exposes the buildd /route API off-cluster: set auth.tokenSecret (bearer token) or service.loadBalancerSourceRanges (allowlisted IPs) — otherwise anyone can spin up build daemons." }}
+  {{- if not .Values.service.loadBalancerSourceRanges }}
+    {{- fail "service.type=LoadBalancer exposes the buildd /route API over PLAIN HTTP off-cluster (this L4 LB does NOT terminate TLS): a bearer token would travel in cleartext and anyone reachable could spin up build daemons. Set service.loadBalancerSourceRanges to an IP allowlist. For PUBLIC off-cluster access prefer the TLS Ingress (ingress.enabled) over a raw LoadBalancer." }}
+  {{- end }}
+  {{- if not .Values.auth.tokenSecret }}
+    {{- fail "service.type=LoadBalancer without auth.tokenSecret: the /route API is unauthenticated and anyone reaching the LB can spin up build daemons. Set auth.tokenSecret (and prefer ingress.enabled for TLS termination)." }}
   {{- end }}
 {{- end }}
 apiVersion: v1

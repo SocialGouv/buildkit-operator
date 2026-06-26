@@ -45,6 +45,11 @@ spec:
             - --domain={{ prepend .Values.gateway.extraDomains .Values.gateway.host | join "," }}
             - --namespace={{ include "buildkit-operator.buildsNamespace" . }}
             - --daemon-port={{ .Values.buildkit.port }} # internal: the gateway dials daemons on the mTLS port
+            {{- with .Values.gateway.maxConns }}
+            # Cap concurrent TCP connections BEFORE mTLS auth, so an unauthenticated flood can't exhaust
+            # the public-facing gateway's resources. 0 = unlimited.
+            - --max-conns={{ . }}
+            {{- end }}
           ports:
             - name: sni
               containerPort: {{ .Values.buildkit.port }}

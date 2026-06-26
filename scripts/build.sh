@@ -17,6 +17,10 @@
 #   TAGS                           image tag(s), whitespace-separated (required)
 #   PUSH                           true | false                (default false)
 set -eu
+# Harden file perms for everything this script writes to the temp dir below — most importantly the
+# client mTLS PRIVATE KEY. Without this, `printf > file` honours the default umask (often 022) and the
+# key lands world-readable; 077 makes new files 0600 so a co-tenant process on the runner can't read it.
+umask 077
 
 : "${BUILDKIT_OPERATOR_BUILDD_URL:?set BUILDKIT_OPERATOR_BUILDD_URL}"
 REPO="${REPO:-$(git config --get remote.origin.url 2>/dev/null || basename "$PWD")}"
@@ -26,16 +30,25 @@ TARGET="${TARGET:-}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
 case "${UNTRUSTED:-false}" in true | 1 | yes) UNTRUSTED=true ;; *) UNTRUSTED=false ;; esac
 
-# api POSTs $2 (JSON) to the buildd path $1, adding the bearer token when one is configured. Bounded by
-# --max-time so a stalled proxy can't hang a non-blocking call (/prewarm, /complete) indefinitely.
-api() {
-  if [ -n "${BUILDKIT_OPERATOR_TOKEN:-}" ]; then
-    curl -fsS --max-time "${BUILDKIT_OPERATOR_API_TIMEOUT:-60}" -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" \
-      -H 'content-type: application/json' -H "authorization: Bearer $BUILDKIT_OPERATOR_TOKEN" -d "$2"
+# curl_auth wraps curl and attaches the routing-API credential: a break-glass ADMIN token in its own
+# header takes precedence (ops/manual), else the BUILDKIT_OPERATOR_TOKEN — an OIDC identity JWT (the
+# normal CI path; buildd verifies it and binds the repo) or a legacy bearer — in Authorization. With
+# neither, the call is unauthenticated (in-cluster). One source of truth for all three API calls.
+curl_auth() {
+  if [ -n "${BUILDKIT_OPERATOR_ADMIN_TOKEN:-}" ]; then
+    curl "$@" -H "X-Buildkit-Operator-Admin-Token: $BUILDKIT_OPERATOR_ADMIN_TOKEN"
+  elif [ -n "${BUILDKIT_OPERATOR_TOKEN:-}" ]; then
+    curl "$@" -H "authorization: Bearer $BUILDKIT_OPERATOR_TOKEN"
   else
-    curl -fsS --max-time "${BUILDKIT_OPERATOR_API_TIMEOUT:-60}" -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" \
-      -H 'content-type: application/json' -d "$2"
+    curl "$@"
   fi
+}
+
+# api POSTs $2 (JSON) to the buildd path $1. Bounded by --max-time so a stalled proxy can't hang a
+# non-blocking call (/prewarm, /complete) indefinitely.
+api() {
+  curl_auth -fsS --max-time "${BUILDKIT_OPERATOR_API_TIMEOUT:-60}" -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" \
+    -H 'content-type: application/json' -d "$2"
 }
 
 # Client mTLS material → a private temp dir (buildx reads the files at create time). Accepts either raw
@@ -52,6 +65,7 @@ wrcert() { # $1 dest file, $2 value (PEM or base64)
 wrcert "$certs/ca.pem"   "${BUILDKIT_OPERATOR_CA:?}"
 wrcert "$certs/cert.pem" "${BUILDKIT_OPERATOR_CERT:?}"
 wrcert "$certs/key.pem"  "${BUILDKIT_OPERATOR_KEY:?}"
+chmod 600 "$certs/key.pem" # belt-and-suspenders: the private key is never group/world readable
 
 # 1. Route: ask buildd for this project's daemon endpoint (+ optional cold-cache reference). target is
 # part of the cache identity, so it MUST be sent (else two targets of one repo collide on one daemon).
@@ -66,14 +80,8 @@ route_payload="$(jq -nc \
 # route_call POSTs /route, writing the body to $certs/route.json and printing the HTTP status. $1 caps
 # the attempt (--max-time, empty = no cap). buildd's /route BLOCKS server-side until the daemon is warm.
 route_call() {
-  if [ -n "${BUILDKIT_OPERATOR_TOKEN:-}" ]; then
-    curl -sS -o "$certs/route.json" -w '%{http_code}' ${1:+--max-time "$1"} \
-      -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/route" -H 'content-type: application/json' \
-      -H "authorization: Bearer $BUILDKIT_OPERATOR_TOKEN" -d "$route_payload"
-  else
-    curl -sS -o "$certs/route.json" -w '%{http_code}' ${1:+--max-time "$1"} \
-      -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/route" -H 'content-type: application/json' -d "$route_payload"
-  fi
+  curl_auth -sS -o "$certs/route.json" -w '%{http_code}' ${1:+--max-time "$1"} \
+    -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL/route" -H 'content-type: application/json' -d "$route_payload"
 }
 
 # Cold-start without any long-blocking call: when tunnelling, warm the daemon via /prewarm — which

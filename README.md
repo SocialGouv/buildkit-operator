@@ -25,7 +25,7 @@ shared pool), a **cold daemon rehydrates ≈ 9× faster** from S3 (4.5 s vs 41.8
 - 📈 **Prometheus observability** — routes, route latency, cold-starts in flight, scale events, snapshots. [operations →](docs/operations.md#observe)
 - 🔌 **Zero-config CI** — drop in the [GitHub Action](#quick-start) and you are building; any CI that runs `docker buildx` works the same. [CI integration →](docs/ci-integration.md)
 - 🔏 **Supply-chain attestations** — opt into SLSA provenance + SBOM + **cosign** keyless signing; the *daemon* generates them, so it is one flag each on the CI side, verifiable against the job's OIDC identity. [CI integration →](docs/ci-integration.md#supply-chain-attestations-slsa-provenance-sbom-cosign)
-- 🔑 **Authenticated exposure** — the public `/route` API is bearer-token gated and the build path is mTLS end-to-end, so an internet-exposed control plane stays locked down. [CI integration →](docs/ci-integration.md#bearer-token-auth-for-route)
+- 🔑 **Verified identity exposure** — the public `/route` API binds each build to a **forge-signed OIDC identity** (GitHub/GitLab; Forgejo-ready), so a caller can only ever build *its own* repo — no self-declared cache poisoning — and the build path is mTLS end-to-end. [CI integration →](docs/ci-integration.md#route-identity-oidc-recommended-vs-beareradmin)
 - 🔒 **Vanilla rootless buildkit** — no fork of BuildKit, containerd, or the snapshotter; the daemon runs non-root and unprivileged. [security →](docs/security.md)
 - 🧱 **HA control plane** — `buildd` runs 2 replicas with leader election; routing is served by every replica. [architecture →](docs/architecture.md#control-plane-ha)
 
@@ -178,8 +178,9 @@ Use the GitHub Action — route, mTLS, warm cache, and the S3 cold cache are all
 The Action defaults `repo` to the GitHub repository (your cache key); set `name` for a monorepo
 component, `arch`, `file`, `target`, or `context` as needed. The cold cache needs **no** client
 config — it is a buildd-side policy, returned by `/route` and applied automatically. When buildd is
-exposed off-cluster, add `token` (bearer auth); add `provenance: mode=max` / `sbom: "true"` /
-`sign: "true"` for SLSA provenance + SBOM + cosign keyless signing. Full example:
+exposed off-cluster, grant the job `permissions: id-token: write` — the Action mints an **OIDC identity
+token** buildd verifies and binds to your repo (no shared bearer to leak); add `provenance: mode=max` /
+`sbom: "true"` / `sign: "true"` for SLSA provenance + SBOM + cosign keyless signing. Full example:
 [ci-integration.md](docs/ci-integration.md).
 
 **Any CI works.** The Action wraps `scripts/build.sh`, a CI-agnostic POSIX script (route → `buildx

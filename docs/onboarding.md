@@ -5,8 +5,11 @@ the org level**, so onboarding a new repo is just dropping in the workflow below
 
 ## 1. Org-level credentials (once per org)
 
-Set the four secrets + two vars on the `SocialGouv` org. `--visibility selected --repos <r1,r2,…>`
-opts repos in one at a time (tighter); use `--visibility all` to let every org repo build.
+Set the three mTLS secrets + two vars on the `SocialGouv` org. The `/route` credential is **not** a
+shared secret: the Action mints a GitHub OIDC id_token natively (the workflow grants
+`permissions: id-token: write`), buildd verifies it and derives `repo`/`untrusted` from the verified
+claim — so there is no `BUILDKIT_OPERATOR_TOKEN` to distribute. `--visibility selected --repos
+<r1,r2,…>` opts repos in one at a time (tighter); use `--visibility all` to let every org repo build.
 
 > Needs the `admin:org` scope: `gh auth refresh -h github.com -s admin:org` first.
 
@@ -17,10 +20,14 @@ C=deploy/cert/.certs/client                        # the mTLS client material
 gh secret   set BUILDKIT_OPERATOR_CA    --org $ORG --visibility selected --repos $REPOS < $C/ca.pem
 gh secret   set BUILDKIT_OPERATOR_CERT  --org $ORG --visibility selected --repos $REPOS < $C/cert.pem
 gh secret   set BUILDKIT_OPERATOR_KEY   --org $ORG --visibility selected --repos $REPOS < $C/key.pem
-gh secret   set BUILDKIT_OPERATOR_TOKEN --org $ORG --visibility selected --repos $REPOS < <token-file>
 gh variable set BUILDKIT_OPERATOR_BUILDD_URL --org $ORG --visibility selected --repos $REPOS --body "http://135.125.57.125:8080"
 gh variable set BUILDKIT_OPERATOR_GATEWAY_IP  --org $ORG --visibility selected --repos $REPOS --body "57.128.55.172"
 ```
+
+> Non-OIDC buildd (no `oidc.providers`)? Then a shared bearer is still possible — set
+> `BUILDKIT_OPERATOR_TOKEN` (legacy) or `BUILDKIT_OPERATOR_ADMIN_TOKEN` (break-glass admin) as an org
+> secret and pass it via the Action's `token` / `admin-token` input. OIDC is preferred — no secret to
+> rotate or leak.
 
 To onboard another repo later, just add it to `--repos` on each (re-running `gh secret set` is fine), or
 flip to `--visibility all`.
@@ -39,7 +46,7 @@ on:
 permissions:
   contents: read
   packages: write   # push to GHCR
-  id-token: write   # cosign keyless via OIDC
+  id-token: write   # mints the OIDC id_token: cosign keyless AND the /route credential
 env:
   IMAGE: ghcr.io/socialgouv/<repo>
 jobs:
@@ -60,7 +67,9 @@ jobs:
           ca:    ${{ secrets.BUILDKIT_OPERATOR_CA }}
           cert:  ${{ secrets.BUILDKIT_OPERATOR_CERT }}
           key:   ${{ secrets.BUILDKIT_OPERATOR_KEY }}
-          token: ${{ secrets.BUILDKIT_OPERATOR_TOKEN }}
+          # /route auth is the auto-minted OIDC id_token (id-token: write above; default audience
+          # buildkit-operator, override with oidc-audience). No shared token. For a non-OIDC buildd,
+          # pass token: ${{ secrets.BUILDKIT_OPERATOR_TOKEN }} or admin-token: instead.
           tags: ${{ env.IMAGE }}:${{ github.sha }}
           push: true
           provenance: mode=max   # SLSA provenance + …

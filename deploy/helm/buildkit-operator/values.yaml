@@ -92,11 +92,12 @@ s3:
 networkPolicy:
   enabled: true
   extraEgress: []
-  # Opt-in: give UNTRUSTED fork daemons a stricter, internet-less egress (DNS + extraEgress only), so
-  # base images come ONLY through the in-cluster pull-through mirror and untrusted builds cannot
-  # exfiltrate. Trusted (canonical) daemons keep full internet. Only meaningful with the mirror (and
-  # S3, if used) listed under extraEgress — otherwise forks can't pull anything.
-  forkEgressStrict: false
+  # Secure default: UNTRUSTED fork daemons get a stricter, internet-less egress (DNS + extraEgress only),
+  # so base images come ONLY through the in-cluster pull-through mirror and untrusted builds cannot
+  # exfiltrate to arbitrary hosts. Trusted (canonical) daemons keep full internet. This means a fork can
+  # only pull what you allowlist under extraEgress (the mirror, and S3 if used) — without a mirror, forks
+  # are DNS-only BY DESIGN. Set false to let untrusted forks reach the open internet (NOT recommended).
+  forkEgressStrict: true
 
 # Pull-through cache for base-image (FROM) pulls: LAN-speed, immune to Docker Hub rate limits,
 # resilient to upstream outages. `enabled` bundles a registry:2 proxy; `host` is the mirror the
@@ -185,6 +186,11 @@ gateway:
     # Empty = pin to the chart appVersion (immutable). The gateway is the public-facing LB front; never
     # ship it on a floating tag.
     tag: ""
+  # Cap concurrent connections the public-facing gateway accepts (per replica), BEFORE mTLS auth — so an
+  # unauthenticated TCP flood can't exhaust gateway resources. Each build holds one long-lived
+  # connection, so size this above the expected concurrent-build peak (with 2 replicas the cluster cap is
+  # 2×). 0 = unlimited (NOT recommended on a public LB).
+  maxConns: 1024
   service:
     type: LoadBalancer
     # A build holds ONE long-lived mTLS stream through this LB. On OVH/OpenStack LBs the default
@@ -202,9 +208,10 @@ gateway:
 service:
   port: 8080
   type: ClusterIP
-  # SAFETY: exposing /route off-cluster (type: LoadBalancer) without auth lets anyone spin up daemons.
-  # The chart REFUSES to render a LoadBalancer buildd Service unless you set auth.tokenSecret OR restrict
-  # the source IPs here. Leave empty for in-cluster (ClusterIP) use.
+  # SAFETY: this L4 LoadBalancer serves /route over PLAIN HTTP (no TLS). The chart REFUSES to render a
+  # LoadBalancer buildd Service unless you set BOTH auth.tokenSecret AND restrict the source IPs here
+  # (a cleartext bearer token open to the internet is not enough). For PUBLIC off-cluster access prefer
+  # the TLS Ingress (ingress.enabled). Leave empty for in-cluster (ClusterIP) use.
   loadBalancerSourceRanges: []
   # /route blocks up to --route-wait (180s) for a COLD daemon to become Ready. The OVH/OpenStack LB's
   # default member-data idle timeout (50s) would cut that wait -> curl "(52) Empty reply". Raise it past
@@ -266,6 +273,33 @@ certManager:
 # and CI passes the same value (build --token / BUILDKIT_OPERATOR_TOKEN). Empty = no auth (in-cluster only).
 auth:
   tokenSecret: "" # k8s Secret name holding key `token`
+
+# OIDC identity verification for the /route API — the strong way to expose buildd off-cluster. When
+# `providers` is non-empty, buildd REQUIRES a forge-signed OIDC token on /route|/prewarm and binds the
+# verified repo claim: the client can no longer self-declare its repo (kills cross-repo cache poisoning)
+# and `untrusted` is derived server-side. Config is mounted as a ConfigMap (--oidc-config); it is the
+# RECOMMENDED posture for any LoadBalancer/Ingress exposure. Empty providers = OIDC off (in-cluster
+# bearer/admin only). Both GitHub Actions and GitLab CI mint these tokens natively (no extra egress).
+oidc:
+  providers: []
+    # - type: github   # built-in mapping: repository claim, github.com host, PR ref => untrusted
+    #   issuer: https://token.actions.githubusercontent.com
+    #   audience: buildkit-operator
+    # - type: gitlab   # built-in mapping: project_path claim, issuer host, unprotected ref => untrusted
+    #   issuer: https://gitlab.example.com
+    #   audience: buildkit-operator
+  # Optional HARD org/repo gate applied AFTER signature verification (globs; trailing /* = prefix).
+  # Empty = allow every verified repo (OIDC alone is the gate). A verified-but-unlisted repo gets 403.
+  repoAllowlist: []
+    # - github.com/socialgouv/*
+    # - gitlab.example.com/studio-tech/architecture/*
+  # Break-glass admin credential: a Secret (key `token`) carried in the X-Buildkit-Operator-Admin-Token
+  # header. It bypasses OIDC and trusts the request's repo/untrusted — for the manual `build` CLI and
+  # in-cluster ops. Held only by operators who already control this Deployment. Empty = no admin token.
+  adminTokenSecret: ""
+  # Cluster-admin escape hatch to force verification OFF even with providers configured. Leave false; set
+  # true only as a deliberate, audited break-glass (it reopens the self-declared-repo trust).
+  disable: false
 
 # Routing-API rate limit (token bucket shared across /route, /prewarm, /complete) — caps how fast a
 # single caller / compromised token can churn BuildProjects + Cinder attaches. Both keys are passed

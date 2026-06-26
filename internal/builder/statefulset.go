@@ -243,6 +243,17 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			APIGroup: ptr("snapshot.storage.k8s.io"), Kind: "VolumeSnapshot", Name: bp.Spec.RestoreFromSnapshot,
 		}
 	}
+	// Untrusted fork daemons are one-shot: auto-delete their cache PVC when the StatefulSet is removed
+	// (the BuildProject owner-ref cascade), so a fork deleted externally — or one buildd crashed before
+	// reaping — can't leak its retained PVC. Canonical daemons keep the default Retain: their warm cache
+	// MUST survive scale-to-zero (and BuildProject re-creation), so it is never auto-deleted.
+	var pvcRetention *appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy
+	if router.IsForkKey(bp.Spec.Key) {
+		pvcRetention = &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
+			WhenDeleted: appsv1.DeletePersistentVolumeClaimRetentionPolicyType,
+			WhenScaled:  appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
+		}
+	}
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: cfg.Namespace, Labels: l},
 		Spec: appsv1.StatefulSetSpec{
@@ -270,6 +281,7 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 				ObjectMeta: metav1.ObjectMeta{Name: cacheVolName},
 				Spec:       pvcSpec,
 			}},
+			PersistentVolumeClaimRetentionPolicy: pvcRetention,
 		},
 	}
 }

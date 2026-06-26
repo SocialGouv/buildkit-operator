@@ -72,7 +72,21 @@ type config struct {
 	dryRun      bool
 	untrusted   bool
 	token       string
+	adminToken  string
 	routeWait   time.Duration
+}
+
+// setAuth attaches the routing-API credential to a request. A break-glass admin token (distinct header)
+// wins when set — it bypasses OIDC and trusts this CLI's --repo/--untrusted, for manual/in-cluster ops;
+// otherwise --token (an OIDC JWT or a legacy bearer) goes in Authorization. The manual CLI has no CI
+// issuer, so it normally uses --admin-token against an OIDC-enforcing buildd.
+func (cfg *config) setAuth(h http.Header) {
+	switch {
+	case cfg.adminToken != "":
+		h.Set("X-Buildkit-Operator-Admin-Token", cfg.adminToken)
+	case cfg.token != "":
+		h.Set("Authorization", "Bearer "+cfg.token)
+	}
 }
 
 func main() {
@@ -134,7 +148,9 @@ func newRootCmd() *cobra.Command {
 		"untrusted (fork-PR) build: route to an ephemeral daemon seeded read-only from the canonical "+
 			"snapshot, with NO write-back to the shared cache (anti cache-poisoning)")
 	f.StringVar(&cfg.token, "token", os.Getenv("BUILDKIT_OPERATOR_TOKEN"),
-		"bearer token for the buildd /route API (when buildd requires auth)")
+		"credential for the buildd /route API: an OIDC identity JWT, or a legacy bearer (sent in Authorization)")
+	f.StringVar(&cfg.adminToken, "admin-token", os.Getenv("BUILDKIT_OPERATOR_ADMIN_TOKEN"),
+		"break-glass admin token (sent in X-Buildkit-Operator-Admin-Token): bypasses OIDC, trusts --repo/--untrusted. For manual/in-cluster ops")
 	f.DurationVar(&cfg.routeWait, "route-wait", durationOr("BUILDKIT_OPERATOR_ROUTE_WAIT", 5*time.Minute),
 		"max time to wait for buildd to route the build (must cover a cold-start daemon attach)")
 
@@ -274,9 +290,7 @@ func routeBuild(ctx context.Context, cfg *config, req router.RouteRequest) (rout
 		return zero, fmt.Errorf("build route request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if cfg.token != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+cfg.token)
-	}
+	cfg.setAuth(httpReq.Header)
 
 	res, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
@@ -313,9 +327,7 @@ func completeBuild(cfg *config, key string, logger *slog.Logger) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if cfg.token != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.token)
-	}
+	cfg.setAuth(req.Header)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		logger.Debug("release inflight build failed (non-fatal)", "err", err)

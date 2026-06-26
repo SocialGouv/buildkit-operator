@@ -15,9 +15,11 @@
 #     - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.8.3/templates/build.yml"
 #       inputs: { tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA", push: "true" }
 #
-# The mTLS material + bearer token are read from MASKED CI/CD variables (set them at the group level):
-#   BUILDKIT_OPERATOR_BUILDD_URL, BUILDKIT_OPERATOR_CA, BUILDKIT_OPERATOR_CERT, BUILDKIT_OPERATOR_KEY,
-#   BUILDKIT_OPERATOR_TOKEN  (CA/CERT/KEY hold PEM; use "File" or masked variables).
+# The mTLS material is read from MASKED CI/CD variables (set them at the group level):
+#   BUILDKIT_OPERATOR_BUILDD_URL, BUILDKIT_OPERATOR_CA, BUILDKIT_OPERATOR_CERT, BUILDKIT_OPERATOR_KEY
+#   (CA/CERT/KEY hold PEM; use "File" or masked variables).
+# /route identity is a GitLab-signed OIDC id_token (minted automatically, see id_tokens below) — no
+# shared bearer to distribute. Legacy/admin only: set BUILDKIT_OPERATOR_ADMIN_TOKEN as a masked variable.
 # When the gateway has no wildcard DNS yet, also set BUILDKIT_OPERATOR_GATEWAY_IP (maps the SNI host).
 #
 # Egress-proxy-only runners (e.g. a CI platform behind an HTTP CONNECT proxy on 443): set
@@ -43,7 +45,7 @@ spec:
       description: buildd /route API URL. Defaults to the CI/CD variable of the same name.
     repo:
       default: "$CI_PROJECT_URL"
-      description: Project identity = the cache key (normalized by the router). Default = this GitLab project URL.
+      description: Project identity = the cache key. IGNORED when buildd enforces OIDC (the verified project_path is authoritative); used only on the legacy/admin path.
     name:
       default: ""
       description: Optional monorepo component — gives each image its own daemon + cache.
@@ -74,21 +76,40 @@ spec:
     sign:
       default: "false"
       description: "cosign keyless-sign the pushed tags (needs push: true; uses GitLab OIDC id_tokens)."
+    oidc_audience:
+      default: buildkit-operator
+      description: >-
+        Audience of the GitLab OIDC id_token sent to buildd /route for identity verification (must match
+        buildd's provider audience). buildd verifies the signature and binds the build to this project,
+        so a leaked credential can't impersonate another project. The token is injected by GitLab — NO
+        extra runner egress. For the legacy/admin path instead, set BUILDKIT_OPERATOR_ADMIN_TOKEN.
     ref:
       default: v0.8.3
       description: Exact buildkit-operator git tag/commit the build script is fetched from (keep in sync with the include).
+    script_sha256:
+      default: ""
+      description: >-
+        Expected sha256 of scripts/build.sh at `ref`. When set, the fetched script is verified and the
+        job FAILS on mismatch — defends against a mutated tag / MITM on the raw.githubusercontent.com
+        fetch. STRONGLY recommended: pin it to the hash published with the release matching `ref`.
 
 ---
 # To gate the job, re-declare it in your pipeline with `rules:`/`needs:` — GitLab merges includes.
 "$[[ inputs.job_name ]]":
   stage: $[[ inputs.stage ]]
   image: $[[ inputs.image ]]
-  # Keyless cosign needs a Sigstore-audience OIDC token (only used when sign=true).
   id_tokens:
+    # Keyless cosign needs a Sigstore-audience OIDC token (only used when sign=true).
     SIGSTORE_ID_TOKEN:
       aud: sigstore
+    # buildd /route identity: GitLab signs this; buildd verifies it and binds the build to this project.
+    BUILDKIT_OPERATOR_ID_TOKEN:
+      aud: "$[[ inputs.oidc_audience ]]"
   variables:
     BUILDKIT_OPERATOR_BUILDD_URL: "$[[ inputs.buildd_url ]]"
+    # Secure default: send the signed OIDC identity token as the /route credential. For the legacy/admin
+    # path, set BUILDKIT_OPERATOR_ADMIN_TOKEN as a CI/CD variable (it takes precedence in build.sh).
+    BUILDKIT_OPERATOR_TOKEN: "$BUILDKIT_OPERATOR_ID_TOKEN"
     REPO: "$[[ inputs.repo ]]"
     NAME: "$[[ inputs.name ]]"
     ARCH: "$[[ inputs.arch ]]"
@@ -102,6 +123,7 @@ spec:
     SBOM: "$[[ inputs.sbom ]]"
     BKO_REF: "$[[ inputs.ref ]]"
     BKO_SIGN: "$[[ inputs.sign ]]"
+    BKO_SCRIPT_SHA256: "$[[ inputs.script_sha256 ]]"
   before_script:
     # docker:27 is alpine; install the script's deps (curl + jq + git; socat for the proxy tunnel;
     # buildx ships with the image). When the runner is egress-proxy-only (BUILDKIT_OPERATOR_HTTP_PROXY
@@ -125,6 +147,15 @@ spec:
       fi
     # Single source of truth: the same build script the GitHub Action runs.
     - curl -fsSL "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/${BKO_REF}/scripts/build.sh" -o /tmp/bko-build.sh
+    # Integrity gate: when BKO_SCRIPT_SHA256 is pinned, verify the fetched script before running it (a
+    # mutated tag or a MITM on the GitHub raw fetch would otherwise execute attacker code on the runner).
+    - |
+      if [ -n "${BKO_SCRIPT_SHA256:-}" ]; then
+        echo "${BKO_SCRIPT_SHA256}  /tmp/bko-build.sh" | sha256sum -c - \
+          || { echo "buildkit-operator: build.sh sha256 mismatch — refusing to run (expected ${BKO_SCRIPT_SHA256})" >&2; exit 1; }
+      else
+        echo "buildkit-operator: WARNING build.sh fetched by ref without sha256 pin — set input script_sha256 to verify integrity" >&2
+      fi
     - sh /tmp/bko-build.sh
     # Optional keyless signature of each pushed tag (image must be pushed).
     - |
