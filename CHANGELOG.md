@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.0](https://github.com/socialgouv/buildkit-operator/compare/v0.6.0...v0.7.0) (2026-06-26)
+
+### Features
+
+* **ci:** reusable GitLab CI/CD component for builds ([73b672b](https://github.com/socialgouv/buildkit-operator/commit/73b672b648428f8687bb9b5c36853b21a0935107))
+
 ## [0.6.0](https://github.com/socialgouv/buildkit-operator/compare/v0.5.2...v0.6.0) (2026-06-26)
 
 ### ⚠ BREAKING CHANGES
