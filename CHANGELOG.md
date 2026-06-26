@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.3](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.8.3) (2026-06-26)
+
+### Bug Fixes
+
+* untrusted/fork builds hung — reaper killed the fork in its birth window ([059ccbd](https://github.com/socialgouv/buildkit-operator/commit/059ccbdc47c458795718a91382ff3da9ad086837))
+
 ## [0.8.2](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.8.2) (2026-06-26)
 
 ### Bug Fixes
