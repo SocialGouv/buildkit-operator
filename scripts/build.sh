@@ -45,14 +45,38 @@ printf '%s' "${BUILDKIT_OPERATOR_KEY:?}"  > "$certs/key.pem"
 
 # 1. Route: ask buildd for this project's daemon endpoint (+ optional cold-cache reference). target is
 # part of the cache identity, so it MUST be sent (else two targets of one repo collide on one daemon).
-resp="$(api /route "{\"repo\":\"$REPO\",\"name\":\"$NAME\",\"target\":\"$TARGET\",\"arch\":\"$ARCH\",\"untrusted\":$UNTRUSTED}")"
+route_payload="$(jq -nc \
+  --arg repo "$REPO" \
+  --arg name "$NAME" \
+  --arg target "$TARGET" \
+  --arg arch "$ARCH" \
+  --argjson untrusted "$UNTRUSTED" \
+  '{repo:$repo,name:$name,target:$target,arch:$arch,untrusted:$untrusted}')"
+resp="$(api /route "$route_payload")"
 endpoint="$(printf '%s' "$resp" | jq -r .endpoint)"
 key="$(printf '%s' "$resp" | jq -r .key)"
 echo "buildkit-operator: routed $REPO${NAME:+/$NAME} ($ARCH${UNTRUSTED:+, untrusted=$UNTRUSTED}) -> $endpoint"
 
+# Per-client gateway override: when this runner reaches the gateway under a DIFFERENT domain/port than
+# the one buildd advertises (a multi-domain gateway — e.g. a public domain vs a CI-platform domain
+# behind a proxy), rebuild the endpoint from the returned key + this client's host/port. The daemon
+# name is buildkitd-<key>; the gateway accepts the SNI as long as the domain is in its --domain list.
+if [ -n "${BUILDKIT_OPERATOR_GATEWAY_HOST:-}" ]; then
+  gwport="${BUILDKIT_OPERATOR_GATEWAY_PORT:-$(printf '%s' "$endpoint" | sed -E 's#.*:##')}"
+  endpoint="tcp://buildkitd-${key}.${BUILDKIT_OPERATOR_GATEWAY_HOST}:${gwport}"
+  echo "buildkit-operator: gateway override -> $endpoint"
+fi
+
 # Release the inflight build buildd counted on /route so the daemon can scale to zero once idle
 # (best-effort; buildd's safety net bounds a missed release). Fires on any exit after routing.
-trap 'rm -rf "$certs"; [ -n "${key:-}" ] && [ "$key" != null ] && api /complete "{\"key\":\"$key\"}" >/dev/null 2>&1 || true' EXIT
+cleanup() {
+  rm -rf "$certs"
+  if [ -n "${key:-}" ] && [ "$key" != null ]; then
+    complete_payload="$(jq -nc --arg key "$key" '{key:$key}')" || return 0
+    api /complete "$complete_payload" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
 
 # Optional: when there is no wildcard DNS for the gateway yet, map this build's gateway hostname to
 # the gateway LoadBalancer IP for the duration of the run (testing/bootstrap escape hatch).

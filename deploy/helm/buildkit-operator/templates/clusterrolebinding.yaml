@@ -1,14 +1,32 @@
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-buildd
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: buildd
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: {{ include "buildkit-operator.fullname" . }}-buildd
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "buildkit-operator.serviceAccountName" . }}
+    namespace: {{ include "buildkit-operator.operatorNamespace" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-leader-election
+  namespace: {{ include "buildkit-operator.operatorNamespace" . }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "buildkit-operator.fullname" . }}-leader-election
 subjects:
   - kind: ServiceAccount
     name: {{ include "buildkit-operator.serviceAccountName" . }}

@@ -30,7 +30,7 @@
 #
 # Usage:
 #   ./create-certs.sh [NAMESPACE]
-#   NAMESPACE defaults to "buildkit-operator".
+#   NAMESPACE defaults to "buildkit-builds".
 
 set -o errexit
 set -o nounset
@@ -38,7 +38,7 @@ set -o pipefail
 set -o errtrace
 
 PRODUCT=buildkit
-NS="${1:-buildkit-operator}"
+NS="${1:-buildkit-builds}"
 
 # Resolve paths relative to this script so it works from any CWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,7 +58,22 @@ SAN_IP_1="127.0.0.1"
 SAN_CLIENT="client"
 # Off-cluster CI via the shared SNI gateway: set GATEWAY_HOST=builds.example.com to also cover
 # *.${GATEWAY_HOST} so the client's SNI (<daemon>.${GATEWAY_HOST}) validates against the daemon cert.
+# GATEWAY_HOST may be COMMA-SEPARATED for several client domains (e.g. a public + a CI-platform host);
+# each adds a *.<host> wildcard SAN (matches the gateway's multi-domain --domain list).
 GATEWAY_HOST="${GATEWAY_HOST:-}"
+GATEWAY_SANS=""      # mkcert: space-separated "*.<host>" args
+GATEWAY_DNS_LINES="" # openssl [alt_names]: "DNS.N = *.<host>" lines
+if [ -n "${GATEWAY_HOST}" ]; then
+  _n=4; _oifs="$IFS"; IFS=','
+  for _h in ${GATEWAY_HOST}; do
+    _h="$(printf '%s' "${_h}" | tr -d ' ')"; [ -n "${_h}" ] || continue
+    GATEWAY_SANS="${GATEWAY_SANS} *.${_h}"
+    GATEWAY_DNS_LINES="${GATEWAY_DNS_LINES}DNS.${_n} = *.${_h}
+"
+    _n=$((_n + 1))
+  done
+  IFS="$_oifs"
+fi
 
 mkdir -p "${DIR}" "${CLIENT_DIR}"
 
@@ -81,9 +96,10 @@ gen_with_mkcert() {
     export CAROOT="${DIR}"
 
     # Daemon server cert with the wildcard SANs.
+    # shellcheck disable=SC2086
     mkcert -cert-file cert.pem -key-file key.pem \
       "${SAN_DNS_1}" "${SAN_DNS_2}" "${SAN_DNS_3}" "${SAN_IP_1}" \
-      ${GATEWAY_HOST:+"*.${GATEWAY_HOST}"} >/dev/null 2>&1
+      ${GATEWAY_SANS} >/dev/null 2>&1
 
     # Client cert (clientAuth EKU via -client).
     mkcert -client -cert-file "client/cert.pem" -key-file "client/key.pem" \
@@ -140,8 +156,7 @@ subjectAltName   = @alt_names
 DNS.1 = ${SAN_DNS_1}
 DNS.2 = ${SAN_DNS_2}
 DNS.3 = ${SAN_DNS_3}
-${GATEWAY_HOST:+DNS.4 = *.${GATEWAY_HOST}}
-IP.1  = ${SAN_IP_1}
+${GATEWAY_DNS_LINES}IP.1  = ${SAN_IP_1}
 EOF
     openssl genrsa -out "${DIR}/key.pem" "${KEY_BITS}" 2>/dev/null
     openssl req -new -key "${DIR}/key.pem" \
@@ -243,12 +258,12 @@ render_secret "${PRODUCT}-client-certs" \
   "${CLIENT_DIR}/ca.pem" "${CLIENT_DIR}/cert.pem" "${CLIENT_DIR}/key.pem" "${CLIENT_SECRET}"
 
 echo
-echo ">> done. Apply the Secrets into the buildkit-operator namespace:"
+echo ">> done. Apply the Secrets into the builds namespace:"
 echo
 echo "   kubectl create namespace ${NS} --dry-run=client -o yaml | kubectl apply -f -"
 echo "   kubectl apply -f ${DAEMON_SECRET}"
 echo "   kubectl apply -f ${CLIENT_SECRET}"
 echo
 echo "   The daemon Secret (${PRODUCT}-daemon-certs) is mounted by every"
-echo "   per-project buildkitd StatefulSet; the client Secret"
-echo "   (${PRODUCT}-client-certs) is mounted by the buildd Deployment."
+echo "   per-project buildkitd StatefulSet; distribute the client Secret"
+echo "   (${PRODUCT}-client-certs) to CI clients. buildd does not mount it."

@@ -30,13 +30,12 @@ tasks:
       - '{{.CONTROLLER_GEN}} object paths="./api/..."'
 
   manifests:
-    desc: CRDs + RBAC from the +kubebuilder markers (commit the result)
+    desc: CRDs from the +kubebuilder markers (commit the result; RBAC is hand-written namespaced Helm)
     cmds:
       - |
-        {{.CONTROLLER_GEN}} crd rbac:roleName=buildkit-operator-buildd \
+        {{.CONTROLLER_GEN}} crd \
           paths="./api/...;./internal/..." \
-          output:crd:artifacts:config=deploy/crd \
-          output:rbac:artifacts:config=deploy/rbac
+          output:crd:artifacts:config=deploy/crd
       # helm installs CRDs from the chart crds/ dir
       - cp deploy/crd/buildkit-operator.socialgouv.github.io_*.yaml deploy/helm/buildkit-operator/crds/
 

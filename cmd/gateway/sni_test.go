@@ -34,10 +34,13 @@ func TestPeekClientHelloSNI_RealHandshake(t *testing.T) {
 }
 
 func TestBackendFor(t *testing.T) {
-	g := &gateway{domain: "builds.example.com", namespace: "buildkit-operator", port: 1234}
+	// Multi-domain: one gateway fronts two client populations (a public domain + a CI-platform domain).
+	g := &gateway{domains: []string{"builds.example.com", "ci.example.org"}, namespace: "buildkit-operator", port: 1234}
 
-	if got, err := g.backendFor("buildkitd-pabc.builds.example.com"); err != nil || got != "buildkitd-pabc.buildkit-operator.svc:1234" {
-		t.Errorf("backendFor(daemon) = %q, %v; want buildkitd-pabc.buildkit-operator.svc:1234", got, err)
+	for _, sni := range []string{"buildkitd-pabc.builds.example.com", "buildkitd-pabc.ci.example.org"} {
+		if got, err := g.backendFor(sni); err != nil || got != "buildkitd-pabc.buildkit-operator.svc:1234" {
+			t.Errorf("backendFor(%q) = %q, %v; want buildkitd-pabc.buildkit-operator.svc:1234", sni, got, err)
+		}
 	}
 	// Defense in depth: reject foreign domains, non-daemon names, and cross-namespace traversal.
 	for _, bad := range []string{

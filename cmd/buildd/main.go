@@ -20,6 +20,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	crconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -110,6 +111,7 @@ func main() {
 	}
 	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                  scheme,
+		Cache:                   ctrlcache.Options{DefaultNamespaces: map[string]ctrlcache.Config{cfg.Namespace: {}}},
 		Metrics:                 metricsserver.Options{BindAddress: *metricsAddr}, // M4 observability
 		LeaderElection:          *leaderElect,                                     // HA: only the leader reconciles
 		LeaderElectionID:        "buildkit-operator-buildd.buildkit-operator.socialgouv.github.io",

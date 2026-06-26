@@ -55,6 +55,25 @@ func TestStatefulSet_UntrustedPodLabel(t *testing.T) {
 	}
 }
 
+func TestStatefulSet_S3CredsAreTrustedOnly(t *testing.T) {
+	canonical := router.ProjectKey("github.com/org/repo", "", "", "amd64")
+	fork := router.ForkKey(canonical)
+	cfg := Config{Namespace: "ns", Port: 1234, S3CredsSecret: "buildkit-s3"}
+
+	envFrom := func(key string) []corev1.EnvFromSource {
+		bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: key, Arch: "amd64"}}
+		return StatefulSet(bp, cfg).Spec.Template.Spec.Containers[0].EnvFrom
+	}
+
+	trusted := envFrom(canonical)
+	if len(trusted) != 1 || trusted[0].SecretRef == nil || trusted[0].SecretRef.Name != "buildkit-s3" {
+		t.Fatalf("trusted daemon EnvFrom = %#v, want the configured S3 Secret", trusted)
+	}
+	if got := envFrom(fork); len(got) != 0 {
+		t.Fatalf("fork daemon EnvFrom = %#v, want no S3 credentials", got)
+	}
+}
+
 // Regression (B3): in the privileged profile the daemon socket lives under /run/buildkit, so the
 // shared `run` emptyDir must be mounted at that SAME path in both the daemon and the companion —
 // otherwise the companion's buildctl probe can't reach the socket and /readyz never goes ready.

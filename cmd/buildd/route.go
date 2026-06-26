@@ -3,7 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
@@ -12,16 +16,18 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// decodeReq enforces the rate limit, auth and POST, then decodes a RouteRequest, writing the HTTP
+const maxRouteRequestBytes int64 = 8 << 10
+
+// decodeReq enforces auth, the rate limit and POST, then decodes a RouteRequest, writing the HTTP
 // error itself. Returns ok=false when the caller should return immediately — the shared preamble for
 // the POST handlers.
 func (s *routeServer) decodeReq(w http.ResponseWriter, r *http.Request) (router.RouteRequest, bool) {
-	if !s.allow(w) {
-		return router.RouteRequest{}, false
-	}
 	if !s.authorized(r) {
 		s.log.Info("unauthorized", "path", r.URL.Path, "remote", clientIP(r))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return router.RouteRequest{}, false
+	}
+	if !s.allow(w) {
 		return router.RouteRequest{}, false
 	}
 	if r.Method != http.MethodPost {
@@ -29,11 +35,58 @@ func (s *routeServer) decodeReq(w http.ResponseWriter, r *http.Request) (router.
 		return router.RouteRequest{}, false
 	}
 	var req router.RouteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return router.RouteRequest{}, false
+	}
+	if err := validateRouteRequest(req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return router.RouteRequest{}, false
 	}
 	return req, true
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRouteRequestBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("body must contain a single JSON object")
+	}
+	return nil
+}
+
+func validateRouteRequest(req router.RouteRequest) error {
+	if router.NormalizeRepo(req.Repo) == "" {
+		return errors.New("repo is required")
+	}
+	if len(req.Repo) > 512 {
+		return errors.New("repo is too long")
+	}
+	if len(req.Name) > 128 {
+		return errors.New("name is too long")
+	}
+	if len(req.Target) > 128 {
+		return errors.New("target is too long")
+	}
+	switch arch := router.NormalizeArch(req.Arch); arch {
+	case "amd64", "arm64":
+		return nil
+	default:
+		return fmt.Errorf("unsupported arch %q", req.Arch)
+	}
+}
+
+func validateCompleteRequest(key string) error {
+	if strings.TrimSpace(key) == "" {
+		return errors.New("key is required")
+	}
+	if len(key) > 64 {
+		return errors.New("key is too long")
+	}
+	return nil
 }
 
 // handleRoute resolves the project key, ensures a BuildProject exists, waits for the
@@ -145,12 +198,12 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 // bounded by the reconciler's --max-build-seconds safety net, which stops stale inflight from pinning
 // a daemon warm forever.
 func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
-	if !s.allow(w) {
-		return
-	}
 	if !s.authorized(r) {
 		s.log.Info("unauthorized", "path", r.URL.Path, "remote", clientIP(r))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !s.allow(w) {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -160,7 +213,11 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Key string `json:"key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Key == "" {
+	if err := decodeJSON(w, r, &req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateCompleteRequest(req.Key); err != nil {
 		http.Error(w, "bad request: need {\"key\":\"...\"}", http.StatusBadRequest)
 		return
 	}

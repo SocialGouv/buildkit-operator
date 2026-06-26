@@ -64,7 +64,7 @@ func (s *routeServer) authorized(r *http.Request) bool {
 // cacheFor returns the project's cold-cache reference (prefix = the key) when an S3 bucket is
 // configured, else nil. No credentials: the daemon holds them via cfg.S3CredsSecret.
 func (s *routeServer) cacheFor(key string) *router.CacheConfig {
-	if s.s3Bucket == "" {
+	if s.s3Bucket == "" || router.IsForkKey(key) {
 		return nil
 	}
 	return &router.CacheConfig{
@@ -87,7 +87,18 @@ func (s *routeServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/complete", s.handleComplete)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
-	srv := &http.Server{Addr: s.addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	writeTimeout := s.wait + 30*time.Second
+	if writeTimeout < 30*time.Second {
+		writeTimeout = 30 * time.Second
+	}
+	srv := &http.Server{
+		Addr:              s.addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       60 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -36,16 +36,18 @@ spec:
           image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            # External listen port (what off-cluster clients dial). Defaults to the daemon port; set
-            # gateway.externalPort=443 to front the gateway on 443 (e.g. behind an egress proxy).
-            - --listen=:{{ .Values.gateway.externalPort | default .Values.buildkit.port }}
+            # Internal non-privileged listen port. The Service may expose gateway.externalPort (e.g.
+            # 443 for egress proxies), but the non-root container still binds buildkit.port.
+            - --listen=:{{ .Values.buildkit.port }}
             - --health-listen=:8081
-            - --domain={{ .Values.gateway.host }}
+            # Primary domain + any extraDomains (the gateway accepts SNI for ANY of them, so one
+            # gateway can front several client populations, e.g. a public domain + a CI-platform domain).
+            - --domain={{ prepend .Values.gateway.extraDomains .Values.gateway.host | join "," }}
             - --namespace={{ include "buildkit-operator.buildsNamespace" . }}
             - --daemon-port={{ .Values.buildkit.port }} # internal: the gateway dials daemons on the mTLS port
           ports:
             - name: sni
-              containerPort: {{ .Values.gateway.externalPort | default .Values.buildkit.port }}
+              containerPort: {{ .Values.buildkit.port }}
               protocol: TCP
             - name: health
               containerPort: 8081
@@ -87,6 +89,6 @@ spec:
   ports:
     - name: sni
       port: {{ .Values.gateway.externalPort | default .Values.buildkit.port }}
-      targetPort: {{ .Values.gateway.externalPort | default .Values.buildkit.port }}
+      targetPort: {{ .Values.buildkit.port }}
       protocol: TCP
 {{- end }}

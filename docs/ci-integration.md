@@ -64,7 +64,7 @@ Set the mTLS material + token as **masked/File** group CI/CD variables
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v1/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.7.0/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
       push: "true"

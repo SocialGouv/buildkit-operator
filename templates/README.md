@@ -29,7 +29,7 @@ GitHub-hosted (remote include — works today):
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v1/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.7.0/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
       push: "true"
@@ -52,8 +52,8 @@ That generates a `buildkit-operator-build` job in the `build` stage.
 
 `job_name`, `stage`, `image`, `repo` (default `$CI_PROJECT_URL` = the cache key), `name` (monorepo
 component), `arch` (`amd64`/`arm64`), `context`, `dockerfile`, `target`, `untrusted`, `push`,
-`provenance`, `sbom`, `sign`, `ref` (the buildkit-operator git ref the build script is fetched from —
-keep it in sync with the include).
+`provenance`, `sbom`, `sign`, `ref` (the exact buildkit-operator tag/commit the build script is fetched
+from — keep it pinned and in sync with the include).
 
 ## Examples
 
@@ -61,7 +61,7 @@ keep it in sync with the include).
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v1/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.7.0/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE/api:$CI_COMMIT_SHORT_SHA"
       name: api                  # monorepo: its own daemon + cache
@@ -77,7 +77,7 @@ by re-declaring the job's `rules:` (GitLab merges includes):
 
 ```yaml
 include:
-  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v1/templates/build.yml"
+  - remote: "https://raw.githubusercontent.com/SocialGouv/buildkit-operator/v0.7.0/templates/build.yml"
     inputs:
       tags: "$CI_REGISTRY_IMAGE:mr-$CI_MERGE_REQUEST_IID"
       untrusted: "true"
@@ -134,7 +134,7 @@ control-plane `/route` step added.
 - **`target` is part of the cache key** — set it so two Dockerfile targets of one repo don't collide on
   one daemon.
 - **Single source of truth.** The component fetches and runs the same [`scripts/build.sh`](../scripts/build.sh)
-  the GitHub Action runs, pinned to `ref` — there is no duplicated build logic.
+  the GitHub Action runs, pinned to an exact `ref` — there is no duplicated build logic.
 
 See [docs/ci-integration.md](../docs/ci-integration.md) for the end-to-end model (mTLS SAN, gateway,
 S3 cold cache) and [docs/onboarding.md](../docs/onboarding.md) for the GitHub equivalent.

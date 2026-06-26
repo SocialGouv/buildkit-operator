@@ -1,4 +1,4 @@
-# Exclude the operator namespace from the platform's `add-custom-mas-securitycontext` ClusterPolicy.
+# Exclude the builds namespace from the platform's `add-custom-mas-securitycontext` ClusterPolicy.
 # That policy mutates pods to allowPrivilegeEscalation:false, which crashes ROOTLESS (canonical)
 # buildkit daemons (rootlesskit's newuidmap needs no_new_privs OFF). The policy is platform-owned, so
 # this is a Kustomize JSON6902 patch, not a standalone object. PolicyException is disabled cluster-wide,
@@ -19,4 +19,4 @@
 # canonical daemons need the exclusion.)
 - op: add
   path: /spec/rules/0/exclude/any/0/resources/namespaces/-
-  value: buildkit-operator
+  value: buildkit-builds

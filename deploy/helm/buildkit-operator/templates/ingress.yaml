@@ -1,6 +1,7 @@
 {{- if .Values.ingress.enabled }}
 {{- if not .Values.ingress.host }}{{ fail "ingress.enabled: set ingress.host" }}{{- end }}
 {{- if not .Values.auth.tokenSecret }}{{ fail "ingress.enabled exposes /route on a public host: set auth.tokenSecret (bearer token) — /route provisions daemons" }}{{- end }}
+{{- if and (not .Values.ingress.tls.enabled) (not .Values.ingress.allowInsecure) }}{{ fail "ingress.enabled exposes bearer-token auth: keep ingress.tls.enabled=true, or set ingress.allowInsecure=true only when TLS is terminated by an upstream load balancer/proxy" }}{{- end }}
 # TLS front for the buildd /route API (443 -> the buildd Service :{{ .Values.service.port }}). Lets
 # off-cluster runners behind an HTTPS/CONNECT proxy reach /route. buildd serves plain HTTP; the
 # Ingress terminates TLS. Bearer-token auth is enforced by buildd on top.

@@ -7,7 +7,7 @@ Namespaces:
 
 What was installed (cluster-wide control plane ONLY):
   - buildd Deployment + Service (HTTP /route API + /healthz on :{{ .Values.service.port }})
-  - ServiceAccount {{ include "buildkit-operator.serviceAccountName" . }} + least-privilege ClusterRole/Binding
+  - ServiceAccount {{ include "buildkit-operator.serviceAccountName" . }} + least-privilege namespaced Roles/Bindings
   - ConfigMap {{ include "buildkit-operator.fullname" . }}-buildkitd-config (the per-project buildkitd.toml GC config)
 
 The per-project buildkitd StatefulSets, their Services (TCP+mTLS :{{ .Values.buildkit.port }})

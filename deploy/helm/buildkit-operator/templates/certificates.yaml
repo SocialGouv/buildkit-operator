@@ -67,6 +67,9 @@ spec:
     {{- if .Values.gateway.host }}
     - "*.{{ .Values.gateway.host }}" # SNI host through the shared gateway
     {{- end }}
+    {{- range .Values.gateway.extraDomains }}
+    - "*.{{ . }}" # additional gateway domain (multi-domain front)
+    {{- end }}
   ipAddresses: [127.0.0.1]
   issuerRef: { name: {{ $issuerName }}, kind: {{ $issuerKind }}, group: cert-manager.io }
 ---

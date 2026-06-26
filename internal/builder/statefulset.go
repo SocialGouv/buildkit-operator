@@ -166,9 +166,11 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 		daemon.VolumeMounts = append(daemon.VolumeMounts,
 			corev1.VolumeMount{Name: "config", MountPath: rootlessConfig})
 	}
-	if cfg.S3CredsSecret != "" {
+	if cfg.S3CredsSecret != "" && !router.IsForkKey(bp.Spec.Key) {
 		// AWS creds for the s3 cold cache live on the DAEMON, not in every CI caller's secrets:
 		// buildkit's s3 backend falls back to the AWS env chain when the client passes no creds.
+		// Untrusted fork daemons intentionally receive no S3 credentials: they build against their
+		// disposable PVC only and cannot write into the shared project cache.
 		daemon.EnvFrom = append(daemon.EnvFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: cfg.S3CredsSecret}},
 		})

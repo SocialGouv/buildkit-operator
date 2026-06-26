@@ -82,8 +82,8 @@ helm install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operato
 ```
 
 This installs the `buildd` Deployment + Service (HTTP `/route` API and
-`/healthz` on :8080), the ServiceAccount, the least-privilege ClusterRole +
-binding, and the `buildkitd.toml` ConfigMap. Watch it roll out:
+`/healthz` on :8080), the ServiceAccount, least-privilege namespaced Roles +
+bindings, and the `buildkitd.toml` ConfigMap. Watch it roll out:
 
 ```bash
 kubectl -n buildkit-operator rollout status deploy/buildkit-operator-buildd

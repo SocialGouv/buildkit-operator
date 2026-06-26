@@ -17,11 +17,11 @@ build nodepool so every node — including MKS replacements — gets Kata automa
 Plus the **guest vCPU floor** (≥4 vCPUs — required under nested virt) as a plain DaemonSet, drop it in
 as-is: [`../kata/kata-clh-vcpu-tune.yaml`](../kata/kata-clh-vcpu-tune.yaml).
 
-## 2. Kyverno exclusion for the operator namespace
+## 2. Kyverno exclusion for the builds namespace
 
 The platform's `add-custom-mas-securitycontext` ClusterPolicy mutates pods to
-`allowPrivilegeEscalation: false`, which crashes **rootless** (canonical) daemons. Exclude the operator
-namespace. Apply [`kyverno-exclude.patch.yaml`](kyverno-exclude.patch.yaml) wherever that ClusterPolicy
+`allowPrivilegeEscalation: false`, which crashes **rootless** (canonical) daemons. Exclude the builds
+runtime namespace (`buildkit-builds` by default). Apply [`kyverno-exclude.patch.yaml`](kyverno-exclude.patch.yaml) wherever that ClusterPolicy
 is managed (it is platform-owned, so this is a patch, not a full object). `PolicyException` is disabled
 cluster-wide, so the policy's own `exclude` list is the only lever.
 

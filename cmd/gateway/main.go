@@ -23,7 +23,7 @@ import (
 )
 
 type gateway struct {
-	domain    string
+	domains   []string // one or more gateway domains; SNI is <daemon>.<domain> for ANY of them
 	namespace string
 	port      int
 	dialTO    time.Duration
@@ -33,16 +33,21 @@ type gateway struct {
 
 func main() {
 	g := &gateway{dialTO: 10 * time.Second}
-	var listen, healthListen string
+	var listen, healthListen, domainCSV string
 	var maxConns int
 	flag.StringVar(&listen, "listen", ":1234", "TCP listen address")
 	flag.StringVar(&healthListen, "health-listen", ":8081", "HTTP address for /healthz and /readyz")
-	flag.StringVar(&g.domain, "domain", os.Getenv("BUILDKIT_OPERATOR_GATEWAY_DOMAIN"), "gateway domain; the SNI is <daemon>.<domain> (required)")
+	flag.StringVar(&domainCSV, "domain", os.Getenv("BUILDKIT_OPERATOR_GATEWAY_DOMAIN"), "gateway domain(s), comma-separated; the SNI is <daemon>.<domain> for any of them (required). Multiple domains let one gateway front several client populations, e.g. a public domain + a CI-platform domain.")
 	flag.StringVar(&g.namespace, "namespace", envOr("BUILDKIT_OPERATOR_NAMESPACE", "buildkit-builds"), "namespace the per-project daemons run in (the 'builds' ns the SNI backend resolves into)")
 	flag.IntVar(&g.port, "daemon-port", 1234, "daemon mTLS port")
 	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent connections (0 = unlimited; bounds resource use under abuse)")
 	flag.Parse()
-	if g.domain == "" {
+	for _, d := range strings.Split(domainCSV, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			g.domains = append(g.domains, d)
+		}
+	}
+	if len(g.domains) == 0 {
 		slog.Error("--domain (or BUILDKIT_OPERATOR_GATEWAY_DOMAIN) is required")
 		os.Exit(2)
 	}
@@ -67,7 +72,7 @@ func main() {
 
 	go g.serveHealth(ctx, healthListen)
 
-	slog.Info("buildkit-operator gateway listening", "addr", listen, "domain", g.domain, "namespace", g.namespace)
+	slog.Info("buildkit-operator gateway listening", "addr", listen, "domains", strings.Join(g.domains, ","), "namespace", g.namespace)
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -152,19 +157,22 @@ func (g *gateway) handle(client net.Conn) {
 	pipe(client, upstream)
 }
 
-// backendFor maps an SNI <daemon>.<domain> to the daemon's in-cluster Service address. It rejects
-// anything outside the gateway domain or that is not a buildkit-operator daemon name (defense in depth — a
-// caller can't be routed to an arbitrary host or another namespace).
+// backendFor maps an SNI <daemon>.<domain> to the daemon's in-cluster Service address. The SNI must
+// end with ANY of the configured gateway domains, and the daemon part must be a buildkit-operator
+// daemon name (defense in depth — a caller can't be routed to an arbitrary host or another namespace).
 func (g *gateway) backendFor(sni string) (string, error) {
-	suffix := "." + g.domain
-	if !strings.HasSuffix(sni, suffix) {
-		return "", errors.New("SNI outside gateway domain")
+	for _, d := range g.domains {
+		suffix := "." + d
+		if !strings.HasSuffix(sni, suffix) {
+			continue
+		}
+		name := strings.TrimSuffix(sni, suffix)
+		if !strings.HasPrefix(name, "buildkitd-") || strings.ContainsAny(name, "./") {
+			return "", errors.New("SNI is not a daemon name")
+		}
+		return name + "." + g.namespace + ".svc:" + strconv.Itoa(g.port), nil
 	}
-	name := strings.TrimSuffix(sni, suffix)
-	if !strings.HasPrefix(name, "buildkitd-") || strings.ContainsAny(name, "./") {
-		return "", errors.New("SNI is not a daemon name")
-	}
-	return name + "." + g.namespace + ".svc:" + strconv.Itoa(g.port), nil
+	return "", errors.New("SNI outside gateway domain(s)")
 }
 
 // pipe copies bytes both ways and waits for BOTH directions to finish. On EOF in one direction it

@@ -152,7 +152,7 @@ metrics:
 
 serviceAccount:
   # Name of the ServiceAccount buildd runs as. If empty, the chart fullname is
-  # used. The ClusterRoleBinding binds the buildd ClusterRole to this SA.
+  # used. Namespaced RoleBindings bind the buildd Roles to this SA.
   name: buildkit-operator-buildd
 
 # Resources for the buildd controller pod (NOT the per-project daemons — those
@@ -171,6 +171,11 @@ resources:
 # *.<host> at the gateway LB; the daemon cert SAN must cover *.<host>. Empty host = in-cluster only.
 gateway:
   host: "" # e.g. builds.buildkit-operator.example.com
+  # Additional gateway domains the SAME gateway also accepts (SNI <daemon>.<domain>). Lets one gateway
+  # front several client populations — e.g. a public domain AND a CI-platform domain reached via a
+  # proxy. The daemon cert SAN must cover *.<each> (create-certs.sh GATEWAY_HOST accepts a comma list;
+  # cert-manager adds them). Clients pick which domain by overriding it their side (BUILDKIT_OPERATOR_GATEWAY_HOST).
+  extraDomains: [] # e.g. [bko.fabrique.example.com]
   # External port off-cluster clients dial (the SNI endpoint /route returns). Empty = the daemon port
   # (buildkit.port, 1234). Set to 443 to front the gateway on 443 — e.g. so runners behind an
   # egress proxy can CONNECT-tunnel to it. The gateway still dials the daemons on buildkit.port internally.
@@ -197,6 +202,16 @@ gateway:
 service:
   port: 8080
   type: ClusterIP
+  # SAFETY: exposing /route off-cluster (type: LoadBalancer) without auth lets anyone spin up daemons.
+  # The chart REFUSES to render a LoadBalancer buildd Service unless you set auth.tokenSecret OR restrict
+  # the source IPs here. Leave empty for in-cluster (ClusterIP) use.
+  loadBalancerSourceRanges: []
+  # /route blocks up to --route-wait (180s) for a COLD daemon to become Ready. The OVH/OpenStack LB's
+  # default member-data idle timeout (50s) would cut that wait -> curl "(52) Empty reply". Raise it past
+  # route-wait so first-build cold starts complete. Honored by the OpenStack CCM (milliseconds).
+  annotations:
+    loadbalancer.openstack.org/timeout-member-data: "200000"
+    loadbalancer.openstack.org/timeout-client-data: "200000"
 
 # Optional Ingress for the buildd /route API — terminates TLS on 443 under a public hostname, so
 # off-cluster runners that can only egress via an HTTPS proxy (e.g. a CI platform behind a CONNECT
@@ -207,19 +222,11 @@ ingress:
   className: "" # e.g. nginx / traefik (empty = cluster default)
   host: "" # e.g. buildd.bko.fabrique.example.com
   annotations: {} # e.g. cert-manager.io/cluster-issuer: letsencrypt
+  # Only set true if TLS is terminated by an upstream load balancer/proxy before this Ingress.
+  allowInsecure: false
   tls:
     enabled: true
     secretName: "" # TLS secret holding the host cert (cert-manager fills it from the annotation, or pre-create it)
-  # SAFETY: exposing /route off-cluster (type: LoadBalancer) without auth lets anyone spin up daemons.
-  # The chart REFUSES to render a LoadBalancer buildd Service unless you set auth.tokenSecret OR restrict
-  # the source IPs here. Leave empty for in-cluster (ClusterIP) use.
-  loadBalancerSourceRanges: []
-  # /route blocks up to --route-wait (180s) for a COLD daemon to become Ready. The OVH/OpenStack LB's
-  # default member-data idle timeout (50s) would cut that wait → curl "(52) Empty reply". Raise it past
-  # route-wait so first-build cold starts complete. Honored by the OpenStack CCM (milliseconds).
-  annotations:
-    loadbalancer.openstack.org/timeout-member-data: "200000"
-    loadbalancer.openstack.org/timeout-client-data: "200000"
 
 # Names of the mTLS Secrets minted by deploy/cert/create-certs.sh. The daemon Secret is mounted by
 # per-project daemons (the controller wires its NAME into each StatefulSet). buildd itself does NOT

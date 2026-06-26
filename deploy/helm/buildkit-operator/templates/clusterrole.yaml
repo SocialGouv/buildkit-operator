@@ -1,7 +1,8 @@
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: {{ include "buildkit-operator.fullname" . }}-buildd
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: buildd
@@ -32,12 +33,13 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
-  # ConfigMaps and Secrets are mounted into the daemons (buildkitd.toml, certs):
-  # read-only is enough — the chart ships the ConfigMap, create-certs.sh the
-  # Secrets.
+  # Daemon cert Secret: buildd reads this Secret only to warn early when gateway.host is configured
+  # but the daemon certificate lacks a matching wildcard SAN. Daemon pods mount certs/config via the
+  # kubelet; buildd does not need list/watch over Secrets or ConfigMaps.
   - apiGroups: [""]
-    resources: ["configmaps", "secrets"]
-    verbs: ["get", "list", "watch"]
+    resources: ["secrets"]
+    resourceNames: [{{ .Values.certs.daemonSecretName | quote }}]
+    verbs: ["get"]
   # Events: emit reconcile events on the CRs/daemons.
   - apiGroups: [""]
     resources: ["events"]
@@ -47,7 +49,16 @@ rules:
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshots"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-leader-election
+  namespace: {{ include "buildkit-operator.operatorNamespace" . }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildd
+rules:
   # --- leader election (HA): the controller-runtime manager holds a Lease ----
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

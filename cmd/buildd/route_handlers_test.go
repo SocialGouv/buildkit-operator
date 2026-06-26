@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
@@ -105,6 +106,18 @@ func TestHandleComplete_RejectsMissingKey(t *testing.T) {
 	}
 }
 
+func TestCacheFor_SkipsForks(t *testing.T) {
+	srv := &routeServer{s3Bucket: "bucket", s3Region: "gra", s3Endpoint: "https://s3.example"}
+	canonical := router.ProjectKey("github.com/org/repo", "", "", "amd64")
+
+	if got := srv.cacheFor(canonical); got == nil || got.Name != canonical || got.Bucket != "bucket" {
+		t.Fatalf("canonical cache = %#v, want S3 cache for %s", got, canonical)
+	}
+	if got := srv.cacheFor(router.ForkKey(canonical)); got != nil {
+		t.Fatalf("fork cache = %#v, want nil", got)
+	}
+}
+
 // The shared rate limiter returns 429 once the burst is exhausted, across the auth'd POST endpoints.
 func TestRateLimit_Returns429WhenExhausted(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).Build()
@@ -123,6 +136,49 @@ func TestRateLimit_Returns429WhenExhausted(t *testing.T) {
 	srv.handlePrewarm(rec2, httptest.NewRequest(http.MethodPost, "/prewarm", bytes.NewReader(body)))
 	if rec2.Code != http.StatusTooManyRequests {
 		t.Fatalf("second request status = %d, want 429", rec2.Code)
+	}
+}
+
+func TestAuthRunsBeforeRateLimit(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).Build()
+	srv := newTestServer(t, c)
+	srv.authToken = "s3cret"
+	srv.limiter = rate.NewLimiter(rate.Limit(0.0001), 1) // one token; unauthorized callers must not burn it
+
+	body, _ := json.Marshal(router.RouteRequest{Repo: "github.com/org/repo", Arch: "amd64"})
+	bad := httptest.NewRecorder()
+	srv.handlePrewarm(bad, httptest.NewRequest(http.MethodPost, "/prewarm", bytes.NewReader(body)))
+	if bad.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want 401", bad.Code)
+	}
+
+	good := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/prewarm", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer s3cret")
+	srv.handlePrewarm(good, req)
+	if good.Code == http.StatusTooManyRequests {
+		t.Fatalf("authorized request was rate-limited after an unauthorized request")
+	}
+	if good.Code != http.StatusAccepted {
+		t.Fatalf("authorized status = %d, want 202", good.Code)
+	}
+}
+
+func TestDecodeReqRejectsUnknownOrOversizedBody(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).Build()
+	srv := newTestServer(t, c)
+
+	rec1 := httptest.NewRecorder()
+	srv.handlePrewarm(rec1, httptest.NewRequest(http.MethodPost, "/prewarm", strings.NewReader(`{"repo":"github.com/org/repo","arch":"amd64","extra":true}`)))
+	if rec1.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d, want 400", rec1.Code)
+	}
+
+	rec2 := httptest.NewRecorder()
+	body := `{"repo":"` + strings.Repeat("a", int(maxRouteRequestBytes)) + `","arch":"amd64"}`
+	srv.handlePrewarm(rec2, httptest.NewRequest(http.MethodPost, "/prewarm", strings.NewReader(body)))
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("oversized body status = %d, want 400", rec2.Code)
 	}
 }
 
