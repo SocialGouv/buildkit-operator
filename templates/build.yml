@@ -61,6 +61,12 @@ spec:
     target:
       default: ""
       description: Dockerfile target stage.
+    build_args:
+      default: ""
+      description: Build args, one KEY=VALUE per line (forwarded to buildx as --build-arg).
+    labels:
+      default: ""
+      description: OCI image labels, one key=value per line (forwarded to buildx as --label).
     untrusted:
       default: "false"
       description: Untrusted (fork/MR) build — route to an ephemeral daemon, no write-back to the shared cache.
@@ -116,6 +122,8 @@ spec:
     BUILD_CONTEXT: "$[[ inputs.context ]]"
     DOCKERFILE: "$[[ inputs.dockerfile ]]"
     TARGET: "$[[ inputs.target ]]"
+    BUILD_ARGS: "$[[ inputs.build_args ]]"
+    LABELS: "$[[ inputs.labels ]]"
     UNTRUSTED: "$[[ inputs.untrusted ]]"
     TAGS: "$[[ inputs.tags ]]"
     PUSH: "$[[ inputs.push ]]"

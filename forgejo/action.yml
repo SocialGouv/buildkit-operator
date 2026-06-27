@@ -73,6 +73,12 @@ inputs:
   target:
     description: "Dockerfile target stage."
     default: ""
+  build-args:
+    description: "Build args, one KEY=VALUE per line (forwarded to buildx as --build-arg)."
+    default: ""
+  labels:
+    description: "OCI image labels, one key=value per line (forwarded to buildx as --label)."
+    default: ""
   untrusted:
     description: "Untrusted (fork-PR) build: route to an ephemeral daemon, no write-back to the shared cache."
     default: "false"
@@ -144,6 +150,8 @@ runs:
         BUILD_CONTEXT: ${{ inputs.context }}
         DOCKERFILE: ${{ inputs.file }}
         TARGET: ${{ inputs.target }}
+        BUILD_ARGS: ${{ inputs.build-args }}
+        LABELS: ${{ inputs.labels }}
         UNTRUSTED: ${{ inputs.untrusted }}
         TAGS: ${{ inputs.tags }}
         PUSH: ${{ inputs.push }}
