@@ -297,6 +297,7 @@ evidence from validating buildkit-operator on a real OVH MKS cluster:
 - [storage-and-cold-cache.md](docs/storage-and-cold-cache.md) — the 3 cache layers; **S3 ≈ 9× cold**
 - [performance.md](docs/performance.md) — measured warm/cold, with/without S3
 - [comparison-buildkit-service.md](docs/comparison-buildkit-service.md) — side-by-side vs the shared service
+- [build-acceleration-landscape.md](docs/build-acceleration-landscape.md) — the commercial market (Depot, Docker Build Cloud, …) and how buildkit-operator compares
 - [ci-integration.md](docs/ci-integration.md) — the GitHub Action, CI-agnostic core, public exposure
 - [benchmarks-phase0.md](docs/benchmarks-phase0.md) — the Cinder gen2 bench that picks the config
 - [operations.md](docs/operations.md) — deploy / expose / observe / tear down runbook
