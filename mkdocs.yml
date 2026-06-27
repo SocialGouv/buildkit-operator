@@ -4,6 +4,12 @@ site_url: https://socialgouv.github.io/buildkit-operator/
 repo_url: https://github.com/socialgouv/buildkit-operator
 docs_dir: docs
 
+# The site Home is the root README (the rich overview), rendered to docs/index.md at build time by
+# pages.yml (a sed that rewrites its docs/ links to the site root). docs/index.md is gitignored. The
+# thin docs/README.md index is kept for GitHub folder browsing but excluded from the site below.
+exclude_docs: |
+  /README.md
+
 theme:
   name: material
   icon:
@@ -31,7 +37,7 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
 
 nav:
-  - Home: README.md
+  - Home: index.md
   - Architecture: architecture.md
   - CI integration: ci-integration.md
   - Onboarding: onboarding.md
@@ -41,6 +47,7 @@ nav:
   - Platform notes (OVH MKS): platform-ovh-mks.md
   - Performance: performance.md
   - Comparison vs buildkit-service: comparison-buildkit-service.md
+  - Build-acceleration landscape: build-acceleration-landscape.md
   - Benchmarks (Phase 0): benchmarks-phase0.md
   - Operations: operations.md
   - Lessons learned: lessons-learned.md
