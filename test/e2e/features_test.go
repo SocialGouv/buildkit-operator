@@ -109,6 +109,25 @@ func TestCacheMountPersistence(t *testing.T) {
 	}
 }
 
+// 3b. Build args: a --build-arg passed via BUILD_ARGS reaches the remote daemon and influences the
+// build — the non-default ARG value shows up in the executed RUN output. This guards the
+// build-args input → BUILD_ARGS env → buildx `--build-arg` passthrough in scripts/build.sh that the
+// GitHub action.yml, GitLab templates/build.yml and forgejo/action.yml all share. A fresh repo forces
+// a cold build so the RUN actually executes (the arg is part of the layer cache key).
+func TestBuildArgs(t *testing.T) {
+	repo := uniqueRepo("buildargs")
+	key := router.ProjectKey(repo, "", "", "amd64")
+	t.Cleanup(func() { deleteBuildProject(key) })
+	const want = "BUILDARG_MSG=[hello-from-arg]"
+	df := "FROM busybox\nARG MSG=default\nRUN echo \"BUILDARG_MSG=[${MSG}]\"\n"
+	dir := writeContext(t, df, nil)
+
+	out := runBuild(t, buildOpts{repo: repo, contextDir: dir, buildArgs: map[string]string{"MSG": "hello-from-arg"}})
+	if !strings.Contains(out, want) {
+		t.Errorf("build-arg not applied; want %q in output\n%s", want, tail(out, 15))
+	}
+}
+
 // 4. Untrusted-fork isolation: an untrusted build runs on an EPHEMERAL fork daemon in a Kata microVM
 // (runtimeClassName=kata-clh) with NO S3 credentials, and the build executes (guest kernel via uname).
 func TestUntrustedKataIsolation(t *testing.T) {

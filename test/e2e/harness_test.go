@@ -129,6 +129,7 @@ type buildOpts struct {
 	tags       string
 	provenance string
 	sbom       bool
+	buildArgs  map[string]string // --build-arg KEY=VALUE (mapped to the BUILD_ARGS env, one per line)
 	extra      map[string]string // extra env (e.g. BUILDKIT_OPERATOR_WAIT_WARM)
 	timeout    time.Duration
 }
@@ -181,6 +182,13 @@ func runBuildE(t *testing.T, o buildOpts) (string, error) {
 	}
 	if c.gatewayHost != "" {
 		e["BUILDKIT_OPERATOR_GATEWAY_HOST"] = c.gatewayHost
+	}
+	if len(o.buildArgs) > 0 {
+		var b strings.Builder
+		for k, v := range o.buildArgs {
+			b.WriteString(k + "=" + v + "\n")
+		}
+		e["BUILD_ARGS"] = b.String()
 	}
 	for k, v := range o.extra {
 		e[k] = v
