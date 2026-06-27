@@ -15,12 +15,15 @@ theme:
   icon:
     repo: fontawesome/brands/github
   palette:
-    - scheme: default
-      primary: indigo
-      toggle: { icon: material/weather-night, name: Switch to dark }
+    # Dark (slate) is the default; the toggle remembers the visitor's choice.
     - scheme: slate
       primary: indigo
+      accent: indigo
       toggle: { icon: material/weather-sunny, name: Switch to light }
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/weather-night, name: Switch to dark }
   features:
     - navigation.sections
     - navigation.top
