@@ -7,14 +7,17 @@
     "jq@1.8.1",
     "cosign@3.1.1",
     "nodejs@24",
-    "go-task@3.48.0"
+    "go-task@3.48.0",
+    "gh@2.95.0",
+    "glab@1.101.0",
+    "forgejo-cli@0.5.0"
   ],
   "env": {
     "DEVBOX_COREPACK_ENABLED": "1"
   },
   "shell": {
     "init_hook": [
-      "echo 'buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign. Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.'"
+      "echo 'buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.'"
     ],
     "scripts": {
       "test":      ["task test"],

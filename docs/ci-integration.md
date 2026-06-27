@@ -83,6 +83,57 @@ That generates a `buildkit-operator-build` job. Inputs mirror the Action (`repo`
 consumable as a catalog component: `include: { component: "$CI_SERVER_FQDN/<path>/build@<version>" }`.
 Untrusted-MR builds and pre-warming are covered in [templates/README.md](../templates/README.md).
 
+## Forgejo Actions
+
+Forgejo Actions runs **GitHub-format** actions and mints the **same** OIDC identity token — the runner
+injects `ACTIONS_ID_TOKEN_REQUEST_URL`/`_TOKEN` when the job grants `id-token: write` — so the GitHub
+Action above works **as-is**. buildd verifies the Forgejo-signed token and binds the build to the
+verified `repository` claim, host-qualified with your instance host (so the cache key is
+`git.example.org/org/app`, isolated from a same-named GitHub repo). Requires **Forgejo ≥ 15.0** and a
+**forgejo-runner > 12.5** — older versions don't expose OIDC to Actions.
+
+```yaml
+# .forgejo/workflows/build.yml
+jobs:
+  build:
+    runs-on: docker            # whatever label your runner advertises
+    permissions:
+      id-token: write          # let the runner mint the OIDC token buildd verifies
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - uses: https://github.com/socialgouv/buildkit-operator@v1
+        with:
+          buildd-url: ${{ vars.BUILDKIT_OPERATOR_BUILDD_URL }}
+          ca:   ${{ secrets.BUILDKIT_OPERATOR_CA }}
+          cert: ${{ secrets.BUILDKIT_OPERATOR_CERT }}
+          key:  ${{ secrets.BUILDKIT_OPERATOR_KEY }}
+          # No shared /route token: the runner mints a Forgejo OIDC token (audience buildkit-operator)
+          # that buildd verifies and binds to ${{ github.repository }}. Just grant id-token: write above.
+          tags: git.example.org/org/app:${{ github.sha }}
+          push: "true"
+```
+
+The full-URL `uses:` form pins each action to github.com regardless of the instance's
+`[actions].DEFAULT_ACTIONS_URL` (drop the `https://github.com/` prefix if your instance already resolves
+bare `owner/repo` from github.com). For a locked-down instance that can't reach github.com at all, skip
+the composite action and run [`scripts/build.sh`](../scripts/build.sh) directly — mint the token with a
+single `curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=buildkit-operator"` and pass it as `BUILDKIT_OPERATOR_TOKEN`,
+exactly as the GitLab component does.
+
+Buildd side is **one provider entry**. The issuer is the Forgejo **Actions** OIDC endpoint — the
+`/api/actions` subpath, *not* the instance root (the root `.well-known/openid-configuration` is the
+login IdP, a different issuer). buildd still host-qualifies the repo with the bare host, so the cache key
+is `git.example.org/<owner>/<repo>`:
+
+```yaml
+oidc:
+  providers:
+    - type: forgejo                       # alias: gitea (same GitHub-compatible claim mapping)
+      issuer: https://git.example.org/api/actions
+      audience: buildkit-operator
+```
+
 ## The CI-agnostic core: `scripts/build.sh`
 
 The Action is a thin wrapper around `scripts/build.sh` — a small POSIX script that any CI able to
@@ -168,17 +219,19 @@ reachable off-cluster it must do more than gate access — it must prevent a cal
 another project. The strong, default posture is **OIDC** (`oidc.providers`): the CI job presents a
 forge-signed identity token, buildd verifies it and **replaces** the request's `repo` with the verified
 claim (and derives `untrusted` server-side). A leaked credential can therefore only ever build *its own*
-repo — never read or poison another project's cache. Both forges mint the token natively, so there is no
+repo — never read or poison another project's cache. Every forge mints the token natively, so there is no
 extra runner egress:
 
 - **GitHub Actions** — grant the job `permissions: id-token: write`; the Action mints the token
   (audience from `oidc-audience`, default `buildkit-operator`) automatically. Nothing else to pass.
 - **GitLab CI** — the component declares an `id_tokens:` entry (audience from the `oidc_audience` input)
   and sends it as the `/route` credential. No shared bearer to distribute.
+- **Forgejo Actions** — same as GitHub (the runner injects `ACTIONS_ID_TOKEN_REQUEST_URL`/`_TOKEN`);
+  needs Forgejo ≥ 15.0 + forgejo-runner > 12.5. See [the Forgejo section](#forgejo-actions).
 
-Configure providers in the chart (`oidc.providers` — built-in `type: github` / `type: gitlab`), and
-optionally a hard org gate with `oidc.repoAllowlist` (a verified-but-unlisted repo gets `403`). Adding
-**Forgejo** is one more provider entry.
+Configure providers in the chart (`oidc.providers` — built-in `type: github` / `type: gitlab` /
+`type: forgejo`), and optionally a hard org gate with `oidc.repoAllowlist` (a verified-but-unlisted repo
+gets `403`).
 
 **Fallbacks.** Without `oidc.providers`, `/route` falls back to the legacy bearer (`auth.tokenSecret`,
 constant-time compared, passed via the Action's `token` input) — keep that for **in-cluster only**

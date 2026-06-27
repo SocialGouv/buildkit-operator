@@ -289,7 +289,7 @@ oidc:
     #   issuer: https://gitlab.example.com
     #   audience: buildkit-operator
     # - type: forgejo  # built-in mapping (also "gitea"): repository claim, issuer host, PR ref => untrusted
-    #   issuer: https://forge.example.com
+    #   issuer: https://forge.example.com/api/actions   # the Forgejo ACTIONS OIDC issuer (subpath), not the root
     #   audience: buildkit-operator
   # Optional HARD org/repo gate applied AFTER signature verification (globs; trailing /* = prefix).
   # Empty = allow every verified repo (OIDC alone is the gate). A verified-but-unlisted repo gets 403.

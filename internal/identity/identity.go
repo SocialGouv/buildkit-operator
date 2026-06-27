@@ -1,12 +1,12 @@
 // Package identity verifies a CI OIDC token and turns it into a SERVER-VERIFIED project identity, so
 // buildd never has to trust the client's self-declared repo / untrusted fields. The callers are CI
-// systems (GitHub Actions, GitLab CI) that natively mint short-lived OIDC JWTs whose claims (the
-// repository / project path) are signed by the forge — verifying the signature against the issuer's
-// JWKS binds the build to a real repo and kills cross-repo cache poisoning.
+// systems (GitHub Actions, GitLab CI, Forgejo Actions) that natively mint short-lived OIDC JWTs whose
+// claims (the repository / project path) are signed by the forge — verifying the signature against the
+// issuer's JWKS binds the build to a real repo and kills cross-repo cache poisoning.
 //
-// It is provider-extensible: adding a forge (e.g. Forgejo) is adding a Provider with its issuer + claim
-// mapping, no other change. Verification is fail-closed: any error (unknown issuer, bad signature,
-// wrong audience, expired) is a rejection.
+// It is provider-extensible: adding a forge is adding a Provider with its issuer + claim mapping, no
+// other change (built-ins: github, gitlab, forgejo/gitea). Verification is fail-closed: any error
+// (unknown issuer, bad signature, wrong audience, expired) is a rejection.
 package identity
 
 import (
@@ -33,8 +33,8 @@ type Identity struct {
 // Provider configures one trusted OIDC issuer. Type selects a built-in claim mapping; Issuer/Audience
 // are always required. RepoClaim/Host override the Type defaults when a forge deviates.
 type Provider struct {
-	// Type selects built-in claim handling: "github" | "gitlab" (Forgejo: follow-up). Optional when
-	// RepoClaim+Host are set explicitly.
+	// Type selects built-in claim handling: "github" | "gitlab" | "forgejo" (alias "gitea"). Optional
+	// when RepoClaim+Host are set explicitly.
 	Type string `json:"type,omitempty"`
 	// Issuer is the OIDC issuer URL (e.g. https://token.actions.githubusercontent.com). Discovery runs
 	// against <issuer>/.well-known/openid-configuration.

@@ -49,9 +49,153 @@
         }
       }
     },
+    "forgejo-cli@0.5.0": {
+      "last_modified": "2026-06-08T15:01:26Z",
+      "resolved": "github:NixOS/nixpkgs/8c3cede7ddc26bd659d2d383b5610efbd2c7a16e#forgejo-cli",
+      "source": "devbox-search",
+      "version": "0.5.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/dvxfcpmak98ghz5l4117ajdpb8mb78mv-forgejo-cli-0.5.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/dvxfcpmak98ghz5l4117ajdpb8mb78mv-forgejo-cli-0.5.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/5z5zyjj130j7d9iygavadfbn56cibp2k-forgejo-cli-0.5.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/5z5zyjj130j7d9iygavadfbn56cibp2k-forgejo-cli-0.5.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/2sbg9g5sjnr0nkk4ydpgp4wm5qdkp3rg-forgejo-cli-0.5.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/2sbg9g5sjnr0nkk4ydpgp4wm5qdkp3rg-forgejo-cli-0.5.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/bxxrm0f4vb0wnmwvisxzfgap5kkylww1-forgejo-cli-0.5.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/bxxrm0f4vb0wnmwvisxzfgap5kkylww1-forgejo-cli-0.5.0"
+        }
+      }
+    },
+    "gh@2.95.0": {
+      "last_modified": "2026-06-22T09:00:13Z",
+      "resolved": "github:NixOS/nixpkgs/b3c092d3c36d91e2f61f3dfb39a159f180a56659#gh",
+      "source": "devbox-search",
+      "version": "2.95.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/caf7iv1ab7hj6qaqrhp93crfv99843i7-gh-2.95.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/caf7iv1ab7hj6qaqrhp93crfv99843i7-gh-2.95.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/wq54s5hlnigpq6iayd9g3463z5gsahal-gh-2.95.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/wq54s5hlnigpq6iayd9g3463z5gsahal-gh-2.95.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/zpnrc7napyn3zaygkpghrv8nxjlbs29h-gh-2.95.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/zpnrc7napyn3zaygkpghrv8nxjlbs29h-gh-2.95.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/8ffjsm5lvpp7gmj8j2c93hzca4i7xz74-gh-2.95.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/8ffjsm5lvpp7gmj8j2c93hzca4i7xz74-gh-2.95.0"
+        }
+      }
+    },
     "github:NixOS/nixpkgs/nixpkgs-unstable": {
       "last_modified": "2026-06-23T00:43:55Z",
       "resolved": "github:NixOS/nixpkgs/89570f24e97e614aa34aa9ab1c927b6578a43775?lastModified=1782175435&narHash=sha256-EMzXKmnOtBQ2MnvpiNOm7E%2BkOMvdPrIKaeg52Tip2Uk%3D"
+    },
+    "glab@1.101.0": {
+      "last_modified": "2026-06-08T15:01:26Z",
+      "resolved": "github:NixOS/nixpkgs/8c3cede7ddc26bd659d2d383b5610efbd2c7a16e#glab",
+      "source": "devbox-search",
+      "version": "1.101.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/qkjv9vvpqnr3l6qq2p28xblsl4f9hf9i-glab-1.101.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/qkjv9vvpqnr3l6qq2p28xblsl4f9hf9i-glab-1.101.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/201jaq3pv03pqdhja14vgkqsflcb6qfl-glab-1.101.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/201jaq3pv03pqdhja14vgkqsflcb6qfl-glab-1.101.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/02v2dmgwv2yhdbcylzdrh9g8m3ci89j4-glab-1.101.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/02v2dmgwv2yhdbcylzdrh9g8m3ci89j4-glab-1.101.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/4y2bas8mzfwylzb4jwllhzxp8id0lx2n-glab-1.101.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/4y2bas8mzfwylzb4jwllhzxp8id0lx2n-glab-1.101.0"
+        }
+      }
     },
     "go-task@3.48.0": {
       "last_modified": "2026-05-21T08:15:18Z",
