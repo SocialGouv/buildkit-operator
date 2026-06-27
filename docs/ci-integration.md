@@ -85,39 +85,47 @@ Untrusted-MR builds and pre-warming are covered in [templates/README.md](../temp
 
 ## Forgejo Actions
 
-Forgejo Actions runs **GitHub-format** actions and mints the **same** OIDC identity token — the runner
-injects `ACTIONS_ID_TOKEN_REQUEST_URL`/`_TOKEN` when the job grants `id-token: write` — so the GitHub
-Action above works **as-is**. buildd verifies the Forgejo-signed token and binds the build to the
-verified `repository` claim, host-qualified with your instance host (so the cache key is
-`git.example.org/org/app`, isolated from a same-named GitHub repo). Requires **Forgejo ≥ 15.0** and a
-**forgejo-runner > 12.5** — older versions don't expose OIDC to Actions.
+Forgejo Actions runs **GitHub-format** actions and mints the same kind of OIDC identity token, so
+buildkit-operator ships a reusable composite action — the Forgejo counterpart of the GitHub Action and
+the GitLab component: [`forgejo/action.yml`](../forgejo/action.yml). buildd verifies the Forgejo-signed
+token and binds the build to the verified `repository` claim, host-qualified with your instance host
+(cache key `git.example.org/<owner>/<repo>`, isolated from a same-named GitHub repo).
+
+**Two Forgejo-specific things** (≠ GitHub), both validated end to end:
+
+- The OIDC opt-in is **`enable-openid-connect: true`** at the workflow or job level — *not* GitHub's
+  `permissions: id-token: write`. Without it the runner does **not** inject `ACTIONS_ID_TOKEN_REQUEST_URL`,
+  so no token is minted and the build falls back to the bearer/admin path.
+- It needs **Forgejo ≥ 15.0** and a **forgejo-runner > v12.5** (older runners — e.g. 6.x — simply don't
+  inject the OIDC token).
 
 ```yaml
 # .forgejo/workflows/build.yml
 jobs:
   build:
-    runs-on: docker            # whatever label your runner advertises
-    permissions:
-      id-token: write          # let the runner mint the OIDC token buildd verifies
+    runs-on: ubuntu-latest
+    enable-openid-connect: true          # Forgejo's OIDC opt-in (NOT permissions: id-token: write)
+    container:
+      image: docker:27                   # any image with docker buildx + curl + jq (the build runs remote)
     steps:
-      - uses: https://github.com/actions/checkout@v4
-      - uses: https://github.com/socialgouv/buildkit-operator@v1
+      - uses: actions/checkout@v4
+      - uses: https://github.com/socialgouv/buildkit-operator/forgejo@v1
         with:
           buildd-url: ${{ vars.BUILDKIT_OPERATOR_BUILDD_URL }}
           ca:   ${{ secrets.BUILDKIT_OPERATOR_CA }}
           cert: ${{ secrets.BUILDKIT_OPERATOR_CERT }}
           key:  ${{ secrets.BUILDKIT_OPERATOR_KEY }}
           # No shared /route token: the runner mints a Forgejo OIDC token (audience buildkit-operator)
-          # that buildd verifies and binds to ${{ github.repository }}. Just grant id-token: write above.
+          # that buildd verifies and binds to ${{ github.repository }}.
           tags: git.example.org/org/app:${{ github.sha }}
           push: "true"
 ```
 
-The full-URL `uses:` form pins each action to github.com regardless of the instance's
-`[actions].DEFAULT_ACTIONS_URL` (drop the `https://github.com/` prefix if your instance already resolves
-bare `owner/repo` from github.com). For a locked-down instance that can't reach github.com at all, skip
-the composite action and run [`scripts/build.sh`](../scripts/build.sh) directly — mint the token with a
-single `curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+The `forgejo/` action uses **no third-party nested actions** (unlike the GitHub `action.yml`, which pulls
+`docker/setup-buildx-action`), so it works regardless of the instance's `[actions].DEFAULT_ACTIONS_URL`.
+The mTLS inputs accept raw PEM **or** base64 (handy: k8s Secret values are already base64). For a fully
+air-gapped runner you can skip the action and run [`scripts/build.sh`](../scripts/build.sh) directly — mint
+the token with one `curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"
 "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=buildkit-operator"` and pass it as `BUILDKIT_OPERATOR_TOKEN`,
 exactly as the GitLab component does.
 
@@ -226,8 +234,9 @@ extra runner egress:
   (audience from `oidc-audience`, default `buildkit-operator`) automatically. Nothing else to pass.
 - **GitLab CI** — the component declares an `id_tokens:` entry (audience from the `oidc_audience` input)
   and sends it as the `/route` credential. No shared bearer to distribute.
-- **Forgejo Actions** — same as GitHub (the runner injects `ACTIONS_ID_TOKEN_REQUEST_URL`/`_TOKEN`);
-  needs Forgejo ≥ 15.0 + forgejo-runner > 12.5. See [the Forgejo section](#forgejo-actions).
+- **Forgejo Actions** — the [`forgejo/`](../forgejo/action.yml) action mints the token, but the opt-in is
+  **`enable-openid-connect: true`** on the job (Forgejo's spelling, *not* `permissions: id-token: write`);
+  needs Forgejo ≥ 15.0 + forgejo-runner > v12.5. See [the Forgejo section](#forgejo-actions).
 
 Configure providers in the chart (`oidc.providers` — built-in `type: github` / `type: gitlab` /
 `type: forgejo`), and optionally a hard org gate with `oidc.repoAllowlist` (a verified-but-unlisted repo

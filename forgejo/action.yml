@@ -1,0 +1,163 @@
+# Reusable Forgejo Actions composite action for buildkit-operator — the Forgejo counterpart of the
+# repo-root GitHub `action.yml` and the GitLab `templates/build.yml` component. It routes the build to
+# the project's hot buildkitd (via buildd /route) and runs `docker buildx` against that daemon over mTLS
+# — warm cache + optional S3 cold cache, monorepo-aware. The build runs on the REMOTE daemon, so the job
+# needs only `docker buildx` + curl + jq (no dind on the runner side).
+#
+# Consume it from a Forgejo repo:
+#   jobs:
+#     build:
+#       runs-on: ubuntu-latest
+#       enable-openid-connect: true          # REQUIRED — Forgejo's OIDC opt-in (NOT permissions.id-token);
+#       steps:                               # the runner only injects the token when this is set.
+#         - uses: actions/checkout@v4
+#         - uses: https://github.com/socialgouv/buildkit-operator/forgejo@v1
+#           with:
+#             buildd-url: ${{ vars.BUILDKIT_OPERATOR_BUILDD_URL }}
+#             ca: ${{ secrets.BUILDKIT_OPERATOR_CA }}
+#             cert: ${{ secrets.BUILDKIT_OPERATOR_CERT }}
+#             key: ${{ secrets.BUILDKIT_OPERATOR_KEY }}
+#             tags: git.example.org/org/app:${{ github.sha }}
+#             push: "true"
+#
+# Requires Forgejo >= 15.0 and forgejo-runner > v12.5 (older runners don't inject the OIDC token). Unlike
+# the GitHub action it uses NO third-party nested actions (docker/setup-buildx-action, cosign-installer),
+# so it works regardless of the instance's `[actions].DEFAULT_ACTIONS_URL`.
+name: "buildkit-operator build (Forgejo)"
+description: "Build a container image via buildkit-operator from Forgejo Actions: mint a Forgejo OIDC identity token, route to the project's hot buildkitd, and build with buildx remote over mTLS."
+author: "SocialGouv"
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  buildd-url:
+    description: "buildd /route API URL (LoadBalancer/Ingress)."
+    required: true
+  ca:
+    description: "Client mTLS CA (PEM, or base64 of the PEM)."
+    required: true
+  cert:
+    description: "Client mTLS certificate (PEM, or base64)."
+    required: true
+  key:
+    description: "Client mTLS private key (PEM, or base64)."
+    required: true
+  tags:
+    description: "Image tag(s), whitespace-separated (e.g. git.example.org/org/app:sha)."
+    required: true
+  oidc-audience:
+    description: "Audience of the Forgejo OIDC token minted for buildd /route auth. Must match buildd's provider audience. Empty = don't mint (use token/admin-token)."
+    default: "buildkit-operator"
+  token:
+    description: "Fallback /route credential when OIDC isn't used: a legacy bearer token. Leave empty when buildd enforces OIDC (the job mints the token automatically — set enable-openid-connect: true)."
+    default: ""
+  admin-token:
+    description: "Break-glass admin token (sent in the X-Buildkit-Operator-Admin-Token header) — bypasses OIDC. For ops only."
+    default: ""
+  repo:
+    description: "Project identity = the cache key. Defaults to the Forgejo repository. IGNORED when buildd enforces OIDC (the verified repository claim is authoritative)."
+    default: ${{ github.repository }}
+  name:
+    description: "Optional monorepo component — gives each image its own daemon + cache."
+    default: ""
+  arch:
+    description: "Build architecture: amd64 | arm64."
+    default: amd64
+  context:
+    description: "Build context path."
+    default: "."
+  file:
+    description: "Dockerfile path (default: Dockerfile in the context)."
+    default: ""
+  target:
+    description: "Dockerfile target stage."
+    default: ""
+  untrusted:
+    description: "Untrusted (fork-PR) build: route to an ephemeral daemon, no write-back to the shared cache."
+    default: "false"
+  push:
+    description: "Push the result to the registry."
+    default: "false"
+  gateway-host:
+    description: "Optional: the gateway's public domain (e.g. bkod.example.com). The daemon endpoint is reached at buildkitd-<key>.<gateway-host> over real wildcard DNS — preferred over gateway-ip (IP-independent)."
+    default: ""
+  gateway-ip:
+    description: "Optional: gateway LoadBalancer IP, to map the gateway hostname for this run when there is no wildcard DNS yet (testing/bootstrap)."
+    default: ""
+  provenance:
+    description: "SLSA provenance attestation, e.g. 'mode=max' (needs push: true). Empty = off."
+    default: ""
+  sbom:
+    description: "Generate an SBOM attestation (needs push: true)."
+    default: "false"
+  sign:
+    description: "cosign keyless-sign the pushed image. Requires push: true and enable-openid-connect: true (the Sigstore OIDC token)."
+    default: "false"
+
+outputs:
+  digest:
+    description: "Image digest (sha256:...) of the build result. Populated when push: true."
+    value: ${{ steps.build.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    # Mint a Forgejo OIDC identity token for buildd /route auth — buildd verifies its signature and binds
+    # the build to the verified `repository` claim (host-qualified with the instance host) server-side, so
+    # a leaked token can't impersonate another repo. The runner injects ACTIONS_ID_TOKEN_REQUEST_URL only
+    # when the JOB declares `enable-openid-connect: true`; degrades to the `token` input when absent.
+    - id: auth
+      shell: bash
+      env:
+        BKO_OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
+        BKO_TOKEN_INPUT: ${{ inputs.token }}
+      run: |
+        command -v jq >/dev/null && command -v curl >/dev/null \
+          || (apk add --no-cache jq curl 2>/dev/null || (apt-get update -qq && apt-get install -y -qq jq curl))
+        token=""
+        if [ -n "${BKO_OIDC_AUDIENCE:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${BKO_OIDC_AUDIENCE}" | jq -r '.value // empty')
+          [ -n "$token" ] && echo "buildkit-operator: using Forgejo OIDC identity token (audience=${BKO_OIDC_AUDIENCE})"
+        fi
+        if [ -z "$token" ] && [ -n "${BKO_OIDC_AUDIENCE:-}" ] && [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          echo "buildkit-operator: WARNING no OIDC token (ACTIONS_ID_TOKEN_REQUEST_URL not injected). Set 'enable-openid-connect: true' on the job and use forgejo-runner > v12.5; falling back to the 'token' input." >&2
+        fi
+        [ -z "$token" ] && token="${BKO_TOKEN_INPUT}"
+        if [ -n "$token" ]; then
+          echo "::add-mask::$token"
+          echo "BUILDKIT_OPERATOR_TOKEN=$token" >> "$GITHUB_ENV"
+        fi
+    - id: build
+      shell: bash
+      env:
+        BUILDKIT_OPERATOR_BUILDD_URL: ${{ inputs.buildd-url }}
+        BUILDKIT_OPERATOR_CA: ${{ inputs.ca }}
+        BUILDKIT_OPERATOR_CERT: ${{ inputs.cert }}
+        BUILDKIT_OPERATOR_KEY: ${{ inputs.key }}
+        # BUILDKIT_OPERATOR_TOKEN is set by the auth step above (OIDC JWT or the token input).
+        BUILDKIT_OPERATOR_ADMIN_TOKEN: ${{ inputs.admin-token }}
+        REPO: ${{ inputs.repo }}
+        NAME: ${{ inputs.name }}
+        ARCH: ${{ inputs.arch }}
+        BUILD_CONTEXT: ${{ inputs.context }}
+        DOCKERFILE: ${{ inputs.file }}
+        TARGET: ${{ inputs.target }}
+        UNTRUSTED: ${{ inputs.untrusted }}
+        TAGS: ${{ inputs.tags }}
+        PUSH: ${{ inputs.push }}
+        BUILDKIT_OPERATOR_GATEWAY_HOST: ${{ inputs.gateway-host }}
+        GATEWAY_IP: ${{ inputs.gateway-ip }}
+        PROVENANCE: ${{ inputs.provenance }}
+        SBOM: ${{ inputs.sbom }}
+      # Same CI-agnostic core the GitHub Action & GitLab component run (one source of truth).
+      run: sh "${{ github.action_path }}/../scripts/build.sh"
+    - if: ${{ inputs.sign == 'true' }}
+      shell: bash
+      env:
+        TAGS: ${{ inputs.tags }}
+      run: |
+        command -v cosign >/dev/null \
+          || (apk add --no-cache cosign 2>/dev/null || { echo "buildkit-operator: cosign not installed and not installable on this runner — cannot sign" >&2; exit 1; })
+        for t in $TAGS; do echo "cosign sign $t"; cosign sign --yes "$t"; done
