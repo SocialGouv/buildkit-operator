@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.0](https://github.com/SocialGouv/buildkit-operator/compare/v1...v0.9.0) (2026-06-27)
+
+### Features
+
+* **action:** gateway-host input for IP-independent gateway addressing ([7bcb4f8](https://github.com/SocialGouv/buildkit-operator/commit/7bcb4f8b6cfd5288e86e3a2fe950728c9b6d42ef))
+* **forgejo:** document Forgejo Actions support + add forge CLIs to devbox ([5634d1f](https://github.com/SocialGouv/buildkit-operator/commit/5634d1fcf07c00c2949ea3f3cc71fee10b9c6af5))
+* **forgejo:** reusable Forgejo Actions action + correct OIDC opt-in (enable-openid-connect) ([275c6ca](https://github.com/SocialGouv/buildkit-operator/commit/275c6ca01c510e5361f94607cb9f0391ee0abc03))
+* **security:** legacy-bearer fallback while OIDC is enabled (zero-downtime migration) ([b346209](https://github.com/SocialGouv/buildkit-operator/commit/b3462098a1eccde1a37a126e3fcfa7d66460c121))
+* **security:** verify CI OIDC identity on /route + harden egress, PVC, LB, CI ([c0e8906](https://github.com/SocialGouv/buildkit-operator/commit/c0e890690173516f3acb6a56767695af6c6fcc38))
+
 ## [0.8.3](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.8.3) (2026-06-26)
 
 ### Bug Fixes
