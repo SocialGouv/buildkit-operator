@@ -44,6 +44,16 @@ zfs list "$CACHE_DS" >/dev/null 2>&1 || zfs create "$CACHE_DS"
 echo "== Incus init =="
 incus storage list >/dev/null 2>&1 || incus admin init --minimal
 
+# Host firewall preflight: Docker enables br_netfilter + a FORWARD DROP policy that strands OTHER bridges,
+# so Incus containers get no IPv4 (DHCP dropped). Take the Incus bridge out of iptables' path. No-op on a
+# Docker-less host (e.g. a fresh cloud VM).
+if command -v docker >/dev/null 2>&1 && [ "$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo 0)" = 1 ]; then
+  echo "   Docker detected — relaxing bridge netfilter so the Incus bridge gets IPv4"
+  sysctl -w net.bridge.bridge-nf-call-iptables=0 >/dev/null || true
+  iptables -I DOCKER-USER -i incusbr0 -j ACCEPT 2>/dev/null || true
+  iptables -I DOCKER-USER -o incusbr0 -j ACCEPT 2>/dev/null || true
+fi
+
 build_image() { # alias, extra launch flags (e.g. --vm)
   local alias="$1"; shift
   incus image alias list 2>/dev/null | grep -q " $alias " && return 0
@@ -51,7 +61,16 @@ build_image() { # alias, extra launch flags (e.g. --vm)
   incus delete -f "$tmp" 2>/dev/null || true
   echo "   building image $alias $*"
   incus launch images:ubuntu/24.04 "$tmp" -c security.nesting=true "$@"
-  for _ in $(seq 1 60); do incus exec "$tmp" -- test -e /run/systemd/system 2>/dev/null && break; sleep 1; done
+  # Wait for the instance to actually have working network + DNS before pulling buildkit (booting to
+  # /run/systemd is not enough — DHCP/DNS land a beat later). If it never comes up, the host firewall is
+  # almost certainly the cause (Docker enables br_netfilter + a FORWARD DROP that catches the Incus
+  # bridge): fix with `sysctl net.bridge.bridge-nf-call-iptables=0`.
+  local netok=0
+  for _ in $(seq 1 60); do
+    if incus exec "$tmp" -- getent hosts github.com >/dev/null 2>&1; then netok=1; break; fi
+    sleep 2
+  done
+  [ "$netok" = 1 ] || { echo "ERROR: instance '$tmp' has no network/DNS after 120s (host firewall? try: sudo sysctl -w net.bridge.bridge-nf-call-iptables=0)"; incus delete -f "$tmp"; exit 1; }
   incus exec "$tmp" -- bash -c "
     set -e
     curl -fsSL '$TARBALL_URL' | tar -C /usr/local -xz
