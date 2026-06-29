@@ -60,7 +60,7 @@ build_image() { # alias, extra launch flags (e.g. --vm)
   local tmp="bko-base-$alias"
   incus delete -f "$tmp" 2>/dev/null || true
   echo "   building image $alias $*"
-  incus launch images:ubuntu/24.04 "$tmp" -c security.nesting=true "$@"
+  incus launch images:ubuntu/24.04 "$tmp" -c security.nesting=true "$@" || { echo "   launch failed for $alias"; return 1; }
   # Wait for the instance to actually have working network + DNS before pulling buildkit (booting to
   # /run/systemd is not enough — DHCP/DNS land a beat later). If it never comes up, the host firewall is
   # almost certainly the cause (Docker enables br_netfilter + a FORWARD DROP that catches the Incus
@@ -70,7 +70,7 @@ build_image() { # alias, extra launch flags (e.g. --vm)
     if incus exec "$tmp" -- getent hosts github.com >/dev/null 2>&1; then netok=1; break; fi
     sleep 2
   done
-  [ "$netok" = 1 ] || { echo "ERROR: instance '$tmp' has no network/DNS after 120s (host firewall? try: sudo sysctl -w net.bridge.bridge-nf-call-iptables=0)"; incus delete -f "$tmp"; exit 1; }
+  [ "$netok" = 1 ] || { echo "   instance '$tmp' has no network/DNS after 120s (host firewall? try: sudo sysctl -w net.bridge.bridge-nf-call-iptables=0)"; incus delete -f "$tmp"; return 1; }
   incus exec "$tmp" -- bash -c "
     set -e
     curl -fsSL '$TARBALL_URL' | tar -C /usr/local -xz
@@ -92,15 +92,20 @@ UNIT
 }
 
 echo "== build insecure buildkitd image(s) =="
-build_image bko-buildkitd
+build_image bko-buildkitd || { echo "ERROR: failed to build the buildkitd container image"; exit 1; }
 VM_FLAG=""
-# Untrusted fork = Incus VM, which needs BOTH /dev/kvm AND a qemu-system binary. Many desktops have
-# /dev/kvm but not qemu installed (incus then errors "QEMU command not available"); skip gracefully.
+# Untrusted fork = Incus VM (needs /dev/kvm + qemu + incus VM support). The qemu binary being present is
+# NOT enough — incus must actually support VMs (`incus restart` after installing qemu, ovmf, etc.). So we
+# ATTEMPT the VM image and fall back gracefully: a failure just disables untrusted-fork support locally.
 if [ -e /dev/kvm ] && command -v "qemu-system-$(uname -m)" >/dev/null 2>&1; then
-  build_image bko-buildkitd-vm --vm
-  VM_FLAG="--incus-vm-image bko-buildkitd-vm"
+  if build_image bko-buildkitd-vm --vm; then
+    VM_FLAG="--incus-vm-image bko-buildkitd-vm"
+  else
+    echo "   VM image build failed — incus VM unsupported on this host? Continuing WITHOUT untrusted-fork (VM) support."
+    incus delete -f bko-base-bko-buildkitd-vm 2>/dev/null || true
+  fi
 else
-  echo "   no qemu/VM support on this host — skipping the VM fork image (install qemu-system-x86 for untrusted forks)"
+  echo "   no qemu/VM support on this host — skipping the VM fork image (install qemu-system-x86 + restart incus for untrusted forks)"
 fi
 
 echo "== run buildd (root; insecure; IP endpoint) =="
