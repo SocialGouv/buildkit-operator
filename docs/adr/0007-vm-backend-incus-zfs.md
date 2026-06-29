@@ -1,6 +1,6 @@
 # 0007 — A pluggable provisioning backend; single-host Incus + ZFS alongside Kubernetes
 
-**Status:** Proposed · **Date:** 2026-06-29
+**Status:** Accepted · **Date:** 2026-06-29
 
 ## Context
 
@@ -66,11 +66,11 @@ natively, so it cannot reach full parity.
 - ⚠️ A second backend to maintain + a doubled e2e matrix; egress hardening
   ([0006](0006-namespace-topology.md)'s NetworkPolicy) is re-implemented by binding an Incus network ACL
   per instance (strict for untrusted forks).
-- ⚠️ **Status is Proposed**: the local backend is implemented — warm build + cache, scale-to-zero,
-  durable ZFS snapshots with retention, CoW fork seeding (`zfs clone`) into a VM-isolated instance
-  (untrusted builds are refused without a VM image), and a fan-out clone primitive — all covered by unit
-  tests over a stubbed host seam. The control plane is additionally validated **end-to-end** via the
-  Docker dev runtime (route → provision → warm cache-mount reuse → scale-to-zero → restart from the
-  retained cache → cache still warm). What remains before Accepted is **real end-to-end validation on
-  Incus + ZFS** specifically (kernel snapshots, VM forks) plus an automatic saturation trigger for
-  fan-out.
+- ✅ **Validated end-to-end on real Incus + ZFS** (2026-06-29, OVH Public Cloud `d2-8`, GRA11, Ubuntu
+  26.04, Incus 6.0.5 — see [deploy/vm/README.md](../../deploy/vm/README.md#validated-on-real-incus--zfs)):
+  hot daemon, warm cache-mount reuse (`CACHE_MISS`→`CACHE_HIT`), atomic kernel ZFS snapshots, untrusted
+  fork running as a VM, and CoW fork seed via `zfs clone` (USED ≈1 K / REFER ≈5 M). Unit tests cover the
+  same logic over a stubbed host seam, and the control plane is also exercised via the Docker dev runtime.
+- ⚠️ Remaining follow-up: an automatic saturation **trigger** for fan-out (the `Fanout` primitive exists
+  + is tested, but nothing invokes it yet); production hardening of the Docker dev runtime is out of scope
+  (it is dev-only).

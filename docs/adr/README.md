@@ -17,6 +17,6 @@ decisions themselves were taken earlier during the phase-0 / M1–M5 build-out. 
 | [0004](0004-shared-sni-gateway.md) | One **shared SNI gateway** for off-cluster CI (not one LB per daemon) | Accepted |
 | [0005](0005-kata-clh-for-untrusted-forks.md) | **Kata (cloud-hypervisor)** microVMs for untrusted fork isolation | Accepted |
 | [0006](0006-namespace-topology.md) | **Three-namespace** topology split by trust/role (operator / builds / system) | Accepted |
-| [0007](0007-vm-backend-incus-zfs.md) | **Pluggable provisioner**: single-host **Incus + ZFS** backend alongside Kubernetes | Proposed |
+| [0007](0007-vm-backend-incus-zfs.md) | **Pluggable provisioner**: single-host **Incus + ZFS** backend alongside Kubernetes | Accepted |
 
 New decision? Copy the shape of an existing file, bump the number, default Status to `Proposed`.

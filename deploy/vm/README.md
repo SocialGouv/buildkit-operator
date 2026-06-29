@@ -130,6 +130,30 @@ an untrusted **VM fork** on its own CoW-cloned dataset. Teardown is printed at t
 harness (no mTLS); production uses the mTLS + ACL path above. (A plain Ubuntu host avoids the
 AppArmor/LXC container-start quirks seen on some desktop distros like Mint.)
 
+## Validated on (real Incus + ZFS)
+
+End-to-end validated on **2026-06-29** on a throwaway **OVH Public Cloud** instance:
+
+- Provider / machine: **OVH Public Cloud, flavor `d2-8`** (4 vCPU / 8 GB), region **GRA11 (1-AZ)**,
+  hourly billing. `/dev/kvm` present (nested virt) → VM forks work.
+- OS: **Ubuntu 26.04**, **Incus 6.0.5**, ZFS on a 20 GB loopback pool (`bkopool`), no Docker.
+- Driver: `quickstart-insecure.sh` (the dev/insecure harness above).
+
+Observed (the full feature set, matching the k8s backend):
+
+| Behaviour | Evidence |
+|---|---|
+| Hot daemon per project | `buildkitd-<key>` RUNNING (CONTAINER) |
+| Warm `RUN --mount=type=cache` reuse | build #1 `CACHE_MISS` → build #2 `CACHE_HIT` |
+| Durable ZFS snapshot (atomic, kernel) | `bkopool/cache/<key>@bko-<ts>` |
+| Untrusted fork under VM isolation | `buildkitd-fork<key>` RUNNING **VIRTUAL-MACHINE** |
+| CoW fork seed (`zfs clone`) | `bkopool/cache/fork<key>` USED ≈1 K / REFER ≈5 M (blocks shared with parent) |
+
+The run also surfaced + fixed two real Incus-6.0 bugs: `incus launch --device` must be `incus init` +
+`incus config device add` + `incus start`; and egress-ACL binding is best-effort (a missing ACL no longer
+fails a build). The local (desktop) path can hit host firewall quirks (Docker's `br_netfilter` + `FORWARD
+DROP`, or a host firewall blocking DHCP on the Incus bridge) — a clean server/VM avoids them.
+
 ## What's still manual / future
 
 - **Fan-out** has a tested primitive (`Provisioner.Fanout`) but no automatic saturation trigger yet.
