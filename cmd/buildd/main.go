@@ -44,7 +44,7 @@ func main() {
 		kubeContext string
 		gatewayHost string
 	)
-	backend := flag.String("backend", "k8s", "provisioning backend: k8s (Kubernetes StatefulSets) | local (single-host Incus/ZFS, not yet implemented)")
+	backend := flag.String("backend", "k8s", "provisioning backend: k8s (Kubernetes StatefulSets) | local (single-host Incus + ZFS)")
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context to target (empty = current-context)")
 	flag.StringVar(&cfg.Namespace, "namespace", "buildkit-builds", "namespace the per-project daemons + BuildProjects + their certs/config live in (the 'builds' ns, distinct from the operator ns buildd runs in)")
 	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.31.1-rootless", "buildkitd image (vanilla)")
@@ -90,6 +90,13 @@ func main() {
 	s3Bucket := flag.String("s3-bucket", "", "shared S3 bucket for the cold cache (empty = disabled); buildd returns the per-project reference to clients")
 	s3Region := flag.String("s3-region", "us-east-1", "S3 region for the cold cache")
 	s3Endpoint := flag.String("s3-endpoint", "", "S3 endpoint URL (OVH Object Storage / MinIO; empty = AWS default)")
+	// Single-host backend (--backend local) knobs: one buildkitd Incus instance per project, backed by a
+	// retained ZFS dataset (the warm cache). Ignored by the k8s backend.
+	incusPool := flag.String("incus-pool", "", "[backend=local] ZFS parent dataset for per-project caches, e.g. tank/bko")
+	incusImage := flag.String("incus-image", "", "[backend=local] Incus image providing a vanilla buildkitd")
+	incusVMImage := flag.String("incus-vm-image", "", "[backend=local] Incus VM image for untrusted fork isolation (empty = --incus-image)")
+	localMountPath := flag.String("local-mount-path", "/var/lib/buildkit", "[backend=local] buildkitd data dir the cache dataset is mounted at")
+	localIdle := flag.Duration("local-idle-timeout", 15*time.Minute, "[backend=local] scale an instance to zero after this much idle")
 	flag.Parse()
 	cfg.Port = int32(*port)
 	cfg.HealthPort = int32(*healthPort)
@@ -97,10 +104,12 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	log := ctrl.Log.WithName("buildd")
 
-	// Backend selection. k8s is the default and only implemented backend; the local (Incus/ZFS)
-	// single-host backend is planned (P2) — fail loudly rather than silently behaving as k8s.
-	if *backend != "k8s" {
-		log.Error(nil, "unsupported --backend", "backend", *backend, "supported", "k8s")
+	// Backend selection: k8s (default, the Kubernetes manager path below) or local (single-host Incus +
+	// ZFS, dispatched after the shared OIDC setup since it shares the routing API + identity).
+	switch *backend {
+	case "k8s", "local":
+	default:
+		log.Error(nil, "unsupported --backend", "backend", *backend, "supported", "k8s, local")
 		panic("unsupported --backend " + *backend)
 	}
 
@@ -123,6 +132,23 @@ func main() {
 		log.Info("OIDC identity verification ENABLED", "providers", len(oidcCfg.Providers), "allowlistSize", len(oidcCfg.RepoAllowlist))
 	} else {
 		log.Info("OIDC identity verification OFF — /route trusts the caller's repo (bearer/admin token auth only); enable it via --oidc-config for off-cluster CI")
+	}
+
+	// Single-host backend: no Kubernetes manager, no kubeconfig — a local provisioner + the same routing
+	// API. Dispatched here so it reuses the OIDC verifier + auth tokens built above, then returns.
+	if *backend == "local" {
+		err := runLocalBackend(localParams{
+			cfg: cfg, apiListen: apiListen, routeWait: routeWait, maxCold: *maxCold,
+			apiRateLimit: *apiRateLimit, apiRateBurst: *apiRateBurst,
+			s3Bucket: *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
+			pool: *incusPool, image: *incusImage, vmImage: *incusVMImage,
+			mountPath: *localMountPath, idleTimeout: *localIdle,
+		}, verifier, authToken, adminToken, log)
+		if err != nil {
+			log.Error(err, "local backend exited")
+			panic(err)
+		}
+		return
 	}
 
 	restCfg, err := crconfig.GetConfigWithContext(kubeContext)
