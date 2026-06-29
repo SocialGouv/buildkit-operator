@@ -5,7 +5,6 @@ package v1alpha1
 // kept in lockstep by TestDefaultsMatchMarkers, which parses the markers and asserts ApplyDefaults
 // reproduces them — so a marker change without a constant change (or vice-versa) fails the build.
 const (
-	DefaultStorageClass    = "csi-cinder-high-speed-gen2"
 	DefaultCacheVolumeGi   = 60
 	DefaultTier            = TierWarm
 	DefaultIdleTimeoutSec  = 900
@@ -19,9 +18,9 @@ const (
 // (desiredReplicas skips the LastBuildTime window when IdleTimeoutSec==0).
 func (bp *BuildProject) ApplyDefaults() {
 	s := &bp.Spec
-	if s.StorageClass == "" {
-		s.StorageClass = DefaultStorageClass
-	}
+	// StorageClass has NO fixed default (cloud-portable): it is operator-configured via buildd
+	// --default-storage-class, and an empty value leaves StorageClassName unset so the cluster's
+	// default StorageClass is used. So it is intentionally absent from this lockstep.
 	if s.CacheVolumeGi == 0 {
 		s.CacheVolumeGi = DefaultCacheVolumeGi
 	}

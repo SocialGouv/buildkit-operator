@@ -491,10 +491,16 @@ func ptr[T any](v T) *T { return &v }
 
 // SetupWithManager wires the reconciler and the objects it owns.
 func (r *BuildProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&bkov1.BuildProject{}).
 		Owns(&appsv1.StatefulSet{}).
-		Owns(&corev1.Service{}).
-		Owns(&volumesnapshotv1.VolumeSnapshot{}).
-		Complete(r)
+		Owns(&corev1.Service{})
+	// Only watch VolumeSnapshots when the durability-snapshot feature is enabled. Otherwise the manager
+	// would require the external-snapshotter CRDs to exist just to START — they aren't installed on every
+	// cluster (e.g. a default EKS without the snapshot controller), which would crash an otherwise-fine
+	// snapshot-less deployment. The CRDs are only needed once a SnapshotClass is configured.
+	if r.Cfg.SnapshotClass != "" {
+		b = b.Owns(&volumesnapshotv1.VolumeSnapshot{})
+	}
+	return b.Complete(r)
 }

@@ -239,3 +239,17 @@ func TestService_ForkSelectorTargetsForkOnly(t *testing.T) {
 		t.Errorf("fork Service selector = %v, want plain daemon labels %v", svc.Spec.Selector, want)
 	}
 }
+
+// StorageClass flows to the cache PVC when set; empty leaves StorageClassName nil so the cluster's
+// DEFAULT StorageClass is used (a pointer to "" would instead disable dynamic provisioning).
+func TestStatefulSet_StorageClassPVC(t *testing.T) {
+	cfg := Config{Namespace: "ns", Port: 1234}
+	set := StatefulSet(&bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "k", Arch: "amd64", StorageClass: "ebs-gp3", CacheVolumeGi: 60}}, cfg)
+	if sc := set.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc == nil || *sc != "ebs-gp3" {
+		t.Errorf("set storageClass: PVC = %v, want ebs-gp3", sc)
+	}
+	empty := StatefulSet(&bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "k", Arch: "amd64", CacheVolumeGi: 60}}, cfg)
+	if sc := empty.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc != nil {
+		t.Errorf("empty storageClass: PVC StorageClassName = %v, want nil (cluster default)", sc)
+	}
+}

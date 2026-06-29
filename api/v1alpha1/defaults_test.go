@@ -41,8 +41,9 @@ func TestDefaultsMatchMarkers(t *testing.T) {
 		}
 	}
 
-	// All five defaulted fields must be discovered (guards against a marker being moved/renamed).
-	for _, f := range []string{"storageClass", "cacheVolumeGi", "tier", "idleTimeoutSec", "securityProfile"} {
+	// All four defaulted fields must be discovered (guards against a marker being moved/renamed).
+	// storageClass intentionally has NO fixed default (operator-configured via buildd --default-storage-class).
+	for _, f := range []string{"cacheVolumeGi", "tier", "idleTimeoutSec", "securityProfile"} {
 		if _, ok := markers[f]; !ok {
 			t.Fatalf("no +kubebuilder:default marker found for field %q", f)
 		}
@@ -53,7 +54,6 @@ func TestDefaultsMatchMarkers(t *testing.T) {
 	s := reflect.ValueOf(bp.Spec)
 
 	fieldByJSON := map[string]string{
-		"storageClass":    "StorageClass",
 		"cacheVolumeGi":   "CacheVolumeGi",
 		"tier":            "Tier",
 		"idleTimeoutSec":  "IdleTimeoutSec",

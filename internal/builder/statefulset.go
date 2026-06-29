@@ -27,6 +27,7 @@ type Config struct {
 	CertManagerCerts     bool   // daemon certs Secret is cert-manager-issued (keys tls.crt/tls.key/ca.crt) → remap at mount to the .pem filenames buildkitd reads
 	BuildkitdConfigMap   string // ConfigMap holding buildkitd.toml (gc config)
 	SnapshotClass        string // VolumeSnapshotClass for durability snapshots (M3)
+	DefaultStorageClass  string // cluster-wide default StorageClass for cache PVCs when a BuildProject sets none (empty = the cluster's default StorageClass)
 	Port                 int32  // TCP mTLS port (1234)
 	HealthPort           int32  // companion health port (8080)
 	Companion            bool   // include the companion sidecar (default true; off needs no custom image)
@@ -230,13 +231,17 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 		})
 	}
 
-	sc := bp.Spec.StorageClass
 	pvcSpec := corev1.PersistentVolumeClaimSpec{
-		AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-		StorageClassName: &sc,
+		AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 		Resources: corev1.VolumeResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(fmt.Sprintf("%dGi", bp.Spec.CacheVolumeGi))},
 		},
+	}
+	// Empty StorageClass => leave StorageClassName nil so the cluster's DEFAULT StorageClass is used.
+	// (A pointer to "" would instead DISABLE dynamic provisioning.) buildd stamps its configured default
+	// (--default-storage-class) at create time; an unset operator default stays empty here.
+	if sc := bp.Spec.StorageClass; sc != "" {
+		pvcSpec.StorageClassName = &sc
 	}
 	if bp.Spec.RestoreFromSnapshot != "" { // DR / seed: provision the warm cache from a snapshot
 		pvcSpec.DataSource = &corev1.TypedLocalObjectReference{
