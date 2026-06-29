@@ -139,20 +139,36 @@ End-to-end validated on **2026-06-29** on a throwaway **OVH Public Cloud** insta
 - OS: **Ubuntu 26.04**, **Incus 6.0.5**, ZFS on a 20 GB loopback pool (`bkopool`), no Docker.
 - Driver: `quickstart-insecure.sh` (the dev/insecure harness above).
 
-Observed (the full feature set, matching the k8s backend):
+Observed — the full feature set, matching the k8s backend:
 
 | Behaviour | Evidence |
 |---|---|
 | Hot daemon per project | `buildkitd-<key>` RUNNING (CONTAINER) |
 | Warm `RUN --mount=type=cache` reuse | build #1 `CACHE_MISS` → build #2 `CACHE_HIT` |
 | Durable ZFS snapshot (atomic, kernel) | `bkopool/cache/<key>@bko-<ts>` |
+| Snapshot retention (`--local-keep-snapshots 2`) | exactly 2 snapshots kept per dataset (older pruned) |
+| Scale-to-zero on idle | all daemons → `STOPPED`, datasets retained |
+| Restart from retained dataset | re-route → `STOPPED`→`RUNNING`, cache still warm |
+| `/complete` / `/prewarm` | HTTP 204 / 202 |
+| `--max-build-seconds` safety net | a stuck inflight (no `/complete`) still scales to zero |
+| Concurrent cold starts | 3 distinct projects provisioned in parallel, all builds OK |
 | Untrusted fork under VM isolation | `buildkitd-fork<key>` RUNNING **VIRTUAL-MACHINE** |
 | CoW fork seed (`zfs clone`) | `bkopool/cache/fork<key>` USED ≈1 K / REFER ≈5 M (blocks shared with parent) |
+| **mTLS** (`--local-endpoint-domain` + `--local-certs-path`) | endpoint `tcp://buildkitd-<key>.bko.local:1234`, wildcard cert, `buildctl` with client certs builds OK |
 
-The run also surfaced + fixed two real Incus-6.0 bugs: `incus launch --device` must be `incus init` +
-`incus config device add` + `incus start`; and egress-ACL binding is best-effort (a missing ACL no longer
-fails a build). The local (desktop) path can hit host firewall quirks (Docker's `br_netfilter` + `FORWARD
-DROP`, or a host firewall blocking DHCP on the Incus bridge) — a clean server/VM avoids them.
+Indicative timings (busybox/apt, single host, not a tuned benchmark): warm route + trivial build ≈ **2 s**;
+cold (provision + `apt install`) ≈ **20 s**; warm rebuild reusing the apt cache mount ≈ **12 s**. Local ZFS
+avoids the Cinder network-attach latency that dominates the k8s cold start.
+
+The run surfaced + fixed three real Incus-6.0 issues: `incus launch --device` must be `incus init` +
+`incus config device add` + `incus start`; egress-ACL binding is best-effort (a missing ACL no longer
+fails a build); and `Ready` now probes the buildkitd port (instance Running ≠ daemon serving — fixed a
+concurrent-cold-start race). For mTLS the host resolver must point `*.<domain>` at the Incus bridge
+dnsmasq (`resolvectl dns <bridge> <bridge-ip>; resolvectl domain <bridge> ~<domain>`).
+
+The local (desktop) path can hit host firewall quirks: Docker's `br_netfilter` + `FORWARD DROP`, and
+**ufw blocking DHCP on the Incus bridge** (fix: `ufw allow in on incusbr0` + `ufw route allow in/out on
+incusbr0`). A clean server/VM avoids them.
 
 ## What's still manual / future
 
