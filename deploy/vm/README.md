@@ -108,6 +108,28 @@ This path is validated end-to-end (route → provision → warm cache-mount reus
 from the retained cache → cache still warm). It is for local/dev use; production single-host is the Incus
 + ZFS runtime above.
 
+## Cheap cloud test (OVH Public Cloud, billed hourly)
+
+To validate the **real Incus + ZFS** path (kernel snapshots, `zfs clone` CoW, VM forks) without touching
+your machine, spin up a small Ubuntu 24.04 instance billed by the hour (OVH Public Cloud exposes the
+`vmx` flag, so `/dev/kvm` / nested virt works — both Incus containers *and* VM forks), run the test, and
+destroy it (cents). [`quickstart-insecure.sh`](quickstart-insecure.sh) automates it end to end:
+
+```sh
+# on your dev box: build the portable binary + copy the harness over
+CGO_ENABLED=0 devbox run -- go build -o deploy/vm/buildd ./cmd/buildd
+scp deploy/vm/buildd deploy/vm/quickstart-insecure.sh ubuntu@<instance>:/tmp/
+
+# on the instance (Ubuntu 24.04):
+sudo /tmp/quickstart-insecure.sh
+```
+
+It sets up a loopback ZFS pool + Incus, builds an **insecure** (plaintext, dev-only) buildkitd image,
+runs buildd, and checks: cold build → warm cache-mount HIT → ZFS durability snapshots → (if `/dev/kvm`)
+an untrusted **VM fork** on its own CoW-cloned dataset. Teardown is printed at the end. This is a dev
+harness (no mTLS); production uses the mTLS + ACL path above. (A plain Ubuntu host avoids the
+AppArmor/LXC container-start quirks seen on some desktop distros like Mint.)
+
 ## What's still manual / future
 
 - **Fan-out** has a tested primitive (`Provisioner.Fanout`) but no automatic saturation trigger yet.
