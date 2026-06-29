@@ -81,26 +81,28 @@ func TestCLI_InstanceExistsFromInfoExit(t *testing.T) {
 	}
 }
 
-func TestCLI_LaunchBuildsDeviceAndVMArgs(t *testing.T) {
-	var got []string
-	stubExec(t, "", false, func(_ string, args []string) { got = args })
+func TestCLI_LaunchInitsAddsDevicesStarts(t *testing.T) {
+	var calls []string
+	stubExec(t, "", false, func(_ string, args []string) { calls = append(calls, strings.Join(args, " ")) })
 	err := NewCLI().Launch(context.Background(), InstanceSpec{
 		Name: "buildkitd-p1", Image: "vmimg", VM: true,
-		Dataset: "tank/bko/p1", MountPath: "/data",
+		Dataset: "tank/bko/p1", MountPath: "/data", CertsHostPath: "/etc/bko/certs",
 		Config: map[string]string{"user.buildkit-operator.key": "p1"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(got, " ")
+	all := strings.Join(calls, " | ")
 	for _, want := range []string{
-		"launch vmimg buildkitd-p1",
+		"init vmimg buildkitd-p1",
 		"--vm",
-		"--device cache,type=disk,source=/tank/bko/p1,path=/data",
 		"--config user.buildkit-operator.key=p1",
+		"config device add buildkitd-p1 cache disk source=/tank/bko/p1 path=/data",
+		"config device add buildkitd-p1 certs disk source=/etc/bko/certs path=/certs readonly=true",
+		"start buildkitd-p1",
 	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("launch args %q missing %q", joined, want)
+		if !strings.Contains(all, want) {
+			t.Errorf("launch calls %q missing %q", all, want)
 		}
 	}
 }

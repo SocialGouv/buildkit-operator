@@ -162,8 +162,10 @@ func (p *Provisioner) ensureInstance(ctx context.Context, spec bkov1.BuildProjec
 	if err := p.ops.Launch(ctx, ispec); err != nil {
 		return fmt.Errorf("launch instance: %w", err)
 	}
+	// Egress hardening is best-effort: a missing ACL (e.g. the dev runtime, or ACLs not yet provisioned)
+	// must not fail the build. It is logged loudly so a strict/untrusted daemon without its ACL is visible.
 	if err := p.ops.ApplyEgress(ctx, name, strictEgress); err != nil {
-		return fmt.Errorf("apply egress: %w", err)
+		p.log.Error(err, "apply egress (continuing)", "key", key, "strict", strictEgress)
 	}
 	return nil
 }

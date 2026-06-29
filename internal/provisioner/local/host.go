@@ -102,24 +102,36 @@ func (c *cli) InstanceExists(ctx context.Context, name string) (bool, error) {
 }
 
 func (c *cli) Launch(ctx context.Context, spec InstanceSpec) error {
-	args := []string{"launch", spec.Image, spec.Name}
+	// init (not launch): incus's `--device name,...` on launch is an OVERRIDE of a profile device and
+	// errors for a brand-new device ("Device not found in profile devices"), so we create the instance
+	// stopped, add our disk devices explicitly, then start it.
+	args := []string{"init", spec.Image, spec.Name}
 	if spec.VM {
 		args = append(args, "--vm")
 	}
 	for k, v := range spec.Config {
 		args = append(args, "--config", k+"="+v)
 	}
+	if _, err := c.run(ctx, c.incus, args...); err != nil {
+		return err
+	}
 	// Attach the retained ZFS dataset as the warm-cache disk at the buildkitd data dir. `source=` a host
 	// path binds the dataset's mountpoint; the instance keeps it across stops.
 	if spec.Dataset != "" && spec.MountPath != "" {
-		args = append(args, "--device", "cache,type=disk,source="+datasetMount(spec.Dataset)+",path="+spec.MountPath)
+		if _, err := c.run(ctx, c.incus, "config", "device", "add", spec.Name, "cache", "disk",
+			"source="+datasetMount(spec.Dataset), "path="+spec.MountPath); err != nil {
+			return err
+		}
 	}
 	// Bind the host's mTLS material read-only at /certs so buildkitd can serve mTLS (the single-host
 	// analogue of mounting the daemon-certs Secret in the k8s pod).
 	if spec.CertsHostPath != "" {
-		args = append(args, "--device", "certs,type=disk,source="+spec.CertsHostPath+",path=/certs,readonly=true")
+		if _, err := c.run(ctx, c.incus, "config", "device", "add", spec.Name, "certs", "disk",
+			"source="+spec.CertsHostPath, "path=/certs", "readonly=true"); err != nil {
+			return err
+		}
 	}
-	_, err := c.run(ctx, c.incus, args...)
+	_, err := c.run(ctx, c.incus, "start", spec.Name)
 	return err
 }
 
