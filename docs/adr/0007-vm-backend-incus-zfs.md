@@ -33,6 +33,9 @@ AddInflight` — that the routing API (`cmd/buildd`) depends on instead of a con
   selected by `--backend local`: one **Incus instance** running buildkitd per project, backed by a
   retained **ZFS dataset** (the warm cache), with an in-process scale-to-zero reconcile loop instead of a
   controller. State (inflight / last-build) is in-memory — a single process, no CRD, no etcd.
+- The instance runtime is a seam (`HostOps`): `--local-runtime incus` (production: ZFS + VM forks) or
+  `--local-runtime docker` (a **dev** runtime needing neither Incus nor ZFS — privileged buildkitd
+  containers, host-dir caches, loopback-published ports; no VM isolation, best-effort snapshots).
 
 The lifecycle *wiring* genuinely differs per backend (a controller-runtime manager vs a goroutine), so
 it lives in buildd's per-backend setup, not behind the interface. The interface is only the imperative
@@ -66,5 +69,8 @@ natively, so it cannot reach full parity.
 - ⚠️ **Status is Proposed**: the local backend is implemented — warm build + cache, scale-to-zero,
   durable ZFS snapshots with retention, CoW fork seeding (`zfs clone`) into a VM-isolated instance
   (untrusted builds are refused without a VM image), and a fan-out clone primitive — all covered by unit
-  tests over a stubbed host seam. What remains before Accepted is **real end-to-end validation** on a
-  host with Incus + a ZFS pool (plus an automatic saturation trigger for fan-out).
+  tests over a stubbed host seam. The control plane is additionally validated **end-to-end** via the
+  Docker dev runtime (route → provision → warm cache-mount reuse → scale-to-zero → restart from the
+  retained cache → cache still warm). What remains before Accepted is **real end-to-end validation on
+  Incus + ZFS** specifically (kernel snapshots, VM forks) plus an automatic saturation trigger for
+  fan-out.

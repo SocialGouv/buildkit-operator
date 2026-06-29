@@ -368,6 +368,29 @@ func TestReconcile_ScalesToZeroWhenIdle(t *testing.T) {
 	}
 }
 
+// A stale inflight (older than MaxBuildSeconds) stops pinning the daemon warm — a missed /complete must
+// not keep an instance up forever (mirrors the k8s --max-build-seconds safety net).
+func TestReconcile_MaxBuildSecondsReleasesStaleInflight(t *testing.T) {
+	f := newFakeHost()
+	p := New(f, Config{Pool: "tank/bko", Image: "img", MountPath: "/data", Port: 1234,
+		IdleTimeout: time.Minute, MaxBuildSeconds: 1}, logr.Discard())
+	spec := canonSpec()
+	if err := p.Ensure(context.Background(), spec, false); err != nil {
+		t.Fatal(err)
+	}
+	// An inflight build, but its last build is well past both the idle window and the safety net.
+	p.mu.Lock()
+	p.projects[spec.Key].inflight = 1
+	p.projects[spec.Key].lastBuild = time.Now().Add(-2 * time.Minute)
+	p.mu.Unlock()
+
+	p.Reconcile(context.Background())
+
+	if running, _ := f.Running(context.Background(), router.DaemonName(spec.Key)); running {
+		t.Error("stale-inflight instance still running, want scaled to zero by the safety net")
+	}
+}
+
 // A project never touched (lastBuild zero) is not scaled to zero by accident.
 func TestReconcile_KeepsUntouchedProject(t *testing.T) {
 	f := newFakeHost()

@@ -31,9 +31,11 @@ type localParams struct {
 	idleTimeout      time.Duration
 	snapshotEvery    time.Duration
 	keepSnapshots    int
+	maxBuildSeconds  int
 	forkEgressStrict bool
 	endpointDomain   string
 	certsPath        string
+	runtime          string // "incus" (default) | "docker"
 }
 
 // runLocalBackend wires the local provisioner + the shared routing API and serves until SIGTERM. It is
@@ -44,7 +46,19 @@ func runLocalBackend(p localParams, verifier *identity.Verifier, authToken, admi
 		return errors.New("--backend local requires --incus-pool and --incus-image")
 	}
 
-	prov := local.New(local.NewCLI(), local.Config{
+	// Pick the instance runtime: Incus (production, ZFS + VM forks) or Docker (dev/local, host dirs, no
+	// VM isolation). The provisioner logic is identical — only the HostOps seam differs.
+	var ops local.HostOps
+	switch p.runtime {
+	case "", "incus":
+		ops = local.NewCLI()
+	case "docker":
+		ops = local.NewDocker(p.cfg.Port, p.certsPath)
+	default:
+		return errors.New("--local-runtime must be incus or docker")
+	}
+
+	prov := local.New(ops, local.Config{
 		Pool:             p.pool,
 		Image:            p.image,
 		VMImage:          p.vmImage,
@@ -54,6 +68,7 @@ func runLocalBackend(p localParams, verifier *identity.Verifier, authToken, admi
 		IdleTimeout:      p.idleTimeout,
 		SnapshotEvery:    p.snapshotEvery,
 		KeepSnapshots:    p.keepSnapshots,
+		MaxBuildSeconds:  p.maxBuildSeconds,
 		ForkEgressStrict: p.forkEgressStrict,
 		EndpointDomain:   p.endpointDomain,
 		CertsHostPath:    p.certsPath,

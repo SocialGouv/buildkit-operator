@@ -25,6 +25,7 @@ type Config struct {
 	IdleTimeout      time.Duration // scale-to-zero after this much idle (no inflight, no recent build)
 	SnapshotEvery    time.Duration // durability snapshot cadence per canonical project (0 = disabled)
 	KeepSnapshots    int           // snapshots retained per project (older pruned)
+	MaxBuildSeconds  int           // safety net: an inflight older than this stops pinning warm (0 = off)
 	ForkEgressStrict bool          // bind the strict egress ACL to untrusted fork instances (default on)
 	// EndpointDomain, when set, makes Endpoint return the DETERMINISTIC tcp://<daemon>.<domain>:<port>
 	// (resolved by Incus DNS), matching a wildcard *.<domain> daemon cert — the single-host analogue of
@@ -61,6 +62,13 @@ type Provisioner struct {
 }
 
 var _ provisioner.Provisioner = (*Provisioner)(nil)
+
+// addrResolver lets a runtime own the full dial address host:port for a key (e.g. the Docker runtime
+// publishes buildkitd to a deterministic loopback port). When the HostOps implements it, Endpoint uses
+// it and readiness needs only the instance running; otherwise the EndpointDomain / instance-IP path runs.
+type addrResolver interface {
+	Addr(key string) string
+}
 
 // New builds the local provisioner over the given HostOps (NewCLI in production, a fake in tests).
 func New(ops HostOps, cfg Config, log logr.Logger) *Provisioner {
@@ -205,6 +213,9 @@ func (p *Provisioner) Ready(ctx context.Context, key string) bool {
 	if err != nil || !running {
 		return false
 	}
+	if _, ok := p.ops.(addrResolver); ok {
+		return true // the runtime owns a deterministic dial address; running is sufficient
+	}
 	if p.cfg.EndpointDomain != "" {
 		return true
 	}
@@ -237,6 +248,9 @@ func (p *Provisioner) WaitReady(ctx context.Context, key string) error {
 // tcp://<daemon>.<domain>:<port> (resolved by Incus DNS, validated by a wildcard cert); otherwise
 // tcp://<instance-ip>:<port> using the IP cached by the preceding Ready/WaitReady (Endpoint has no ctx).
 func (p *Provisioner) Endpoint(key string) string {
+	if r, ok := p.ops.(addrResolver); ok {
+		return "tcp://" + r.Addr(key)
+	}
 	if p.cfg.EndpointDomain != "" {
 		return router.EndpointHost(router.DaemonName(key)+"."+p.cfg.EndpointDomain, p.cfg.Port)
 	}
@@ -283,8 +297,14 @@ func (p *Provisioner) Reconcile(ctx context.Context) {
 	var idle, snap []cand
 	p.mu.Lock()
 	for key, st := range p.projects {
+		// An inflight build pins the daemon warm — UNLESS it is older than the MaxBuildSeconds safety net
+		// (a missed /complete must not pin a daemon forever; mirrors the k8s reconciler).
+		pinned := st.inflight > 0
+		if pinned && p.cfg.MaxBuildSeconds > 0 && now.Sub(st.lastBuild) > time.Duration(p.cfg.MaxBuildSeconds)*time.Second {
+			pinned = false
+		}
 		// Scale-to-zero: warm (non-hot) projects idle past the timeout. Hot fan-out clones never idle out.
-		if !st.hot && st.inflight == 0 && !st.lastBuild.IsZero() && now.Sub(st.lastBuild) > p.cfg.IdleTimeout {
+		if !st.hot && !pinned && !st.lastBuild.IsZero() && now.Sub(st.lastBuild) > p.cfg.IdleTimeout {
 			idle = append(idle, cand{key: key, name: router.DaemonName(key)})
 		}
 		// Snapshot cadence: canonical projects only (forks/clones never snapshot — see DeriveChild), on

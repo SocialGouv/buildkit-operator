@@ -85,6 +85,29 @@ It routes a tiny build, asserts the instance came up, runs a second build of the
 **warm cache is reused**, checks **scale-to-zero** after the idle window, and routes an `--untrusted`
 build to prove the **fork runs as a VM on its own (CoW-seeded) dataset**.
 
+## Quick local try with Docker (no Incus, no ZFS)
+
+To try the control plane on any machine with Docker — no Incus, no ZFS — use the **dev** runtime
+`--local-runtime docker`: each daemon is a privileged `buildkitd` container, the per-project cache is a
+host directory, and buildkitd is published to a deterministic `127.0.0.1:<port>` (so it works regardless
+of Docker bridge networking). It has **no VM isolation** (untrusted forks need the Incus runtime) and
+durable snapshots are best-effort (run buildd as root, or use Incus+ZFS, for real snapshots).
+
+```sh
+buildd --backend local --local-runtime docker \
+  --incus-pool /var/lib/bko-data --incus-image moby/buildkit:buildx-stable-1 \
+  --local-mount-path /var/lib/buildkit --local-idle-timeout 20s --api-listen 127.0.0.1:8089
+
+# elsewhere: route, then build against the returned endpoint via the buildx remote driver
+ep=$(curl -fsS -XPOST localhost:8089/route -d '{"repo":"demo/app","arch":"amd64"}' | jq -r .endpoint)
+docker buildx create --name bko --driver remote "$ep"
+docker buildx build --builder bko .
+```
+
+This path is validated end-to-end (route → provision → warm cache-mount reuse → scale-to-zero → restart
+from the retained cache → cache still warm). It is for local/dev use; production single-host is the Incus
++ ZFS runtime above.
+
 ## What's still manual / future
 
 - **Fan-out** has a tested primitive (`Provisioner.Fanout`) but no automatic saturation trigger yet.
