@@ -26,6 +26,13 @@ type Config struct {
 	SnapshotEvery    time.Duration // durability snapshot cadence per canonical project (0 = disabled)
 	KeepSnapshots    int           // snapshots retained per project (older pruned)
 	ForkEgressStrict bool          // bind the strict egress ACL to untrusted fork instances (default on)
+	// EndpointDomain, when set, makes Endpoint return the DETERMINISTIC tcp://<daemon>.<domain>:<port>
+	// (resolved by Incus DNS), matching a wildcard *.<domain> daemon cert — the single-host analogue of
+	// the k8s Service DNS / SNI gateway. Empty = dial the instance's IP (cached during readiness checks).
+	EndpointDomain string
+	// CertsHostPath, when set, is the host directory holding the daemon mTLS material (ca.pem/cert.pem/
+	// key.pem); it is bind-mounted read-only into each instance at /certs so buildkitd serves mTLS.
+	CertsHostPath string
 }
 
 // projectState is the in-memory record for one project's daemon. The local backend is a single process,
@@ -127,13 +134,22 @@ func (p *Provisioner) ensureInstance(ctx context.Context, spec bkov1.BuildProjec
 	if err := p.seedDataset(ctx, key, seedFrom); err != nil {
 		return err
 	}
+	instConfig := map[string]string{labelKey: key}
+	if !vm {
+		// A trusted canonical daemon runs as a system CONTAINER: buildkitd's OCI worker needs nesting
+		// (runc/overlayfs in the container) and runs privileged — acceptable on a single trusted host.
+		// Untrusted forks instead get vm=true (the VM is the boundary), never a privileged container.
+		instConfig["security.nesting"] = "true"
+		instConfig["security.privileged"] = "true"
+	}
 	ispec := InstanceSpec{
-		Name:      name,
-		Image:     p.imageFor(vm),
-		VM:        vm,
-		Dataset:   p.dataset(key),
-		MountPath: p.cfg.MountPath,
-		Config:    map[string]string{labelKey: key},
+		Name:          name,
+		Image:         p.imageFor(vm),
+		VM:            vm,
+		Dataset:       p.dataset(key),
+		MountPath:     p.cfg.MountPath,
+		CertsHostPath: p.cfg.CertsHostPath,
+		Config:        instConfig,
 	}
 	if err := p.ops.Launch(ctx, ispec); err != nil {
 		return fmt.Errorf("launch instance: %w", err)
@@ -181,12 +197,16 @@ func (p *Provisioner) latestSnapshot(ctx context.Context, key string) string {
 // labelKey marks our instances so reconcile/GC can list only what we manage.
 const labelKey = "user.buildkit-operator.key"
 
-// Ready reports whether the daemon is running, caching its IP for Endpoint.
+// Ready reports whether the daemon is running. With a deterministic DNS endpoint (EndpointDomain) that
+// is sufficient; otherwise it also requires — and caches — the instance IP that Endpoint will return.
 func (p *Provisioner) Ready(ctx context.Context, key string) bool {
 	name := router.DaemonName(key)
 	running, err := p.ops.Running(ctx, name)
 	if err != nil || !running {
 		return false
+	}
+	if p.cfg.EndpointDomain != "" {
+		return true
 	}
 	if ip, err := p.ops.IP(ctx, name); err == nil && ip != "" {
 		p.setIP(key, ip)
@@ -213,9 +233,13 @@ func (p *Provisioner) WaitReady(ctx context.Context, key string) error {
 	}
 }
 
-// Endpoint returns the mTLS address clients dial: tcp://<instance-ip>:<port>. The IP is the one cached by
-// the preceding Ready/WaitReady (Endpoint has no ctx); empty until the daemon has been observed ready.
+// Endpoint returns the mTLS address clients dial. With EndpointDomain it is the deterministic
+// tcp://<daemon>.<domain>:<port> (resolved by Incus DNS, validated by a wildcard cert); otherwise
+// tcp://<instance-ip>:<port> using the IP cached by the preceding Ready/WaitReady (Endpoint has no ctx).
 func (p *Provisioner) Endpoint(key string) string {
+	if p.cfg.EndpointDomain != "" {
+		return router.EndpointHost(router.DaemonName(key)+"."+p.cfg.EndpointDomain, p.cfg.Port)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	ip := ""

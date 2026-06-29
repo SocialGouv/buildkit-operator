@@ -270,6 +270,30 @@ func TestReadyAndEndpoint(t *testing.T) {
 	}
 }
 
+// With EndpointDomain set, Endpoint is the deterministic DNS address (no IP query), Ready needs only the
+// instance running, and the certs dir is bind-mounted into the instance.
+func TestEndpointDomainDeterministic(t *testing.T) {
+	f := newFakeHost()
+	p := New(f, Config{
+		Pool: "tank/bko", Image: "img", MountPath: "/data", Port: 1234,
+		EndpointDomain: "bko.local", CertsHostPath: "/etc/bko/certs",
+	}, logr.Discard())
+	spec := canonSpec()
+	if err := p.Ensure(context.Background(), spec, false); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Ready(context.Background(), spec.Key) {
+		t.Fatal("Ready = false for a running instance with a DNS endpoint")
+	}
+	want := router.EndpointHost(router.DaemonName(spec.Key)+".bko.local", 1234)
+	if got := p.Endpoint(spec.Key); got != want {
+		t.Errorf("Endpoint = %q, want deterministic %q", got, want)
+	}
+	if f.launched[0].CertsHostPath != "/etc/bko/certs" {
+		t.Errorf("certs host path not propagated to the instance: %q", f.launched[0].CertsHostPath)
+	}
+}
+
 // WaitReady returns nil once running, and errors when the wait budget is exhausted.
 func TestWaitReady(t *testing.T) {
 	f := newFakeHost()

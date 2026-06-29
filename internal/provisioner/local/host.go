@@ -19,12 +19,13 @@ import (
 
 // InstanceSpec is the desired shape of one project's buildkitd instance.
 type InstanceSpec struct {
-	Name      string            // incus instance name, e.g. buildkitd-<key>
-	Image     string            // image alias/remote, e.g. images:debian/12 (must provide buildkitd)
-	VM        bool              // true = qemu VM (untrusted fork isolation, P3); false = system container
-	Dataset   string            // ZFS dataset backing the warm cache, e.g. tank/bko/<key>
-	MountPath string            // where Dataset is mounted inside the instance (buildkitd data dir)
-	Config    map[string]string // extra incus config keys (e.g. user.* labels, security.* knobs)
+	Name          string            // incus instance name, e.g. buildkitd-<key>
+	Image         string            // image alias/remote, e.g. images:debian/12 (must provide buildkitd)
+	VM            bool              // true = qemu VM (untrusted fork isolation); false = system container
+	Dataset       string            // ZFS dataset backing the warm cache, e.g. tank/bko/<key>
+	MountPath     string            // where Dataset is mounted inside the instance (buildkitd data dir)
+	CertsHostPath string            // host dir with ca/cert/key .pem, bind-mounted read-only at /certs
+	Config        map[string]string // extra incus config keys (e.g. user.* labels, security.* knobs)
 }
 
 // HostOps is everything the local provisioner does to the host. Every method is keyed by stable names
@@ -112,6 +113,11 @@ func (c *cli) Launch(ctx context.Context, spec InstanceSpec) error {
 	// path binds the dataset's mountpoint; the instance keeps it across stops.
 	if spec.Dataset != "" && spec.MountPath != "" {
 		args = append(args, "--device", "cache,type=disk,source="+datasetMount(spec.Dataset)+",path="+spec.MountPath)
+	}
+	// Bind the host's mTLS material read-only at /certs so buildkitd can serve mTLS (the single-host
+	// analogue of mounting the daemon-certs Secret in the k8s pod).
+	if spec.CertsHostPath != "" {
+		args = append(args, "--device", "certs,type=disk,source="+spec.CertsHostPath+",path=/certs,readonly=true")
 	}
 	_, err := c.run(ctx, c.incus, args...)
 	return err

@@ -1,0 +1,30 @@
+[Unit]
+Description=buildkit-operator buildd (single-host Incus + ZFS backend)
+After=network-online.target incus.service
+Wants=network-online.target
+
+[Service]
+# Tokens / OIDC config live in the env file (mode 0600); never put secrets on the command line.
+EnvironmentFile=-/etc/bko/buildd.env
+ExecStart=/usr/local/bin/buildd \
+  --backend local \
+  --incus-pool tank/bko \
+  --incus-image bko-buildkitd \
+  --incus-vm-image bko-buildkitd-vm \
+  --local-endpoint-domain bko.local \
+  --local-certs-path /etc/bko/certs \
+  --local-mount-path /var/lib/buildkit \
+  --local-idle-timeout 15m \
+  --local-snapshot-every 30m \
+  --local-keep-snapshots 3 \
+  --fork-egress-strict \
+  --api-listen :8080 \
+  --port 1234
+Restart=always
+RestartSec=2
+# buildd drives `incus`/`zfs`; run as a user in the incus-admin group (or root on a dedicated host).
+# User=buildd
+# SupplementaryGroups=incus-admin
+
+[Install]
+WantedBy=multi-user.target

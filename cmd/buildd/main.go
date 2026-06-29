@@ -100,6 +100,8 @@ func main() {
 	localSnapEvery := flag.Duration("local-snapshot-every", 0, "[backend=local] durability snapshot cadence per project (0 = disabled)")
 	localKeepSnaps := flag.Int("local-keep-snapshots", 3, "[backend=local] durability snapshots retained per project")
 	forkEgressStrict := flag.Bool("fork-egress-strict", true, "[backend=local] bind the strict egress ACL to untrusted fork instances")
+	localEndpointDomain := flag.String("local-endpoint-domain", "", "[backend=local] DNS domain for deterministic endpoints tcp://<daemon>.<domain>:<port> (matches a wildcard daemon cert); empty = dial the instance IP")
+	localCertsPath := flag.String("local-certs-path", "", "[backend=local] host dir with ca/cert/key .pem, bind-mounted read-only at /certs in each instance")
 	flag.Parse()
 	cfg.Port = int32(*port)
 	cfg.HealthPort = int32(*healthPort)
@@ -147,6 +149,7 @@ func main() {
 			pool: *incusPool, image: *incusImage, vmImage: *incusVMImage,
 			mountPath: *localMountPath, idleTimeout: *localIdle,
 			snapshotEvery: *localSnapEvery, keepSnapshots: *localKeepSnaps, forkEgressStrict: *forkEgressStrict,
+			endpointDomain: *localEndpointDomain, certsPath: *localCertsPath,
 		}, verifier, authToken, adminToken, log)
 		if err != nil {
 			log.Error(err, "local backend exited")

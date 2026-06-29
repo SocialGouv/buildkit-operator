@@ -32,6 +32,8 @@ type localParams struct {
 	snapshotEvery    time.Duration
 	keepSnapshots    int
 	forkEgressStrict bool
+	endpointDomain   string
+	certsPath        string
 }
 
 // runLocalBackend wires the local provisioner + the shared routing API and serves until SIGTERM. It is
@@ -53,6 +55,8 @@ func runLocalBackend(p localParams, verifier *identity.Verifier, authToken, admi
 		SnapshotEvery:    p.snapshotEvery,
 		KeepSnapshots:    p.keepSnapshots,
 		ForkEgressStrict: p.forkEgressStrict,
+		EndpointDomain:   p.endpointDomain,
+		CertsHostPath:    p.certsPath,
 	}, log.WithName("provisioner"))
 
 	var limiter *rate.Limiter
