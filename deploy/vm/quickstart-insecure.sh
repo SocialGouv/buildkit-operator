@@ -60,7 +60,13 @@ build_image() { # alias, extra launch flags (e.g. --vm)
   local tmp="bko-base-$alias"
   incus delete -f "$tmp" 2>/dev/null || true
   echo "   building image $alias $*"
-  incus launch images:ubuntu/24.04 "$tmp" -c security.nesting=true "$@" || { echo "   launch failed for $alias"; return 1; }
+  # security.nesting is a CONTAINER-only key (buildkitd's runc/overlayfs needs it); a VM rejects it
+  # ("Unknown configuration key"). Pass it only for containers — VMs are isolated by the hypervisor.
+  if printf '%s\n' "$@" | grep -qx -- --vm; then
+    incus launch images:ubuntu/24.04 "$tmp" "$@" || { echo "   launch failed for $alias"; return 1; }
+  else
+    incus launch images:ubuntu/24.04 "$tmp" -c security.nesting=true "$@" || { echo "   launch failed for $alias"; return 1; }
+  fi
   # Wait for the instance to actually have working network + DNS before pulling buildkit (booting to
   # /run/systemd is not enough — DHCP/DNS land a beat later). If it never comes up, the host firewall is
   # almost certainly the cause (Docker enables br_netfilter + a FORWARD DROP that catches the Incus
