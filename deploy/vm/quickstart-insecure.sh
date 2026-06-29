@@ -94,7 +94,14 @@ UNIT
 echo "== build insecure buildkitd image(s) =="
 build_image bko-buildkitd
 VM_FLAG=""
-if [ -e /dev/kvm ]; then build_image bko-buildkitd-vm --vm; VM_FLAG="--incus-vm-image bko-buildkitd-vm"; fi
+# Untrusted fork = Incus VM, which needs BOTH /dev/kvm AND a qemu-system binary. Many desktops have
+# /dev/kvm but not qemu installed (incus then errors "QEMU command not available"); skip gracefully.
+if [ -e /dev/kvm ] && command -v "qemu-system-$(uname -m)" >/dev/null 2>&1; then
+  build_image bko-buildkitd-vm --vm
+  VM_FLAG="--incus-vm-image bko-buildkitd-vm"
+else
+  echo "   no qemu/VM support on this host — skipping the VM fork image (install qemu-system-x86 for untrusted forks)"
+fi
 
 echo "== run buildd (root; insecure; IP endpoint) =="
 pkill -f "$BUILDD" 2>/dev/null || true
