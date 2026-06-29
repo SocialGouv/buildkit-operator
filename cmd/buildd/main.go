@@ -16,6 +16,7 @@ import (
 	"github.com/socialgouv/buildkit-operator/internal/builder"
 	"github.com/socialgouv/buildkit-operator/internal/controller"
 	"github.com/socialgouv/buildkit-operator/internal/identity"
+	k8sprov "github.com/socialgouv/buildkit-operator/internal/provisioner/k8s"
 	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -43,6 +44,7 @@ func main() {
 		kubeContext string
 		gatewayHost string
 	)
+	backend := flag.String("backend", "k8s", "provisioning backend: k8s (Kubernetes StatefulSets) | local (single-host Incus/ZFS, not yet implemented)")
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context to target (empty = current-context)")
 	flag.StringVar(&cfg.Namespace, "namespace", "buildkit-builds", "namespace the per-project daemons + BuildProjects + their certs/config live in (the 'builds' ns, distinct from the operator ns buildd runs in)")
 	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.31.1-rootless", "buildkitd image (vanilla)")
@@ -94,6 +96,13 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	log := ctrl.Log.WithName("buildd")
+
+	// Backend selection. k8s is the default and only implemented backend; the local (Incus/ZFS)
+	// single-host backend is planned (P2) — fail loudly rather than silently behaving as k8s.
+	if *backend != "k8s" {
+		log.Error(nil, "unsupported --backend", "backend", *backend, "supported", "k8s")
+		panic("unsupported --backend " + *backend)
+	}
 
 	if err := cfg.SchedulingFromJSON(*daemonScheduling); err != nil {
 		log.Error(err, "invalid --daemon-scheduling")
@@ -170,10 +179,11 @@ func main() {
 	if *apiRateLimit > 0 {
 		limiter = rate.NewLimiter(rate.Limit(*apiRateLimit), *apiRateBurst)
 	}
+	prov := k8sprov.New(mgr.GetClient(), cfg, routeWait, gatewayHost, int32(*gatewayPort), ctrl.Log.WithName("provisioner"))
 	if err := mgr.Add(&routeServer{
-		c: mgr.GetClient(), cfg: cfg, addr: apiListen, wait: routeWait,
-		coldStartSem: make(chan struct{}, *maxCold), gatewayHost: gatewayHost, gatewayPort: int32(*gatewayPort),
-		s3Bucket: *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
+		prov: prov, cfg: cfg, addr: apiListen, wait: routeWait,
+		coldStartSem: make(chan struct{}, *maxCold),
+		s3Bucket:     *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
 		verifier: verifier, authToken: authToken, adminToken: adminToken,
 		limiter: limiter, log: ctrl.Log.WithName("route"),
 	}); err != nil {

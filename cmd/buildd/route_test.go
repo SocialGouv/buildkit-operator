@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
-	"github.com/socialgouv/buildkit-operator/internal/builder"
 	"github.com/socialgouv/buildkit-operator/internal/router"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -31,11 +30,9 @@ func TestHandleRoute_ReleasesInflightOnColdStartTimeout(t *testing.T) {
 	ns := "buildkit-operator"
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&bkov1.BuildProject{}).Build()
 
-	srv := &routeServer{
-		c: c, cfg: builder.Config{Namespace: ns, Port: 1234},
-		wait:         0, // no STS will ever be Ready => waitReady times out on the first poll
-		coldStartSem: make(chan struct{}, 1),
-	}
+	// newTestServer wires a k8s provisioner with wait=0, so with no Ready StatefulSet WaitReady times
+	// out on the first poll — exactly the cold-start-timeout path this test asserts the inflight release.
+	srv := newTestServer(t, c)
 
 	body, _ := json.Marshal(router.RouteRequest{Repo: "github.com/org/repo", Arch: "amd64"})
 	req := httptest.NewRequest(http.MethodPost, "/route", bytes.NewReader(body))

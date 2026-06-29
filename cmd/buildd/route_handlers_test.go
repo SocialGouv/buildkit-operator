@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/builder"
+	k8sprov "github.com/socialgouv/buildkit-operator/internal/provisioner/k8s"
 	"github.com/socialgouv/buildkit-operator/internal/router"
 	"golang.org/x/time/rate"
 	appsv1 "k8s.io/api/apps/v1"
@@ -37,7 +39,14 @@ func testScheme(t *testing.T) *runtime.Scheme {
 
 func newTestServer(t *testing.T, c client.Client) *routeServer {
 	t.Helper()
-	return &routeServer{c: c, cfg: builder.Config{Namespace: "buildkit-operator", Port: 1234}, coldStartSem: make(chan struct{}, 1)}
+	cfg := builder.Config{Namespace: "buildkit-operator", Port: 1234}
+	// wait=0: with no Ready StatefulSet, WaitReady times out on the first poll (matches the prior
+	// zero-value behaviour); the cold-start success test flips readiness via a Get interceptor.
+	return &routeServer{
+		prov:         k8sprov.New(c, cfg, 0, "", 0, logr.Discard()),
+		cfg:          cfg,
+		coldStartSem: make(chan struct{}, 1),
+	}
 }
 
 // /prewarm creates the BuildProject (so the daemon starts attaching ahead of the build) and returns

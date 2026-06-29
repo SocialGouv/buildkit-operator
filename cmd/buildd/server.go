@@ -13,29 +13,19 @@ import (
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/builder"
 	"github.com/socialgouv/buildkit-operator/internal/identity"
+	"github.com/socialgouv/buildkit-operator/internal/provisioner"
 	"github.com/socialgouv/buildkit-operator/internal/router"
 	"golang.org/x/time/rate"
-	appsv1 "k8s.io/api/apps/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // routeServer is the synchronous routing API (/route, /prewarm, /complete), run as a manager Runnable
 // so it shares the manager's lifecycle and (started) client cache.
 type routeServer struct {
-	c            client.Client
+	prov         provisioner.Provisioner
 	cfg          builder.Config
 	addr         string
 	wait         time.Duration
 	coldStartSem chan struct{} // bounds concurrent cold-start attaches (bench C backpressure)
-	// gatewayHost, when set, makes /route return the deterministic SNI endpoint
-	// <daemon>.<gatewayHost>:<port> for off-cluster CI (the shared SNI gateway). Empty = in-cluster.
-	gatewayHost string
-	// gatewayPort, when > 0, is the EXTERNAL port /route advertises for the gateway endpoint (e.g. 443
-	// when the gateway is fronted on 443 behind an egress proxy). 0 = use cfg.Port (the daemon port).
-	gatewayPort int32
 	// S3 cold cache (project policy): the shared bucket reference buildd hands to clients on /route.
 	// Credentials are NOT here — they live on the daemons (cfg.S3CredsSecret).
 	s3Bucket   string
@@ -195,79 +185,5 @@ func canonicalSpec(req router.RouteRequest) bkov1.BuildProjectSpec {
 		Name:   router.NormalizeName(req.Name),
 		Target: router.NormalizeTarget(req.Target),
 		Arch:   router.NormalizeArch(req.Arch),
-	}
-}
-
-func (s *routeServer) ensureBuildProject(ctx context.Context, spec bkov1.BuildProjectSpec) error {
-	var bp bkov1.BuildProject
-	err := s.c.Get(ctx, types.NamespacedName{Name: spec.Key, Namespace: s.cfg.Namespace}, &bp)
-	if err == nil {
-		return nil
-	}
-	if !apierrors.IsNotFound(err) {
-		return err
-	}
-	created := &bkov1.BuildProject{
-		ObjectMeta: metav1.ObjectMeta{Name: spec.Key, Namespace: s.cfg.Namespace},
-		Spec:       spec,
-	}
-	if err := s.c.Create(ctx, created); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			return nil // raced another /route or /prewarm for the same key — fine
-		}
-		return err
-	}
-	// Warm from birth: desiredReplicas only holds a warm-tier replica once LastBuildTime is set, so stamp
-	// it now on the JUST-CREATED object (it already carries its ResourceVersion) — not via a fresh Get,
-	// whose informer cache can still miss the new object and leave the daemon stuck Idle. That cache race
-	// is the cold-start flake: addInflight's Get returned NotFound right after Create, so the touch was
-	// dropped and the warm-tier project never scaled up.
-	now := metav1.Now()
-	created.Status.LastBuildTime = &now
-	if err := s.c.Status().Update(ctx, created); err != nil {
-		s.log.Error(err, "stamp LastBuildTime at create failed; relying on the addInflight touch", "key", spec.Key)
-	}
-	return nil
-}
-
-// ready reports whether the project's daemon already has a ready replica (warm fast path).
-func (s *routeServer) ready(ctx context.Context, key string) bool {
-	var sts appsv1.StatefulSet
-	if err := s.c.Get(ctx, types.NamespacedName{Name: router.DaemonName(key), Namespace: s.cfg.Namespace}, &sts); err != nil {
-		return false
-	}
-	return sts.Status.ReadyReplicas >= 1
-}
-
-// endpointFor returns the address clients dial: a DETERMINISTIC gateway SNI hostname when a gateway
-// domain is configured (off-cluster CI reaches every daemon through the single shared SNI gateway),
-// else the in-cluster Service DNS. No polling — the endpoint is computable from the key.
-func (s *routeServer) endpointFor(key string) string {
-	if s.gatewayHost != "" {
-		port := s.cfg.Port
-		if s.gatewayPort > 0 {
-			port = s.gatewayPort
-		}
-		return router.EndpointHost(router.DaemonName(key)+"."+s.gatewayHost, port)
-	}
-	return router.Endpoint(key, s.cfg.Namespace, s.cfg.Port)
-}
-
-func (s *routeServer) waitReady(ctx context.Context, key string) error {
-	deadline := time.Now().Add(s.wait)
-	for {
-		var sts appsv1.StatefulSet
-		err := s.c.Get(ctx, types.NamespacedName{Name: router.DaemonName(key), Namespace: s.cfg.Namespace}, &sts)
-		if err == nil && sts.Status.ReadyReplicas >= 1 {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return errors.New("timed out waiting for Ready replica")
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
 	}
 }

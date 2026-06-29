@@ -10,10 +10,8 @@ import (
 	"strings"
 	"time"
 
-	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/metrics"
 	"github.com/socialgouv/buildkit-operator/internal/router"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 const maxRouteRequestBytes int64 = 8 << 10
@@ -110,16 +108,10 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	canonical := spec.Key
 	key, result := canonical, "warm"
 	if req.Untrusted {
-		// Fork PR: ephemeral daemon derived read-only from the canonical snapshot — distinct key, so
-		// it can never poison the canonical cache (anti cache-poisoning). Same derivation policy as
-		// fan-out clones, via bkov1.DeriveChild.
+		// Fork PR: ephemeral daemon derived read-only from the canonical snapshot — distinct key, so it
+		// can never poison the canonical cache (anti cache-poisoning). The key is pure/deterministic here;
+		// the provisioner derives the fork's spec (seed + DeriveChild) inside Ensure.
 		key, result = router.ForkKey(canonical), "untrusted"
-		seed := ""
-		var canon bkov1.BuildProject
-		if err := s.c.Get(ctx, types.NamespacedName{Name: canonical, Namespace: s.cfg.Namespace}, &canon); err == nil {
-			seed = canon.Status.LastSnapshot
-		}
-		spec = bkov1.DeriveChild(spec, seed, bkov1.ForkChild, key)
 	}
 	// Audit trail: every build access is logged with the resolved key + caller, so a security review
 	// can reconstruct who built what (the bearer token is never logged).
@@ -128,10 +120,10 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	respond := func() {
 		metrics.RoutesTotal.WithLabelValues(result).Inc()
 		metrics.RouteDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
-		writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.endpointFor(key), Namespace: s.cfg.Namespace, Ready: true, Cache: s.cacheFor(key)})
+		writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.prov.Endpoint(key), Namespace: s.cfg.Namespace, Ready: true, Cache: s.cacheFor(key)})
 	}
 
-	if err := s.ensureBuildProject(ctx, spec); err != nil {
+	if err := s.prov.Ensure(ctx, spec, req.Untrusted); err != nil {
 		metrics.RoutesTotal.WithLabelValues("error").Inc()
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -139,7 +131,7 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	// Mark a build in flight: keeps the daemon pinned warm for the whole build (not just IdleTimeoutSec
 	// from now), and is released by the client's /complete call. The reconciler ignores inflight older
 	// than --max-build-seconds, so a missed /complete can't leak a hot daemon forever.
-	s.addInflight(ctx, key, +1)
+	s.prov.AddInflight(ctx, key, +1)
 	// The client only calls /complete after a SUCCESSFUL /route, so on any error path below we must
 	// release the inflight here — otherwise a failed cold start (504/499) pins the daemon warm for up
 	// to --max-build-seconds. respond() (the success path) cancels this by setting routed=true; the
@@ -147,11 +139,11 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	routed := false
 	defer func() {
 		if !routed {
-			s.addInflight(context.Background(), key, -1)
+			s.prov.AddInflight(context.Background(), key, -1)
 		}
 	}()
 
-	if s.ready(ctx, key) { // warm: no cold-start gating
+	if s.prov.Ready(ctx, key) { // warm: no cold-start gating
 		routed = true
 		respond()
 		return
@@ -172,7 +164,7 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	defer metrics.ColdStartsInflight.Dec()
 
 	coldStart := time.Now()
-	if err := s.waitReady(ctx, key); err != nil {
+	if err := s.prov.WaitReady(ctx, key); err != nil {
 		metrics.RoutesTotal.WithLabelValues("error").Inc()
 		http.Error(w, "daemon not ready: "+err.Error(), http.StatusGatewayTimeout)
 		return
@@ -192,16 +184,16 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 	}
 	spec := canonicalSpec(req)
 	key := spec.Key
-	if err := s.ensureBuildProject(r.Context(), spec); err != nil {
+	if err := s.prov.Ensure(r.Context(), spec, false); err != nil {
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.addInflight(r.Context(), key, 0) // touch LastBuildTime without counting an inflight build
+	s.prov.AddInflight(r.Context(), key, 0) // touch LastBuildTime without counting an inflight build
 	// Report readiness so a proxy-tunnelled client can poll /prewarm (cheap, non-blocking) until the
 	// daemon is warm, then route — instead of holding a blocking /route past the proxy's tunnel timeout.
-	ready := s.ready(r.Context(), key)
+	ready := s.prov.Ready(r.Context(), key)
 	w.WriteHeader(http.StatusAccepted)
-	writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.endpointFor(key), Namespace: s.cfg.Namespace, Ready: ready, Cache: s.cacheFor(key)})
+	writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.prov.Endpoint(key), Namespace: s.cfg.Namespace, Ready: ready, Cache: s.cacheFor(key)})
 }
 
 // handleComplete releases an inflight build counted by /route (the client calls it when buildx exits,
@@ -234,6 +226,6 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: need {\"key\":\"...\"}", http.StatusBadRequest)
 		return
 	}
-	s.addInflight(r.Context(), req.Key, -1)
+	s.prov.AddInflight(r.Context(), req.Key, -1)
 	w.WriteHeader(http.StatusNoContent)
 }
