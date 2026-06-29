@@ -43,7 +43,7 @@ func TestReconcile_CreatesDaemon(t *testing.T) {
 	ns := "buildkit-operator"
 	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot, StorageClass: "ebs-gp3"},
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
 	r := &BuildProjectReconciler{
@@ -67,10 +67,10 @@ func TestReconcile_CreatesDaemon(t *testing.T) {
 		t.Errorf("replicas = %d, want 1 (hot tier)", got)
 	}
 	if n := len(sts.Spec.VolumeClaimTemplates); n != 1 {
-		t.Fatalf("volumeClaimTemplates = %d, want 1 (the gen2 cache PVC)", n)
+		t.Fatalf("volumeClaimTemplates = %d, want 1 (the cache PVC)", n)
 	}
-	if sc := sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc == nil || *sc != "csi-cinder-high-speed-gen2" {
-		t.Errorf("cache PVC storageClass = %v, want gen2 default", sc)
+	if sc := sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc == nil || *sc != "ebs-gp3" {
+		t.Errorf("cache PVC storageClass = %v, want ebs-gp3 (from spec)", sc)
 	}
 	if len(sts.OwnerReferences) == 0 || sts.OwnerReferences[0].Name != key {
 		t.Errorf("statefulset not owned by BuildProject")
