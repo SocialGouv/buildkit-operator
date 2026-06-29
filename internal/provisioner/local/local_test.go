@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,13 @@ import (
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/router"
 )
+
+// TestMain stubs the buildkitd port probe true by default — unit tests have no real daemon listening.
+// Individual tests override dialProbe to exercise the not-serving path.
+func TestMain(m *testing.M) {
+	dialProbe = func(string) bool { return true }
+	os.Exit(m.Run())
+}
 
 // fakeHost is an in-memory HostOps for unit-testing the provisioner's state machine without an Incus host.
 type fakeHost struct {
@@ -291,6 +299,24 @@ func TestEndpointDomainDeterministic(t *testing.T) {
 	}
 	if f.launched[0].CertsHostPath != "/etc/bko/certs" {
 		t.Errorf("certs host path not propagated to the instance: %q", f.launched[0].CertsHostPath)
+	}
+}
+
+// Ready is false while the instance runs but buildkitd is not yet accepting connections (port probe
+// fails) — the fix for the concurrent-cold-start race where a client dialed a not-yet-serving daemon.
+func TestReady_FalseWhenDaemonNotServing(t *testing.T) {
+	old := dialProbe
+	defer func() { dialProbe = old }()
+	dialProbe = func(string) bool { return false }
+
+	f := newFakeHost()
+	p := testProv(f)
+	spec := canonSpec()
+	if err := p.Ensure(context.Background(), spec, false); err != nil {
+		t.Fatal(err)
+	}
+	if p.Ready(context.Background(), spec.Key) {
+		t.Error("Ready = true while the daemon port is not serving, want false")
 	}
 }
 

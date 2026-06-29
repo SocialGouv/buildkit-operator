@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +15,18 @@ import (
 	"github.com/socialgouv/buildkit-operator/internal/provisioner"
 	"github.com/socialgouv/buildkit-operator/internal/router"
 )
+
+// dialProbe reports whether something is accepting TCP connections at addr (host:port). It is the
+// readiness check that an instance Running actually has buildkitd listening; a package var so unit tests
+// (which have no real daemon) can stub it.
+var dialProbe = func(addr string) bool {
+	c, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
 
 // Config holds the single-host knobs for the local backend.
 type Config struct {
@@ -215,18 +229,28 @@ func (p *Provisioner) Ready(ctx context.Context, key string) bool {
 	if err != nil || !running {
 		return false
 	}
-	if _, ok := p.ops.(addrResolver); ok {
-		return true // the runtime owns a deterministic dial address; running is sufficient
-	}
-	if p.cfg.EndpointDomain != "" {
-		return true
-	}
-	if ip, err := p.ops.IP(ctx, name); err == nil && ip != "" {
+	// Resolve the dial address (and cache the IP for Endpoint on the IP path).
+	var addr string
+	switch {
+	case isAddrResolver(p.ops):
+		addr = p.ops.(addrResolver).Addr(key)
+	case p.cfg.EndpointDomain != "":
+		addr = net.JoinHostPort(router.DaemonName(key)+"."+p.cfg.EndpointDomain, strconv.Itoa(int(p.cfg.Port)))
+	default:
+		ip, err := p.ops.IP(ctx, name)
+		if err != nil || ip == "" {
+			return false
+		}
 		p.setIP(key, ip)
-		return true
+		addr = net.JoinHostPort(ip, strconv.Itoa(int(p.cfg.Port)))
 	}
-	return false
+	// Instance Running != buildkitd listening yet: probe the port so a fast client (especially concurrent
+	// cold starts) never dials a not-yet-serving daemon. This is the single-host analogue of the k8s
+	// StatefulSet readiness reflecting the in-pod buildctl probe.
+	return dialProbe(addr)
 }
+
+func isAddrResolver(ops HostOps) bool { _, ok := ops.(addrResolver); return ok }
 
 // WaitReady polls until the daemon is running with an IP, or the wait budget / ctx elapses.
 func (p *Provisioner) WaitReady(ctx context.Context, key string) error {
