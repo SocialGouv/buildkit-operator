@@ -61,7 +61,10 @@ natively, so it cannot reach full parity.
 - ⚠️ No horizontal scale across nodes and no HA on the local backend — acceptable, and inherent, for a
   single-host target.
 - ⚠️ A second backend to maintain + a doubled e2e matrix; egress hardening
-  ([0006](0006-namespace-topology.md)'s NetworkPolicy) must be re-implemented with nftables/Incus ACLs.
-- ⚠️ **Status is Proposed**: the local backend ships as an MVP (warm build + cache + scale-to-zero, with
-  unit tests over a stubbed host seam). Durable ZFS snapshots, CoW fork seeding into a VM, and fan-out
-  are follow-up work; real end-to-end validation needs a host with Incus + a ZFS pool.
+  ([0006](0006-namespace-topology.md)'s NetworkPolicy) is re-implemented by binding an Incus network ACL
+  per instance (strict for untrusted forks).
+- ⚠️ **Status is Proposed**: the local backend is implemented — warm build + cache, scale-to-zero,
+  durable ZFS snapshots with retention, CoW fork seeding (`zfs clone`) into a VM-isolated instance
+  (untrusted builds are refused without a VM image), and a fan-out clone primitive — all covered by unit
+  tests over a stubbed host seam. What remains before Accepted is **real end-to-end validation** on a
+  host with Incus + a ZFS pool (plus an automatic saturation trigger for fan-out).

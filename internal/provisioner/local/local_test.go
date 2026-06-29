@@ -18,6 +18,9 @@ type fakeHost struct {
 	instances map[string]*fakeInst
 	launched  []InstanceSpec
 	deleted   []string
+	snaps     map[string][]string // dataset -> snapshot full names, oldest-first
+	cloned    map[string]string   // new dataset -> source snapshot
+	egress    map[string]bool     // instance name -> strict?
 }
 
 type fakeInst struct {
@@ -28,7 +31,13 @@ type fakeInst struct {
 }
 
 func newFakeHost() *fakeHost {
-	return &fakeHost{datasets: map[string]bool{}, instances: map[string]*fakeInst{}}
+	return &fakeHost{
+		datasets:  map[string]bool{},
+		instances: map[string]*fakeInst{},
+		snaps:     map[string][]string{},
+		cloned:    map[string]string{},
+		egress:    map[string]bool{},
+	}
 }
 
 func (f *fakeHost) EnsureDataset(_ context.Context, dataset string) error {
@@ -94,6 +103,48 @@ func (f *fakeHost) Delete(_ context.Context, name, _ string, _ bool) error {
 	defer f.mu.Unlock()
 	delete(f.instances, name)
 	f.deleted = append(f.deleted, name)
+	return nil
+}
+
+func (f *fakeHost) Snapshot(_ context.Context, dataset, snap string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.snaps[dataset] = append(f.snaps[dataset], dataset+"@"+snap)
+	return nil
+}
+
+func (f *fakeHost) ListSnapshots(_ context.Context, dataset string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.snaps[dataset]...), nil
+}
+
+func (f *fakeHost) DestroySnapshot(_ context.Context, snapshot string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for ds, list := range f.snaps {
+		for i, s := range list {
+			if s == snapshot {
+				f.snaps[ds] = append(list[:i], list[i+1:]...)
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func (f *fakeHost) Clone(_ context.Context, snapshot, dataset string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cloned[dataset] = snapshot
+	f.datasets[dataset] = true
+	return nil
+}
+
+func (f *fakeHost) ApplyEgress(_ context.Context, name string, strict bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.egress[name] = strict
 	return nil
 }
 
@@ -304,5 +355,123 @@ func TestReconcile_KeepsUntouchedProject(t *testing.T) {
 	p.Reconcile(context.Background())
 	if running, _ := f.Running(context.Background(), router.DaemonName(spec.Key)); !running {
 		t.Error("untouched instance scaled to zero, want kept (zero lastBuild must not trigger)")
+	}
+}
+
+// Untrusted builds are refused without a VM image: we never run untrusted code in a container.
+func TestEnsure_UntrustedRequiresVMImage(t *testing.T) {
+	f := newFakeHost()
+	p := New(f, Config{Pool: "tank/bko", Image: "img", MountPath: "/data", Port: 1234}, logr.Discard()) // no VMImage
+	if err := p.Ensure(context.Background(), canonSpec(), true); err == nil {
+		t.Fatal("Ensure untrusted without VMImage: want error, got nil")
+	}
+	if len(f.launched) != 0 {
+		t.Errorf("launched %d instances for a refused untrusted build, want 0", len(f.launched))
+	}
+}
+
+// A fork's cache is a CoW clone of the canonical project's latest snapshot (warm fork seed), and gets
+// the strict egress profile.
+func TestEnsure_ForkSeedsCoWAndStrictEgress(t *testing.T) {
+	f := newFakeHost()
+	p := New(f, Config{Pool: "tank/bko", Image: "img", VMImage: "vmimg", MountPath: "/data", Port: 1234, ForkEgressStrict: true}, logr.Discard())
+	canon := canonSpec()
+	// Canonical already has a durability snapshot to seed from.
+	canonSnap := p.dataset(canon.Key) + "@bko-1"
+	f.snaps[p.dataset(canon.Key)] = []string{canonSnap}
+
+	if err := p.Ensure(context.Background(), canon, true); err != nil {
+		t.Fatalf("Ensure untrusted: %v", err)
+	}
+	forkKey := router.ForkKey(canon.Key)
+	if got := f.cloned[p.dataset(forkKey)]; got != canonSnap {
+		t.Errorf("fork dataset cloned from %q, want canonical snapshot %q", got, canonSnap)
+	}
+	if !f.egress[router.DaemonName(forkKey)] {
+		t.Error("fork instance not given the strict egress profile")
+	}
+}
+
+// Reconcile snapshots a canonical project on cadence and prunes to KeepSnapshots (oldest first).
+func TestReconcile_SnapshotCadenceAndRetention(t *testing.T) {
+	f := newFakeHost()
+	p := New(f, Config{Pool: "tank/bko", Image: "img", MountPath: "/data", Port: 1234,
+		IdleTimeout: time.Hour, SnapshotEvery: time.Millisecond, KeepSnapshots: 2}, logr.Discard())
+	spec := canonSpec()
+	if err := p.Ensure(context.Background(), spec, false); err != nil {
+		t.Fatal(err)
+	}
+	// Two pre-existing snapshots + a build so the cadence fires.
+	ds := p.dataset(spec.Key)
+	f.snaps[ds] = []string{ds + "@old0", ds + "@old1"}
+	p.AddInflight(context.Background(), spec.Key, 0) // stamps lastBuild
+
+	p.Reconcile(context.Background())
+
+	got := f.snaps[ds]
+	if len(got) != 2 {
+		t.Fatalf("snapshots = %v, want 2 retained", got)
+	}
+	if got[0] == ds+"@old0" {
+		t.Errorf("oldest snapshot not pruned: %v", got)
+	}
+	p.mu.Lock()
+	last := p.projects[spec.Key].lastSnap
+	p.mu.Unlock()
+	if last == "" {
+		t.Error("lastSnap not recorded after snapshot")
+	}
+}
+
+// Forks are never snapshotted by the cadence (children inherit, never snapshot themselves).
+func TestReconcile_SkipsForkSnapshots(t *testing.T) {
+	f := newFakeHost()
+	p := New(f, Config{Pool: "tank/bko", Image: "img", VMImage: "vmimg", MountPath: "/data", Port: 1234,
+		IdleTimeout: time.Hour, SnapshotEvery: time.Millisecond, KeepSnapshots: 3}, logr.Discard())
+	if err := p.Ensure(context.Background(), canonSpec(), true); err != nil {
+		t.Fatal(err)
+	}
+	forkKey := router.ForkKey(canonSpec().Key)
+	p.AddInflight(context.Background(), forkKey, 0)
+
+	p.Reconcile(context.Background())
+
+	if snaps := f.snaps[p.dataset(forkKey)]; len(snaps) != 0 {
+		t.Errorf("fork was snapshotted (%v), want none", snaps)
+	}
+}
+
+// Fanout spawns n hot CoW clones, seeded from the project's snapshot, that the idle loop never stops.
+func TestFanout_SpawnsHotCoWClones(t *testing.T) {
+	f := newFakeHost()
+	p := New(f, Config{Pool: "tank/bko", Image: "img", MountPath: "/data", Port: 1234, IdleTimeout: time.Minute}, logr.Discard())
+	key := canonSpec().Key
+	snap := p.dataset(key) + "@bko-1"
+	f.snaps[p.dataset(key)] = []string{snap}
+
+	if err := p.Fanout(context.Background(), key, 2); err != nil {
+		t.Fatalf("Fanout: %v", err)
+	}
+	for i := 1; i <= 2; i++ {
+		ck := router.CloneKey(key, i)
+		if running, _ := f.Running(context.Background(), router.DaemonName(ck)); !running {
+			t.Errorf("clone %d not running", i)
+		}
+		if f.cloned[p.dataset(ck)] != snap {
+			t.Errorf("clone %d not seeded from snapshot", i)
+		}
+		// Mark the clone long-idle: a hot clone must survive Reconcile anyway.
+		p.mu.Lock()
+		p.projects[ck].lastBuild = time.Now().Add(-time.Hour)
+		p.mu.Unlock()
+	}
+
+	p.Reconcile(context.Background())
+
+	for i := 1; i <= 2; i++ {
+		ck := router.CloneKey(key, i)
+		if running, _ := f.Running(context.Background(), router.DaemonName(ck)); !running {
+			t.Errorf("hot clone %d was scaled to zero, want kept", i)
+		}
 	}
 }

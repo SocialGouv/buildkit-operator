@@ -16,13 +16,16 @@ import (
 
 // Config holds the single-host knobs for the local backend.
 type Config struct {
-	Pool        string        // ZFS parent dataset for project caches, e.g. "tank/bko"
-	Image       string        // Incus image providing a vanilla buildkitd, e.g. "images:debian/12/buildkit"
-	VMImage     string        // image for UNTRUSTED fork instances (VM isolation, P3); empty = Image
-	MountPath   string        // buildkitd data dir the cache dataset is mounted at
-	Port        int32         // buildkitd mTLS port
-	Wait        time.Duration // cold-start (start instance) wait budget
-	IdleTimeout time.Duration // scale-to-zero after this much idle (no inflight, no recent build)
+	Pool             string        // ZFS parent dataset for project caches, e.g. "tank/bko"
+	Image            string        // Incus image providing a vanilla buildkitd, e.g. "images:debian/12/buildkit"
+	VMImage          string        // image for UNTRUSTED fork instances (VM isolation); empty disables forks
+	MountPath        string        // buildkitd data dir the cache dataset is mounted at
+	Port             int32         // buildkitd mTLS port
+	Wait             time.Duration // cold-start (start instance) wait budget
+	IdleTimeout      time.Duration // scale-to-zero after this much idle (no inflight, no recent build)
+	SnapshotEvery    time.Duration // durability snapshot cadence per canonical project (0 = disabled)
+	KeepSnapshots    int           // snapshots retained per project (older pruned)
+	ForkEgressStrict bool          // bind the strict egress ACL to untrusted fork instances (default on)
 }
 
 // projectState is the in-memory record for one project's daemon. The local backend is a single process,
@@ -30,11 +33,14 @@ type Config struct {
 // reconstructable from `incus` on restart. ip is cached during readiness checks so Endpoint (which has
 // no ctx) can return the dialable address the handler just observed.
 type projectState struct {
-	spec      bkov1.BuildProjectSpec
-	vm        bool
-	inflight  int32
-	lastBuild time.Time
-	ip        string
+	spec       bkov1.BuildProjectSpec
+	vm         bool
+	hot        bool // fan-out clone: stays up, never scaled to zero by the idle loop
+	inflight   int32
+	lastBuild  time.Time
+	ip         string
+	lastSnap   string    // newest durability snapshot (full name dataset@snap), the seed for forks/clones
+	lastSnapAt time.Time // when lastSnap was taken (drives the cadence)
 }
 
 // Provisioner is the single-host (Incus + ZFS) implementation of provisioner.Provisioner.
@@ -67,59 +73,109 @@ func (p *Provisioner) imageFor(vm bool) string {
 	return p.cfg.Image
 }
 
-// Ensure provisions the daemon for spec, deriving a distinct ephemeral fork project when untrusted so a
-// fork PR gets its OWN cache dataset and can never poison the canonical one (the anti-poisoning property
-// holds at the storage layer in the MVP; VM isolation of the fork is P3). It is idempotent: an existing
-// stopped instance is started; a missing one is launched on its retained dataset.
+// Ensure provisions the daemon for spec, deriving a distinct ephemeral fork project when untrusted: a
+// fork PR gets its OWN cache (CoW-seeded read-only from the canonical snapshot, so it can never poison
+// the canonical cache) and runs under VM isolation (refused unless a VM image is configured). It is
+// idempotent: an existing stopped instance is started; a missing one is launched on its (seeded) dataset.
 func (p *Provisioner) Ensure(ctx context.Context, spec bkov1.BuildProjectSpec, untrusted bool) error {
 	vm := false
+	seedFrom := "" // canonical key to CoW-seed the fork's cache from (its latest snapshot)
 	if untrusted {
+		// Untrusted code must run under VM isolation — refuse rather than launch a fork in a container.
+		if p.cfg.VMImage == "" {
+			return errors.New("untrusted build requires VM isolation: set --incus-vm-image")
+		}
+		seedFrom = spec.Key
 		spec = bkov1.DeriveChild(spec, "", bkov1.ForkChild, router.ForkKey(spec.Key))
-		vm = true // request VM isolation; honoured when a VMImage is configured (P3 seeds it CoW)
+		vm = true
 	}
+	return p.ensureInstance(ctx, spec, vm, untrusted && p.cfg.ForkEgressStrict, seedFrom)
+}
+
+// ensureInstance idempotently provisions one project's instance: start it if it exists (scale-up from
+// zero), else seed its dataset (CoW clone from seedFrom's latest snapshot when set, else a fresh
+// dataset) and launch it, then bind the egress profile.
+func (p *Provisioner) ensureInstance(ctx context.Context, spec bkov1.BuildProjectSpec, vm, strictEgress bool, seedFrom string) error {
 	key := spec.Key
 	name := router.DaemonName(key)
 
 	p.mu.Lock()
 	st := p.projects[key]
 	if st == nil {
-		st = &projectState{spec: spec, vm: vm}
+		st = &projectState{spec: spec, vm: vm, hot: spec.Tier == bkov1.TierHot}
 		p.projects[key] = st
 	}
 	p.mu.Unlock()
 
-	if err := p.ops.EnsureDataset(ctx, p.dataset(key)); err != nil {
-		return fmt.Errorf("ensure dataset: %w", err)
-	}
 	exists, err := p.ops.InstanceExists(ctx, name)
 	if err != nil {
 		return fmt.Errorf("instance exists: %w", err)
 	}
-	if !exists {
-		ispec := InstanceSpec{
-			Name:      name,
-			Image:     p.imageFor(vm),
-			VM:        vm,
-			Dataset:   p.dataset(key),
-			MountPath: p.cfg.MountPath,
-			Config:    map[string]string{labelKey: key},
+	if exists {
+		running, err := p.ops.Running(ctx, name)
+		if err != nil {
+			return fmt.Errorf("instance running: %w", err)
 		}
-		if err := p.ops.Launch(ctx, ispec); err != nil {
-			return fmt.Errorf("launch instance: %w", err)
+		if !running {
+			if err := p.ops.Start(ctx, name); err != nil {
+				return fmt.Errorf("start instance: %w", err)
+			}
 		}
 		return nil
 	}
-	// Exists but may be stopped (scaled to zero): start it back up on its warm dataset.
-	running, err := p.ops.Running(ctx, name)
-	if err != nil {
-		return fmt.Errorf("instance running: %w", err)
+
+	if err := p.seedDataset(ctx, key, seedFrom); err != nil {
+		return err
 	}
-	if !running {
-		if err := p.ops.Start(ctx, name); err != nil {
-			return fmt.Errorf("start instance: %w", err)
-		}
+	ispec := InstanceSpec{
+		Name:      name,
+		Image:     p.imageFor(vm),
+		VM:        vm,
+		Dataset:   p.dataset(key),
+		MountPath: p.cfg.MountPath,
+		Config:    map[string]string{labelKey: key},
+	}
+	if err := p.ops.Launch(ctx, ispec); err != nil {
+		return fmt.Errorf("launch instance: %w", err)
+	}
+	if err := p.ops.ApplyEgress(ctx, name, strictEgress); err != nil {
+		return fmt.Errorf("apply egress: %w", err)
 	}
 	return nil
+}
+
+// seedDataset prepares a key's cache dataset. When seedFrom is set and that project has a snapshot, the
+// dataset is an instant CoW clone of it (warm fork/clone); otherwise a fresh empty dataset.
+func (p *Provisioner) seedDataset(ctx context.Context, key, seedFrom string) error {
+	if seedFrom != "" {
+		if snap := p.latestSnapshot(ctx, seedFrom); snap != "" {
+			if err := p.ops.Clone(ctx, snap, p.dataset(key)); err != nil {
+				return fmt.Errorf("clone seed: %w", err)
+			}
+			return nil
+		}
+	}
+	if err := p.ops.EnsureDataset(ctx, p.dataset(key)); err != nil {
+		return fmt.Errorf("ensure dataset: %w", err)
+	}
+	return nil
+}
+
+// latestSnapshot returns the newest snapshot full-name for a project (in-memory hint first, else asks
+// ZFS so it survives a buildd restart). Empty when the project has never been snapshotted.
+func (p *Provisioner) latestSnapshot(ctx context.Context, key string) string {
+	p.mu.Lock()
+	if st := p.projects[key]; st != nil && st.lastSnap != "" {
+		snap := st.lastSnap
+		p.mu.Unlock()
+		return snap
+	}
+	p.mu.Unlock()
+	snaps, err := p.ops.ListSnapshots(ctx, p.dataset(key))
+	if err != nil || len(snaps) == 0 {
+		return ""
+	}
+	return snaps[len(snaps)-1]
 }
 
 // labelKey marks our instances so reconcile/GC can list only what we manage.
@@ -194,19 +250,24 @@ func (p *Provisioner) setIP(key, ip string) {
 	}
 }
 
-// Reconcile runs one scale-to-zero pass: any project idle past IdleTimeout (no inflight build, last
-// build older than the timeout) has its instance stopped, keeping the retained dataset. It is the
-// single-host analogue of the controller's desiredReplicas=0 path; Run drives it on a ticker.
+// Reconcile runs one lifecycle pass: scale idle projects to zero, and take durability snapshots on
+// cadence (with retention). It is the single-host analogue of the controller's desiredReplicas + M3
+// snapshot loop; Run drives it on a ticker.
 func (p *Provisioner) Reconcile(ctx context.Context) {
 	now := time.Now()
-	type cand struct {
-		key, name string
-	}
-	var idle []cand
+	type cand struct{ key, name string }
+	var idle, snap []cand
 	p.mu.Lock()
 	for key, st := range p.projects {
-		if st.inflight == 0 && !st.lastBuild.IsZero() && now.Sub(st.lastBuild) > p.cfg.IdleTimeout {
+		// Scale-to-zero: warm (non-hot) projects idle past the timeout. Hot fan-out clones never idle out.
+		if !st.hot && st.inflight == 0 && !st.lastBuild.IsZero() && now.Sub(st.lastBuild) > p.cfg.IdleTimeout {
 			idle = append(idle, cand{key: key, name: router.DaemonName(key)})
+		}
+		// Snapshot cadence: canonical projects only (forks/clones never snapshot — see DeriveChild), on
+		// the configured interval. First snapshot fires once the project has seen a build.
+		if p.cfg.SnapshotEvery > 0 && !router.IsForkKey(key) && !st.hot && !st.lastBuild.IsZero() &&
+			now.Sub(st.lastSnapAt) > p.cfg.SnapshotEvery {
+			snap = append(snap, cand{key: key})
 		}
 	}
 	p.mu.Unlock()
@@ -222,6 +283,52 @@ func (p *Provisioner) Reconcile(ctx context.Context) {
 		}
 		p.log.Info("scaled to zero (idle)", "key", c.key)
 	}
+	for _, c := range snap {
+		p.snapshot(ctx, c.key, now)
+	}
+}
+
+// snapshot takes one durability snapshot of a project's cache and prunes to KeepSnapshots (oldest first).
+func (p *Provisioner) snapshot(ctx context.Context, key string, now time.Time) {
+	name := fmt.Sprintf("bko-%d", now.Unix())
+	dataset := p.dataset(key)
+	if err := p.ops.Snapshot(ctx, dataset, name); err != nil {
+		p.log.Error(err, "snapshot failed", "key", key)
+		return
+	}
+	full := dataset + "@" + name
+	p.mu.Lock()
+	if st := p.projects[key]; st != nil {
+		st.lastSnap = full
+		st.lastSnapAt = now
+	}
+	p.mu.Unlock()
+
+	if p.cfg.KeepSnapshots > 0 {
+		snaps, err := p.ops.ListSnapshots(ctx, dataset)
+		if err != nil {
+			return
+		}
+		for i := 0; i < len(snaps)-p.cfg.KeepSnapshots; i++ {
+			if err := p.ops.DestroySnapshot(ctx, snaps[i]); err != nil {
+				p.log.Error(err, "prune snapshot failed", "snapshot", snaps[i])
+			}
+		}
+	}
+}
+
+// Fanout ensures n hot CoW-clone daemons for a saturated project, each seeded from the project's latest
+// snapshot (instant zfs clone) and kept hot (never scaled to zero). The clone primitive is the same one
+// the fork path uses; an automatic saturation trigger is left to the caller (future work).
+func (p *Provisioner) Fanout(ctx context.Context, key string, n int) error {
+	for i := 1; i <= n; i++ {
+		cloneKey := router.CloneKey(key, i)
+		spec := bkov1.DeriveChild(bkov1.BuildProjectSpec{Key: key}, "", bkov1.CloneChild, cloneKey)
+		if err := p.ensureInstance(ctx, spec, false, false, key); err != nil {
+			return fmt.Errorf("fanout clone %d: %w", i, err)
+		}
+	}
+	return nil
 }
 
 // Run drives the reconcile loop until ctx is done. Wired by buildd's local-backend setup as the

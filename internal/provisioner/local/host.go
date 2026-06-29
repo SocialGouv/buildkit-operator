@@ -46,6 +46,18 @@ type HostOps interface {
 	IP(ctx context.Context, name string) (string, error)
 	// Delete removes the instance (and, when purgeDataset, its dataset) — orphan GC / fork reap.
 	Delete(ctx context.Context, name, dataset string, purgeDataset bool) error
+
+	// Snapshot takes a ZFS snapshot dataset@snap (durability; the seed source for forks/clones).
+	Snapshot(ctx context.Context, dataset, snap string) error
+	// ListSnapshots returns dataset's snapshots (full name dataset@snap) oldest-first.
+	ListSnapshots(ctx context.Context, dataset string) ([]string, error)
+	// DestroySnapshot removes a snapshot by its full name (dataset@snap) — retention pruning.
+	DestroySnapshot(ctx context.Context, snapshot string) error
+	// Clone creates a new dataset as a CoW clone of snapshot (instant fork/fan-out seed).
+	Clone(ctx context.Context, snapshot, dataset string) error
+	// ApplyEgress applies the network-egress profile to an instance: strict (deny by default, for
+	// untrusted forks) vs the baseline. The single-host analogue of the builds NetworkPolicy.
+	ApplyEgress(ctx context.Context, name string, strict bool) error
 }
 
 // cli is the real HostOps: it shells out to `incus` and `zfs`. The exec seam mirrors cmd/build so tests
@@ -143,6 +155,45 @@ func (c *cli) Delete(ctx context.Context, name, dataset string, purgeDataset boo
 		}
 	}
 	return nil
+}
+
+func (c *cli) Snapshot(ctx context.Context, dataset, snap string) error {
+	_, err := c.run(ctx, c.zfs, "snapshot", dataset+"@"+snap)
+	return err
+}
+
+func (c *cli) ListSnapshots(ctx context.Context, dataset string) ([]string, error) {
+	// Oldest-first by creation time, names only, no header; scoped to this dataset (-d 1).
+	out, err := c.run(ctx, c.zfs, "list", "-t", "snapshot", "-o", "name", "-s", "creation", "-H", "-d", "1", dataset)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+func (c *cli) DestroySnapshot(ctx context.Context, snapshot string) error {
+	_, err := c.run(ctx, c.zfs, "destroy", snapshot)
+	return err
+}
+
+func (c *cli) Clone(ctx context.Context, snapshot, dataset string) error {
+	_, err := c.run(ctx, c.zfs, "clone", snapshot, dataset)
+	return err
+}
+
+func (c *cli) ApplyEgress(ctx context.Context, name string, strict bool) error {
+	// Attach a pre-provisioned Incus network ACL to the instance NIC: "bko-fork-strict" (deny-by-default
+	// egress for untrusted forks) vs "bko-baseline". The ACLs themselves are created by the install (see
+	// deploy/vm); this only binds one to eth0. Best-effort surface — tune per host network on first e2e.
+	acl := "bko-baseline"
+	if strict {
+		acl = "bko-fork-strict"
+	}
+	_, err := c.run(ctx, c.incus, "config", "device", "set", name, "eth0", "security.acls="+acl)
+	return err
 }
 
 // datasetMount is the conventional mountpoint of a ZFS dataset (/<dataset>). Kept tiny + overridable in

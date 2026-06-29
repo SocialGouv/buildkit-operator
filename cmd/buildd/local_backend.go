@@ -15,20 +15,23 @@ import (
 // localParams bundles the buildd knobs the single-host (Incus + ZFS) backend needs. It is a plain struct
 // so main() can pass the parsed flags without a long argument list.
 type localParams struct {
-	cfg          builder.Config // Port + Namespace (Namespace is informational on /route responses here)
-	apiListen    string
-	routeWait    time.Duration
-	maxCold      int
-	apiRateLimit float64
-	apiRateBurst int
-	s3Bucket     string
-	s3Region     string
-	s3Endpoint   string
-	pool         string // ZFS parent dataset
-	image        string // buildkitd Incus image
-	vmImage      string // VM image for untrusted forks (empty = image)
-	mountPath    string // buildkitd data dir the cache dataset mounts at
-	idleTimeout  time.Duration
+	cfg              builder.Config // Port + Namespace (Namespace is informational on /route responses here)
+	apiListen        string
+	routeWait        time.Duration
+	maxCold          int
+	apiRateLimit     float64
+	apiRateBurst     int
+	s3Bucket         string
+	s3Region         string
+	s3Endpoint       string
+	pool             string // ZFS parent dataset
+	image            string // buildkitd Incus image
+	vmImage          string // VM image for untrusted forks (empty = image)
+	mountPath        string // buildkitd data dir the cache dataset mounts at
+	idleTimeout      time.Duration
+	snapshotEvery    time.Duration
+	keepSnapshots    int
+	forkEgressStrict bool
 }
 
 // runLocalBackend wires the local provisioner + the shared routing API and serves until SIGTERM. It is
@@ -40,13 +43,16 @@ func runLocalBackend(p localParams, verifier *identity.Verifier, authToken, admi
 	}
 
 	prov := local.New(local.NewCLI(), local.Config{
-		Pool:        p.pool,
-		Image:       p.image,
-		VMImage:     p.vmImage,
-		MountPath:   p.mountPath,
-		Port:        p.cfg.Port,
-		Wait:        p.routeWait,
-		IdleTimeout: p.idleTimeout,
+		Pool:             p.pool,
+		Image:            p.image,
+		VMImage:          p.vmImage,
+		MountPath:        p.mountPath,
+		Port:             p.cfg.Port,
+		Wait:             p.routeWait,
+		IdleTimeout:      p.idleTimeout,
+		SnapshotEvery:    p.snapshotEvery,
+		KeepSnapshots:    p.keepSnapshots,
+		ForkEgressStrict: p.forkEgressStrict,
 	}, log.WithName("provisioner"))
 
 	var limiter *rate.Limiter

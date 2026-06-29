@@ -97,6 +97,9 @@ func main() {
 	incusVMImage := flag.String("incus-vm-image", "", "[backend=local] Incus VM image for untrusted fork isolation (empty = --incus-image)")
 	localMountPath := flag.String("local-mount-path", "/var/lib/buildkit", "[backend=local] buildkitd data dir the cache dataset is mounted at")
 	localIdle := flag.Duration("local-idle-timeout", 15*time.Minute, "[backend=local] scale an instance to zero after this much idle")
+	localSnapEvery := flag.Duration("local-snapshot-every", 0, "[backend=local] durability snapshot cadence per project (0 = disabled)")
+	localKeepSnaps := flag.Int("local-keep-snapshots", 3, "[backend=local] durability snapshots retained per project")
+	forkEgressStrict := flag.Bool("fork-egress-strict", true, "[backend=local] bind the strict egress ACL to untrusted fork instances")
 	flag.Parse()
 	cfg.Port = int32(*port)
 	cfg.HealthPort = int32(*healthPort)
@@ -143,6 +146,7 @@ func main() {
 			s3Bucket: *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
 			pool: *incusPool, image: *incusImage, vmImage: *incusVMImage,
 			mountPath: *localMountPath, idleTimeout: *localIdle,
+			snapshotEvery: *localSnapEvery, keepSnapshots: *localKeepSnaps, forkEgressStrict: *forkEgressStrict,
 		}, verifier, authToken, adminToken, log)
 		if err != nil {
 			log.Error(err, "local backend exited")
