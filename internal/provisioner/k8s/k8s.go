@@ -35,7 +35,10 @@ type Provisioner struct {
 	wait        time.Duration // cold-start wait budget for WaitReady
 	gatewayHost string        // when set, /route returns <daemon>.<gatewayHost> for off-cluster CI
 	gatewayPort int32         // external port for the gateway endpoint (0 = use port)
-	log         logr.Logger
+	// defaultStorageClass is stamped onto BuildProjects created with no StorageClass (cloud-portable:
+	// empty leaves it unset so the daemon PVC uses the cluster's DEFAULT StorageClass).
+	defaultStorageClass string
+	log                 logr.Logger
 }
 
 // compile-time check that the k8s backend satisfies the contract.
@@ -44,13 +47,14 @@ var _ provisioner.Provisioner = (*Provisioner)(nil)
 // New builds the Kubernetes provisioner from the shared builder.Config plus the routing-API knobs.
 func New(c client.Client, cfg builder.Config, wait time.Duration, gatewayHost string, gatewayPort int32, log logr.Logger) *Provisioner {
 	return &Provisioner{
-		c:           c,
-		namespace:   cfg.Namespace,
-		port:        cfg.Port,
-		wait:        wait,
-		gatewayHost: gatewayHost,
-		gatewayPort: gatewayPort,
-		log:         log,
+		c:                   c,
+		namespace:           cfg.Namespace,
+		port:                cfg.Port,
+		wait:                wait,
+		gatewayHost:         gatewayHost,
+		gatewayPort:         gatewayPort,
+		defaultStorageClass: cfg.DefaultStorageClass,
+		log:                 log,
 	}
 }
 
@@ -78,6 +82,11 @@ func (p *Provisioner) ensureBuildProject(ctx context.Context, spec bkov1.BuildPr
 	}
 	if !apierrors.IsNotFound(err) {
 		return err
+	}
+	// Stamp the operator-wide default StorageClass when the project sets none (empty default = the
+	// cluster's default StorageClass). Keeps cloud specifics in buildd config, not the API type.
+	if spec.StorageClass == "" {
+		spec.StorageClass = p.defaultStorageClass
 	}
 	created := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: spec.Key, Namespace: p.namespace},

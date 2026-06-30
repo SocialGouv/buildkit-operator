@@ -191,9 +191,11 @@ spec:
                 minimum: 0
                 type: integer
               storageClass:
-                default: csi-cinder-high-speed-gen2
-                description: StorageClass for the cache PVC. On OVH MKS this is the
-                  gen2 high-speed class.
+                description: |-
+                  StorageClass for the cache PVC. No fixed default (cloud-portable): when empty, buildd stamps its
+                  operator-wide default (--default-storage-class), and an empty default leaves StorageClassName unset
+                  so the cluster's DEFAULT StorageClass is used. OVH MKS: set the gen2 high-speed class; EKS: e.g.
+                  ebs-gp3 (or leave empty for the cluster default).
                 type: string
               target:
                 description: Target is the Dockerfile target stage this daemon serves

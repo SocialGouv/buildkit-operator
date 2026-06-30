@@ -59,15 +59,17 @@ buildkit:
   port: 1234
 
 # --- Per-project daemon defaults --------------------------------------------
-# NOTE: the per-project defaults (storageClass, cacheVolumeGi, tier, idleTimeoutSec, securityProfile)
-# are NOT set here — buildd has no flags for them. They are enforced by the CRD's +kubebuilder:default
-# markers (and mirrored by applyDefaults in the controller). To change a default, edit the CRD/BuildProject,
-# or set the field per-project on the BuildProject CR. Putting them here would be silently ignored.
+# Default StorageClass for the per-project cache PVCs when a BuildProject sets none. Empty = the cluster's
+# DEFAULT StorageClass (cloud-portable). OVH MKS: csi-cinder-high-speed-gen2; EKS: e.g. ebs-gp3 (or leave
+# empty for the cluster default).
+defaultStorageClass: ""
+# NOTE: the OTHER per-project defaults (cacheVolumeGi, tier, idleTimeoutSec, securityProfile) are enforced
+# by the CRD's +kubebuilder:default markers — set them per-project on the BuildProject CR, not here.
 
-# Snapshot class used by the controller for VolumeSnapshot-based cache seed/durability (M3).
-# OVH ships csi-cinder-snapclass-v1 (at-rest) and csi-cinder-snapclass-in-use-v1 (in-use); the
-# in-use variant lets buildd snapshot a hot daemon without scale-to-zero (bench D-bis).
-snapshotClassName: csi-cinder-snapclass-in-use-v1
+# VolumeSnapshotClass for cache durability snapshots (M3). Empty = snapshots DISABLED (cloud-portable
+# default). OVH: csi-cinder-snapclass-in-use-v1 (in-use snapshots — no scale-to-zero needed). EKS: an
+# EBS-CSI VolumeSnapshotClass (EBS snapshots aren't "in-use", so the controller scales to zero first).
+snapshotClassName: ""
 
 # Durability snapshots retained per project (M3, oldest pruned).
 snapshots:
@@ -109,7 +111,7 @@ mirror:
   upstream: https://registry-1.docker.io
   image: registry:2
   storage: 20Gi
-  storageClass: "" # empty = csi-cinder-high-speed-gen2
+  storageClass: "" # empty = the cluster's default StorageClass
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
@@ -193,12 +195,13 @@ gateway:
   maxConns: 1024
   service:
     type: LoadBalancer
-    # A build holds ONE long-lived mTLS stream through this LB. On OVH/OpenStack LBs the default
-    # member-data idle timeout (50s) cuts a build that goes quiet (e.g. a long RUN with no output),
-    # so raise it well past the longest expected build. Keys honored by the OpenStack CCM (ms).
-    annotations:
-      loadbalancer.openstack.org/timeout-member-data: "600000"
-      loadbalancer.openstack.org/timeout-client-data: "600000"
+    # LB annotations are CLOUD-SPECIFIC — set the ones your cloud's controller honors. A build holds ONE
+    # long-lived mTLS stream, so RAISE the LB idle timeout well past the longest build. Examples:
+    #   OVH/OpenStack CCM:  loadbalancer.openstack.org/timeout-member-data: "600000"
+    #                       loadbalancer.openstack.org/timeout-client-data: "600000"
+    #   AWS LB Controller:  service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # (in-cluster runners need no gateway at all — leave gateway.host empty.)
+    annotations: {}
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 500m, memory: 128Mi }
@@ -213,12 +216,11 @@ service:
   # (a cleartext bearer token open to the internet is not enough). For PUBLIC off-cluster access prefer
   # the TLS Ingress (ingress.enabled). Leave empty for in-cluster (ClusterIP) use.
   loadBalancerSourceRanges: []
-  # /route blocks up to --route-wait (180s) for a COLD daemon to become Ready. The OVH/OpenStack LB's
-  # default member-data idle timeout (50s) would cut that wait -> curl "(52) Empty reply". Raise it past
-  # route-wait so first-build cold starts complete. Honored by the OpenStack CCM (milliseconds).
-  annotations:
-    loadbalancer.openstack.org/timeout-member-data: "200000"
-    loadbalancer.openstack.org/timeout-client-data: "200000"
+  # Cloud-specific LB annotations (only when type: LoadBalancer). /route blocks up to --route-wait (180s)
+  # for a cold daemon, so RAISE the LB idle timeout past it. Example (OVH/OpenStack CCM):
+  #   loadbalancer.openstack.org/timeout-member-data: "200000"
+  #   loadbalancer.openstack.org/timeout-client-data: "200000"
+  annotations: {}
 
 # Optional Ingress for the buildd /route API — terminates TLS on 443 under a public hostname, so
 # off-cluster runners that can only egress via an HTTPS proxy (e.g. a CI platform behind a CONNECT

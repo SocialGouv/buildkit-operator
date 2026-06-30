@@ -44,8 +44,10 @@ type BuildProjectSpec struct {
 	// +kubebuilder:validation:Enum=amd64;arm64
 	Arch string `json:"arch"`
 
-	// StorageClass for the cache PVC. On OVH MKS this is the gen2 high-speed class.
-	// +kubebuilder:default="csi-cinder-high-speed-gen2"
+	// StorageClass for the cache PVC. No fixed default (cloud-portable): when empty, buildd stamps its
+	// operator-wide default (--default-storage-class), and an empty default leaves StorageClassName unset
+	// so the cluster's DEFAULT StorageClass is used. OVH MKS: set the gen2 high-speed class; EKS: e.g.
+	// ebs-gp3 (or leave empty for the cluster default).
 	StorageClass string `json:"storageClass,omitempty"`
 
 	// CacheVolumeGi sizes the cache volume. On gen2, throughput scales with size

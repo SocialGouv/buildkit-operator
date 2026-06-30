@@ -45,6 +45,7 @@ spec:
             - --cert-manager-certs=true
             {{- end }}
             - --buildkitd-configmap={{ include "buildkit-operator.fullname" . }}-buildkitd-config
+            - --default-storage-class={{ .Values.defaultStorageClass }}
             - --snapshot-class={{ .Values.snapshotClassName }}
             - --keep-snapshots={{ .Values.snapshots.keep }}
             - --max-cold-starts={{ .Values.maxColdStarts }}

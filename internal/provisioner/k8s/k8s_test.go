@@ -57,6 +57,35 @@ func TestEndpoint(t *testing.T) {
 	}
 }
 
+// TestEnsure_StampsDefaultStorageClass: a project created with no StorageClass gets the operator-wide
+// default stamped (empty default leaves it unset so the cluster's default StorageClass is used); an
+// explicit StorageClass is always preserved.
+func TestEnsure_StampsDefaultStorageClass(t *testing.T) {
+	get := func(t *testing.T, defaultSC, specSC string) string {
+		t.Helper()
+		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).Build()
+		p := New(c, builder.Config{Namespace: "buildkit-operator", Port: 1234, DefaultStorageClass: defaultSC}, 0, "", 0, logr.Discard())
+		spec := bkov1.BuildProjectSpec{Key: "psc", Arch: "amd64", StorageClass: specSC}
+		if err := p.Ensure(t.Context(), spec, false); err != nil {
+			t.Fatalf("Ensure: %v", err)
+		}
+		var bp bkov1.BuildProject
+		if err := c.Get(t.Context(), types.NamespacedName{Name: "psc", Namespace: "buildkit-operator"}, &bp); err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		return bp.Spec.StorageClass
+	}
+	if got := get(t, "ebs-gp3", ""); got != "ebs-gp3" {
+		t.Errorf("empty spec + default: StorageClass = %q, want ebs-gp3", got)
+	}
+	if got := get(t, "", ""); got != "" {
+		t.Errorf("empty spec + empty default: StorageClass = %q, want empty (cluster default)", got)
+	}
+	if got := get(t, "ebs-gp3", "fast-ssd"); got != "fast-ssd" {
+		t.Errorf("explicit spec StorageClass must be preserved, got %q", got)
+	}
+}
+
 // TestEnsure_CreatesAndStamps: a missing project is created and its LastBuildTime stamped
 // (warm-from-birth), so desiredReplicas holds a warm replica immediately.
 func TestEnsure_CreatesAndStamps(t *testing.T) {
