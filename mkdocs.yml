@@ -1,5 +1,5 @@
 site_name: buildkit-operator
-site_description: A distributed BuildKit build service — one hot vanilla buildkitd per (project, arch) on Kubernetes.
+site_description: A distributed BuildKit build service — one hot vanilla buildkitd per (project, arch), on Kubernetes or a single host (Incus/ZFS).
 site_url: https://socialgouv.github.io/buildkit-operator/
 repo_url: https://github.com/socialgouv/buildkit-operator
 docs_dir: docs
@@ -42,6 +42,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Architecture: architecture.md
+  - Single-host backend (Incus/ZFS): single-host-backend.md
   - CI integration: ci-integration.md
   - Onboarding: onboarding.md
   - Storage & cold cache: storage-and-cold-cache.md
@@ -62,3 +63,4 @@ nav:
       - 0004 Shared SNI gateway: adr/0004-shared-sni-gateway.md
       - 0005 Kata for untrusted forks: adr/0005-kata-clh-for-untrusted-forks.md
       - 0006 Namespace topology: adr/0006-namespace-topology.md
+      - 0007 Single-host Incus/ZFS backend: adr/0007-vm-backend-incus-zfs.md

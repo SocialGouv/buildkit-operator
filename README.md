@@ -1,11 +1,12 @@
 # buildkit-operator
 
-**A distributed BuildKit build service: one hot, *vanilla* `buildkitd` per `(project, arch)` on Kubernetes.**
+**A distributed BuildKit build service: one hot, *vanilla* `buildkitd` per `(project, arch)` — on Kubernetes or a single host.**
 
 buildkit-operator gives CI image builds the perceived speed of a warm local BuildKit cache, with the
 elasticity and durability of Kubernetes — **without forking BuildKit, containerd, or writing a
 custom snapshotter.** It is a small **control plane** (routing + lifecycle) on top of stock
-`buildkitd`/`containerd`. Built for OVH Managed Kubernetes (Cinder gen2), portable to any CSI.
+`buildkitd`/`containerd`. Built for OVH Managed Kubernetes (Cinder gen2), portable to any CSI — and the
+same control plane runs on a **single host** (Incus + ZFS) when a cluster is overkill ([backends →](docs/single-host-backend.md)).
 
 The numbers below are measured on a real OVH MKS cluster: **warm builds ≈ 10 s** (vs ≈ 18 s on a
 shared pool), a **cold daemon rehydrates ≈ 9× faster** from S3 (4.5 s vs 41.8 s), and idle projects
@@ -28,6 +29,7 @@ shared pool), a **cold daemon rehydrates ≈ 9× faster** from S3 (4.5 s vs 41.8
 - 🔑 **Verified identity exposure** — the public `/route` API binds each build to a **forge-signed OIDC identity** (GitHub/GitLab; Forgejo-ready), so a caller can only ever build *its own* repo — no self-declared cache poisoning — and the build path is mTLS end-to-end. [CI integration →](docs/ci-integration.md#route-identity-oidc-recommended-vs-beareradmin)
 - 🔒 **Vanilla rootless buildkit** — no fork of BuildKit, containerd, or the snapshotter; the daemon runs non-root and unprivileged. [security →](docs/security.md)
 - 🧱 **HA control plane** — `buildd` runs 2 replicas with leader election; routing is served by every replica. [architecture →](docs/architecture.md#control-plane-ha)
+- 🖥️ **Pluggable backend** — the same control plane runs on **Kubernetes** (default) or a **single host** (Incus + ZFS): one buildkitd per project on a retained ZFS dataset, with scale-to-zero, kernel snapshots, CoW fork seeding and VM-isolated untrusted forks. The client, the CI Actions and OIDC are identical. [single-host backend →](docs/single-host-backend.md) · [ADR 0007 →](docs/adr/0007-vm-backend-incus-zfs.md)
 
 All numbers are validated on OVH Managed Kubernetes (GRA9, Cinder gen2). See
 [performance.md](docs/performance.md) for the methodology.

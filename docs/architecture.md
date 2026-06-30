@@ -128,6 +128,17 @@ Helm chart renders the gateway Deployment + its one LoadBalancer Service from
 mTLS shape the existing `buildkit-service` uses — buildkit-operator just fans one LB out to many daemons by
 SNI instead of allocating one LB each.
 
+## Backends — Kubernetes or a single host
+
+The reconcile loop above is the **Kubernetes** provisioner. The control plane is substrate-agnostic: the
+routing key, the `build` CLI, the CI Actions and OIDC are all backend-neutral, so the only Kubernetes-bound
+layer is the *provisioner* — the code that turns a key into a running, addressable daemon. It sits behind
+a small [`Provisioner`](https://github.com/socialgouv/buildkit-operator/tree/main/internal/provisioner)
+interface, and a **single-host** implementation (Incus + ZFS) slots in with `--backend local`: one
+buildkitd per project on a retained ZFS dataset, with an in-process scale-to-zero + snapshot loop instead
+of a controller (no CRD, no etcd). See [Single-host backend](single-host-backend.md) and
+[ADR 0007](adr/0007-vm-backend-incus-zfs.md).
+
 ## What stays vanilla (non-goals)
 
 - No fork of BuildKit or containerd; no custom snapshotter; no merging bbolt stores between daemons.
