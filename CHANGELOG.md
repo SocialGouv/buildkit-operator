@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.1](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.11.1) (2026-07-02)
+
+### Bug Fixes
+
+* **build:** S3 cache export is best-effort (ignore-error=true) ([7004ac6](https://github.com/socialgouv/buildkit-operator/commit/7004ac6ffff942d8df468bb0b129d120b3947108))
+
 ## [0.11.0](https://github.com/socialgouv/buildkit-operator/compare/v0.10.0...v0.11.0) (2026-07-02)
 
 ### Features

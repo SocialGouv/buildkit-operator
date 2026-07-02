@@ -6,8 +6,8 @@ description: >-
   references the generated CRDs. Per-project StatefulSets/Services/PVCs are
   created by the buildd controller at runtime — they are NOT part of this chart.
 type: application
-version: 0.11.0
-appVersion: "0.11.0"
+version: 0.11.1
+appVersion: "0.11.1"
 keywords:
   - buildkit
   - ci
