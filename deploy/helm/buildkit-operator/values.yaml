@@ -142,6 +142,11 @@ daemonScheduling:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # pinArch (opt-in, default false): add a kubernetes.io/arch nodeSelector matching each build's arch, so
+  # amd64 daemons land on amd64 nodes and arm64 on arm64/Graviton — native multi-arch, no QEMU. Off keeps
+  # the prior behavior (an arm64 build may still fall back to QEMU on a binfmt-enabled node). Set true once
+  # per-arch nodepools are available.
+  pinArch: false
 
 # Max concurrent cold-start attaches buildd allows (M4 backpressure; seed from bench C so a
 # CI burst does not serialize Cinder attaches into minutes).

@@ -40,6 +40,11 @@ type Config struct {
 	DaemonNodeSelector map[string]string
 	DaemonTolerations  []corev1.Toleration
 	DaemonAffinity     *corev1.Affinity
+
+	// PinArchToNode, when true, adds a kubernetes.io/arch nodeSelector derived from each BuildProject's
+	// Arch so per-arch daemons land on native nodes (no QEMU). Opt-in: off (default) leaves scheduling to
+	// DaemonNodeSelector only, preserving the pre-feature behavior (and the QEMU-on-any-node fallback).
+	PinArchToNode bool
 }
 
 // SchedulingFromJSON fills the daemon scheduling fields from a JSON object
@@ -53,6 +58,7 @@ func (c *Config) SchedulingFromJSON(s string) error {
 		NodeSelector map[string]string   `json:"nodeSelector"`
 		Tolerations  []corev1.Toleration `json:"tolerations"`
 		Affinity     *corev1.Affinity    `json:"affinity"`
+		PinArch      bool                `json:"pinArch"`
 	}
 	if err := json.Unmarshal([]byte(s), &sched); err != nil {
 		return fmt.Errorf("daemon scheduling JSON: %w", err)
@@ -60,6 +66,7 @@ func (c *Config) SchedulingFromJSON(s string) error {
 	c.DaemonNodeSelector = sched.NodeSelector
 	c.DaemonTolerations = sched.Tolerations
 	c.DaemonAffinity = sched.Affinity
+	c.PinArchToNode = sched.PinArch
 	return nil
 }
 
@@ -268,8 +275,9 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 					// Untrusted fork daemons run under a sandboxed runtime when one is configured —
 					// the build executes attacker-controlled code, so isolate it harder than runc.
 					RuntimeClassName: runtimeClassFor(bp, cfg),
-					// Pin daemons to a dedicated build nodepool when configured (off by default).
-					NodeSelector:                  cfg.DaemonNodeSelector,
+					// Pin each daemon to its build architecture (native builds, no QEMU), merged with
+					// any operator-wide nodeSelector (e.g. a dedicated build nodepool, off by default).
+					NodeSelector:                  archNodeSelector(bp, cfg),
 					Tolerations:                   cfg.DaemonTolerations,
 					Affinity:                      cfg.DaemonAffinity,
 					Containers:                    containers,
@@ -284,6 +292,22 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			PersistentVolumeClaimRetentionPolicy: pvcRetention,
 		},
 	}
+}
+
+// archNodeSelector OPTIONALLY pins the daemon to its build architecture via kubernetes.io/arch (amd64
+// builds on amd64 nodes, arm64 on Graviton — native, no QEMU), merged with any operator-wide
+// DaemonNodeSelector. Opt-in via PinArchToNode: when off (the default) the result is unchanged from
+// before this feature — daemons schedule per DaemonNodeSelector only, so an arm64 build can still fall
+// back to QEMU on a binfmt-enabled node. Operator-wide entries win on a key conflict.
+func archNodeSelector(bp *bkov1.BuildProject, cfg Config) map[string]string {
+	if !cfg.PinArchToNode {
+		return cfg.DaemonNodeSelector
+	}
+	sel := map[string]string{"kubernetes.io/arch": router.NormalizeArch(bp.Spec.Arch)}
+	for k, v := range cfg.DaemonNodeSelector {
+		sel[k] = v
+	}
+	return sel
 }
 
 // buildkitdArgs returns the daemon flags. Vanilla buildkitd — no custom plugins.

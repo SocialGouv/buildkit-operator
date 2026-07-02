@@ -61,7 +61,7 @@ spec:
             - --sandbox-buildkit-image={{ .Values.sandbox.buildkitImage }}
             {{- end }}
             {{- end }}
-            {{- if or .Values.daemonScheduling.nodeSelector .Values.daemonScheduling.tolerations .Values.daemonScheduling.affinity }}
+            {{- if or .Values.daemonScheduling.nodeSelector .Values.daemonScheduling.tolerations .Values.daemonScheduling.affinity .Values.daemonScheduling.pinArch }}
             - {{ printf "--daemon-scheduling=%s" (.Values.daemonScheduling | toJson) | quote }}
             {{- end }}
             - --port={{ .Values.buildkit.port }}

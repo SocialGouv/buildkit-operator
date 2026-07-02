@@ -55,7 +55,7 @@ func main() {
 	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
 	flag.StringVar(&cfg.SandboxRuntimeClass, "sandbox-runtime-class", "", "RuntimeClass applied to UNTRUSTED fork daemons only (e.g. kata-clh / sysbox-runc); empty = the default runtime")
 	flag.StringVar(&cfg.SandboxBuildkitImage, "sandbox-buildkit-image", "", "NON-rootless buildkit image for sandboxed (Kata) forks; empty = derived from --buildkit-image by stripping -rootless")
-	daemonScheduling := flag.String("daemon-scheduling", "", `JSON {"nodeSelector":{},"tolerations":[],"affinity":{}} to pin daemon pods to a dedicated build nodepool (empty = cluster default)`)
+	daemonScheduling := flag.String("daemon-scheduling", "", `JSON {"nodeSelector":{},"tolerations":[],"affinity":{},"pinArch":false} for daemon pods. pinArch=true adds a kubernetes.io/arch nodeSelector from each build's arch (native multi-arch, no QEMU). Empty = cluster default`)
 	flag.StringVar(&gatewayHost, "gateway-host", "", "gateway domain for off-cluster CI: /route returns tcp://<daemon>.<gateway-host>:<port> (empty = in-cluster ClusterIP DNS)")
 	gatewayPort := flag.Int("gateway-port", 0, "external port for the gateway SNI endpoint /route returns (0 = same as --port; set 443 when the gateway is fronted on 443, e.g. behind an egress proxy)")
 	flag.StringVar(&cfg.SnapshotClass, "snapshot-class", "", "VolumeSnapshotClass for durability snapshots (empty = disabled)")
