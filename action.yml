@@ -57,6 +57,9 @@ inputs:
   labels:
     description: "OCI image labels, one key=value per line (forwarded to buildx as --label)."
     default: ""
+  secrets:
+    description: "Build secrets, one id=value per line (forwarded to buildx as --secret id=…,env=…). Sent over the build session only — hashed into the cache key, never stored in a layer, the cache, or the image config."
+    default: ""
   untrusted:
     description: "Untrusted (fork-PR) build: route to an ephemeral daemon, no write-back to the shared cache (anti cache-poisoning)."
     default: "false"
@@ -125,6 +128,7 @@ runs:
         TARGET: ${{ inputs.target }}
         BUILD_ARGS: ${{ inputs.build-args }}
         LABELS: ${{ inputs.labels }}
+        SECRETS: ${{ inputs.secrets }}
         UNTRUSTED: ${{ inputs.untrusted }}
         TAGS: ${{ inputs.tags }}
         PUSH: ${{ inputs.push }}

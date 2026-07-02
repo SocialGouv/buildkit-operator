@@ -45,6 +45,7 @@ Inputs:
 | `arch` | `amd64` \| `arm64` (default `amd64`) |
 | `context` / `file` / `target` | build context, Dockerfile path, target stage |
 | `build-args` / `labels` | build args / OCI labels, one `KEY=VALUE` per line — forwarded to buildx as `--build-arg` / `--label` (GitLab component: `build_args` / `labels`) |
+| `secrets` | build secrets, one `id=value` per line — forwarded to buildx as `--secret id=…,env=…`. Sent over the build session only: hashed into the cache key, never stored in a layer, the cache, or the image config |
 | `push` | push the result to the registry (default `false`) |
 | `oidc-audience` | audience of the minted GitHub OIDC token (default `buildkit-operator`; must match buildd's provider audience) |
 | `token` | fallback `/route` credential when OIDC isn't used: a legacy bearer or an admin token. Leave empty under OIDC |

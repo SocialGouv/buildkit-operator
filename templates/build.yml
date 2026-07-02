@@ -67,6 +67,12 @@ spec:
     labels:
       default: ""
       description: OCI image labels, one key=value per line (forwarded to buildx as --label).
+    secrets:
+      default: ""
+      description: >-
+        Build secrets, one id=value per line (forwarded to buildx as --secret id=…,env=…). Reference
+        masked CI/CD variables in the value (e.g. "sentry_auth_token=$SENTRY_AUTH_TOKEN") — sent over
+        the build session only, never stored in a layer, the cache, or the image config.
     untrusted:
       default: "false"
       description: Untrusted (fork/MR) build — route to an ephemeral daemon, no write-back to the shared cache.
@@ -124,6 +130,7 @@ spec:
     TARGET: "$[[ inputs.target ]]"
     BUILD_ARGS: "$[[ inputs.build_args ]]"
     LABELS: "$[[ inputs.labels ]]"
+    SECRETS: "$[[ inputs.secrets ]]"
     UNTRUSTED: "$[[ inputs.untrusted ]]"
     TAGS: "$[[ inputs.tags ]]"
     PUSH: "$[[ inputs.push ]]"

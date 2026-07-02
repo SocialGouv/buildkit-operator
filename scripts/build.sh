@@ -18,6 +18,7 @@
 #   PUSH                           true | false                (default false)
 #   BUILD_ARGS                     build args, one KEY=VALUE per line (--build-arg)   (optional)
 #   LABELS                         OCI labels, one key=value per line (--label)       (optional)
+#   SECRETS                        build secrets, one id=value per line (--secret)    (optional)
 set -eu
 # Harden file perms for everything this script writes to the temp dir below — most importantly the
 # client mTLS PRIVATE KEY. Without this, `printf > file` honours the default umask (often 022) and the
@@ -205,6 +206,26 @@ if [ -n "${LABELS:-}" ]; then
     set -- "$@" --label "$_lbl"
   done <<EOF
 $LABELS
+EOF
+fi
+
+# Build secrets: one id=value per line. Each value goes through a NUMBERED env var (env names can't
+# carry arbitrary secret ids, e.g. dashes) and is forwarded as `--secret id=<id>,env=<var>` — buildx
+# sends it over the build session; buildkit hashes it into the cache key but the value never lands in
+# a layer, the exported cache, or the image config. Only the first `=` splits id from value.
+if [ -n "${SECRETS:-}" ]; then
+  _sn=0
+  while IFS= read -r _sec; do
+    [ -n "$_sec" ] || continue
+    case "$_sec" in
+      *=*) ;;
+      *) echo "buildkit-operator: SECRETS line $((_sn + 1)) is not id=value — refusing to guess" >&2; exit 1 ;;
+    esac
+    _sn=$((_sn + 1))
+    export "BKO_SECRET_${_sn}=${_sec#*=}"
+    set -- "$@" --secret "id=${_sec%%=*},env=BKO_SECRET_${_sn}"
+  done <<EOF
+$SECRETS
 EOF
 fi
 
