@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.0](https://github.com/socialgouv/buildkit-operator/compare/v0.10.0...v0.11.0) (2026-07-02)
+
+### Features
+
+* **action:** build secrets passthrough (--secret id=…,env=…) across GitHub/Forgejo/GitLab surfaces ([d561212](https://github.com/socialgouv/buildkit-operator/commit/d561212316b9da39f33eb880f3763f26b9bf9181))
+
 ## [0.10.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.9.0...v0.10.0) (2026-06-29)
 
 ### Features
