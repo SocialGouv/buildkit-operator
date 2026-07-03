@@ -83,8 +83,12 @@ job's environment, so there is **no extra runner egress**. On `/route` and `/pre
 2. **overwrites** the request's `repo` with the verified claim (GitHub `repository`, GitLab
    `project_path`, host-qualified + normalized to the *same* cache key as before) — the client can no
    longer self-declare it, so a build can only ever reach **its own** project's daemon;
-3. **derives `untrusted`** server-side (a PR / unprotected-ref build is forced untrusted — it can only
-   ever *add* isolation, never drop it);
+3. **derives `untrusted`** server-side — it can only ever *add* isolation, never drop it. GitHub /
+   Forgejo: a `refs/pull/*` run (fork-PR code) is forced untrusted. GitLab: same-project pipelines are
+   trusted whatever the ref (a fork's MR pipeline runs in the FORK project — own `project_path`, own
+   daemon, allowlist gate — so the refs/pull cross-tenant vector does not exist); set the provider's
+   `strictUnprotectedRefs: true` to force unprotected-ref builds onto the fork daemon anyway (projects
+   where anyone can push branches);
 4. optionally enforces a **repo allowlist** (`oidc.repoAllowlist`) — a verified-but-unlisted repo gets
    `403`, a hard org gate on who may use the service at all.
 

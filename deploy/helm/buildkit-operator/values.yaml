@@ -285,9 +285,12 @@ oidc:
     # - type: github   # built-in mapping: repository claim, github.com host, PR ref => untrusted
     #   issuer: https://token.actions.githubusercontent.com
     #   audience: buildkit-operator
-    # - type: gitlab   # built-in mapping: project_path claim, issuer host, unprotected ref => untrusted
+    # - type: gitlab   # built-in mapping: project_path claim, issuer host; same-project refs trusted
     #   issuer: https://gitlab.example.com
     #   audience: buildkit-operator
+    #   # strictUnprotectedRefs: true  # opt-in: unprotected refs => untrusted fork daemon (for projects
+    #   #                              # where anyone can push; default false — a fork's MR pipeline
+    #   #                              # already runs under the FORK's own project_path + allowlist)
     # - type: forgejo  # built-in mapping (also "gitea"): repository claim, issuer host, PR ref => untrusted
     #   issuer: https://forge.example.com/api/actions   # the Forgejo ACTIONS OIDC issuer (subpath), not the root
     #   audience: buildkit-operator

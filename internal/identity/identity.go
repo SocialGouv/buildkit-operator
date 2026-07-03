@@ -48,6 +48,12 @@ type Provider struct {
 	// Host is prefixed to the (host-less) repo claim to host-qualify it before normalization (GitHub:
 	// "github.com"; GitLab: the issuer host). Defaulted from Type / Issuer when empty.
 	Host string `json:"host,omitempty"`
+	// StrictUnprotectedRefs (type "gitlab" only) forces builds from UNPROTECTED refs onto the
+	// ephemeral untrusted fork daemon, like the pre-0.12 behaviour. Default false: same-project
+	// pipelines are trusted whatever the ref — on GitLab a fork's MR pipeline runs in the FORK
+	// project (own project_path -> own daemon + the allowlist gate), so unprotected refs of the
+	// project itself are members' code; opt in only where anyone can push branches.
+	StrictUnprotectedRefs bool `json:"strictUnprotectedRefs,omitempty"`
 }
 
 // Config is the whole OIDC policy — loaded from an env JSON blob or a mounted ConfigMap file. Disable is
@@ -86,12 +92,19 @@ func builtin(p Provider) (claimMapper, error) {
 			untrusted: func(c map[string]any) bool { return strings.HasPrefix(asString(c["ref"]), "refs/pull/") },
 		}, nil
 	case "gitlab":
+		strict := p.StrictUnprotectedRefs
 		return claimMapper{
 			repoClaim: orDefault(p.RepoClaim, "project_path"),
 			host:      host,
-			// ref_protected is "true" only on protected branches/tags; an unprotected ref (fork/MR
-			// feature branch) is untrusted.
-			untrusted: func(c map[string]any) bool { return asString(c["ref_protected"]) == "false" },
+			// Same-project pipelines are trusted whatever the ref by default: on GitLab a fork's MR
+			// pipeline runs in the FORK project (its own project_path -> its own daemon + the allowlist
+			// gate), so the cross-tenant cache-poisoning vector GitHub has with refs/pull/* does not
+			// exist here — mapping ref_protected=false to untrusted only pushed members' own feature
+			// branches onto ephemeral fork daemons for no isolation gain. strictUnprotectedRefs
+			// restores that mapping for projects where unprotected pushes are not trusted.
+			untrusted: func(c map[string]any) bool {
+				return strict && asString(c["ref_protected"]) == "false"
+			},
 		}, nil
 	case "forgejo", "gitea":
 		// Forgejo/Gitea Actions mirror the GitHub Actions OIDC token (repository claim, refs/pull/* on

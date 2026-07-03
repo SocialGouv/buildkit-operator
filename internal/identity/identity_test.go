@@ -152,14 +152,38 @@ func TestVerify_GitLab(t *testing.T) {
 		}
 	})
 
-	t.Run("unprotected ref untrusted", func(t *testing.T) {
+	t.Run("unprotected ref trusted too", func(t *testing.T) {
+		// Same-project pipelines are trusted whatever the ref: a fork's MR pipeline runs in the fork
+		// project (own project_path -> own daemon + allowlist), so unprotected branches of the project
+		// itself are members' code, not third-party code.
 		tok := f.sign(t, map[string]any{"aud": "buildkit-operator", "project_path": "studio-tech/architecture/foo", "ref_protected": "false"})
 		id, err := v.Verify(context.Background(), tok)
 		if err != nil {
 			t.Fatal(err)
 		}
+		if id.Untrusted {
+			t.Error("unprotected same-project ref should be trusted")
+		}
+	})
+
+	t.Run("strictUnprotectedRefs restores the fork isolation", func(t *testing.T) {
+		vs, err := NewVerifier(Config{Providers: []Provider{
+			{Type: "gitlab", Issuer: f.issuer(), Audience: "buildkit-operator", Host: "gitlab.example.com", StrictUnprotectedRefs: true},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tok := f.sign(t, map[string]any{"aud": "buildkit-operator", "project_path": "studio-tech/architecture/foo", "ref_protected": "false"})
+		id, err := vs.Verify(context.Background(), tok)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if !id.Untrusted {
-			t.Error("unprotected ref should be untrusted")
+			t.Error("strict mode: unprotected ref should be untrusted")
+		}
+		tok = f.sign(t, map[string]any{"aud": "buildkit-operator", "project_path": "studio-tech/architecture/foo", "ref_protected": "true"})
+		if id, err = vs.Verify(context.Background(), tok); err != nil || id.Untrusted {
+			t.Errorf("strict mode: protected ref should stay trusted (err=%v)", err)
 		}
 	})
 }
