@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.0](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.12.0) (2026-07-03)
+
+### Features
+
+* **identity:** trust same-project GitLab refs by default (strictUnprotectedRefs opt-in) ([0baba22](https://github.com/socialgouv/buildkit-operator/commit/0baba22b7fc6c3a06de816b8fde7b709d58631de))
+
 ## [0.11.1](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.11.1) (2026-07-02)
 
 ### Bug Fixes
