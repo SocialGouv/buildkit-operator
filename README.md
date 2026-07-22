@@ -269,6 +269,51 @@ status:
 You rarely write these by hand — the GitHub Action / `build` CLI / `buildd` `/route` create them on
 demand.
 
+## Per-project tuning — recommended practice
+
+The default posture is **tune nothing**: two mechanisms adapt each project to its observed usage,
+bounded by platform-set quotas.
+
+- **Adaptive keep-warm** (on by default, `adaptiveIdle.maxSeconds`, 0 = off). A warm daemon's
+  effective idle window is `idleTimeoutSec × builds observed in the trailing 24h`, capped (6h by
+  default). Frequent builders stay warm between builds; quiet projects still scale to zero. Fleet
+  cost stays proportional to observed usage — nobody maintains a list of "important" repos.
+- **Bounded cache-volume auto-grow** (on by default, `autoGrow.{thresholdPct,factor,maxGi}`,
+  thresholdPct 0 = off). buildkitd GC reclaims layers past ~85% of the volume, so a project whose
+  working set outgrows its PVC silently thrashes its own cache. The reconciler polls the companion's
+  statfs (`/usage`) on warm daemons and, past the threshold, grows the PVC by `factor` — never past
+  `maxGi`, the per-project cost quota. Growth is one-way; the filesystem resize is applied by an
+  idle-time pod bounce. Requires a storage class with `allowVolumeExpansion` (cinder gen2: yes).
+
+Declare the rest — the things usage cannot reveal — as **`projectDefaults` rules** in the Helm
+values (seeded when buildd auto-creates the BuildProject; admin-only by design, so a routing caller
+can never self-assign a hot daemon):
+
+| Symptom you observe | Signal | Rule to declare |
+|---|---|---|
+| Rare-but-clustered builds (working sessions) restart cold mid-session | `kubectl get bp`: phase flapping Idle↔Warm within the hour at low daily cadence | `idleTimeoutSec` floor (e.g. 3600) |
+| The known working set exceeds the auto-grow quota | `autoGrow` logs hitting `maxGi` | `cacheVolumeGi` (pre-size) |
+| Cold-wake latency unacceptable on a critical path even warm-tier | `buildkit_operator_coldstart_seconds`, `RoutesTotal{cold}` share | `tier: hot` — last resort |
+
+What `tier` and `idleTimeoutSec` actually cost: the **cache is never at stake** (the PVC is retained
+across scale-to-zero) — these knobs only trade **wake latency** against **resident-pod cost**.
+`warm` pays a ~20–30s PVC reattach on the first build after an idle gap and nothing while idle;
+`idleTimeoutSec` (a floor under adaptivity) decides how long the daemon lingers after its last
+build; `tier: hot` erases the wake latency by keeping the pod resident 24/7 — the only setting with
+a permanent cost, which is why it is a declared platform decision, not something adaptivity infers.
+
+Example:
+
+```yaml
+projectDefaults:
+  - repo: github.com/acme/monorepo
+    name: "toolchain-*"
+    idleTimeoutSec: 3600
+    cacheVolumeGi: 120
+  - repo: github.com/acme/release-train
+    tier: hot
+```
+
 ---
 
 ## Development
