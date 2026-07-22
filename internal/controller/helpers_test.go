@@ -34,15 +34,24 @@ func TestPhaseFrom(t *testing.T) {
 }
 
 func TestIdleRecheckInterval(t *testing.T) {
+	now := time.Now()
 	// Small idle window: the /6 value is below the 30s floor, so it clamps to 30s.
 	small := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{IdleTimeoutSec: 60}}
-	if got := idleRecheckInterval(small); got != 30*time.Second {
+	if got := idleRecheckInterval(small, now, 0); got != 30*time.Second {
 		t.Errorf("small idle = %v, want 30s floor", got)
 	}
 	// Large idle window: idle/6 dominates.
 	large := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{IdleTimeoutSec: 600}}
-	if got := idleRecheckInterval(large); got != 100*time.Second {
+	if got := idleRecheckInterval(large, now, 0); got != 100*time.Second {
 		t.Errorf("large idle = %v, want 100s", got)
+	}
+	// Adaptive: the recheck tracks the effective idle (4 builds × 600s / 6 = 400s).
+	adaptive := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "p1", IdleTimeoutSec: 600}}
+	for i := 0; i < 4; i++ {
+		adaptive.Status.RecentBuildTimes = append(adaptive.Status.RecentBuildTimes, metav1.NewTime(now.Add(-time.Minute)))
+	}
+	if got := idleRecheckInterval(adaptive, now, 6*time.Hour); got != 400*time.Second {
+		t.Errorf("adaptive idle = %v, want 400s", got)
 	}
 }
 

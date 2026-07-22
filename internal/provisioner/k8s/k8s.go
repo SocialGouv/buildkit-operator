@@ -169,6 +169,11 @@ func (p *Provisioner) AddInflight(ctx context.Context, key string, delta int32) 
 		bp.Status.InflightBuilds = n
 		now := metav1.Now()
 		bp.Status.LastBuildTime = &now
+		// A positive delta is a real routed build (not a prewarm touch or a /complete
+		// release) — record it in the cadence ring that drives the adaptive idle window.
+		if delta > 0 {
+			bp.Status.RecentBuildTimes = bkov1.RecordBuildTime(bp.Status.RecentBuildTimes, now)
+		}
 		return p.c.Status().Update(ctx, &bp)
 	})
 	if err != nil {

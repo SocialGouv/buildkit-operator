@@ -103,6 +103,13 @@ type BuildProjectStatus struct {
 	// LastBuildTime is when a build last touched this daemon (drives idle).
 	LastBuildTime *metav1.Time `json:"lastBuildTime,omitempty"`
 
+	// RecentBuildTimes are the start times of recent routed builds (bounded ring,
+	// newest last, pruned to AdaptiveWindow). Written conflict-safely by the routing
+	// API alongside LastBuildTime; drives the adaptive idle window — a project that
+	// builds often earns a longer effective idle before scale-to-zero.
+	// +optional
+	RecentBuildTimes []metav1.Time `json:"recentBuildTimes,omitempty"`
+
 	// LastSnapshot is the name of the most recent VolumeSnapshot (M3).
 	LastSnapshot string `json:"lastSnapshot,omitempty"`
 

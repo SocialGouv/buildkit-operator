@@ -296,6 +296,16 @@ spec:
                 description: 'Phase is a coarse summary: Pending | Warm | Idle | Scaling
                   | Failed.'
                 type: string
+              recentBuildTimes:
+                description: |-
+                  RecentBuildTimes are the start times of recent routed builds (bounded ring,
+                  newest last, pruned to AdaptiveWindow). Written conflict-safely by the routing
+                  API alongside LastBuildTime; drives the adaptive idle window — a project that
+                  builds often earns a longer effective idle before scale-to-zero.
+                items:
+                  format: date-time
+                  type: string
+                type: array
               replicas:
                 description: Replicas is the current desired/observed replica count
                   (0 or 1).

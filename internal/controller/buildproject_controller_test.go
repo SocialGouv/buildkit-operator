@@ -155,24 +155,70 @@ func TestDesiredReplicas(t *testing.T) {
 		}
 		return bp
 	}
+	// cadence attaches n build timestamps within the adaptive window.
+	cadence := func(bp *bkov1.BuildProject, n int) *bkov1.BuildProject {
+		for i := 0; i < n; i++ {
+			bp.Status.RecentBuildTimes = append(bp.Status.RecentBuildTimes, metav1.NewTime(now.Add(-time.Duration(i+1)*time.Hour)))
+		}
+		return bp
+	}
 	const maxBuild = 2 * time.Hour
+	cases := []struct {
+		name        string
+		bp          *bkov1.BuildProject
+		adaptiveMax time.Duration
+		want        int32
+	}{
+		{"hot always on", mk(bkov1.TierHot, 0, 0, false, 0), 0, 1},
+		{"warm recent build", mk(bkov1.TierWarm, 900, time.Minute, true, 0), 0, 1},
+		{"warm idle -> zero", mk(bkov1.TierWarm, 900, time.Hour, true, 0), 0, 0},
+		{"warm never built -> zero", mk(bkov1.TierWarm, 900, 0, false, 0), 0, 0},
+		// In-flight keeps it warm even past the idle window — until the inflight counter goes stale
+		// (a client that missed its /complete can't pin a daemon forever).
+		{"warm in-flight (fresh) -> one", mk(bkov1.TierWarm, 900, time.Hour, true, 2), 0, 1},
+		{"warm in-flight (stale) -> zero", mk(bkov1.TierWarm, 900, 3*time.Hour, true, 2), 0, 0},
+		// Adaptive keep-warm: 6 builds in the window stretch the 900s idle to 5400s, so a build
+		// 1h ago still holds the daemon; without adaptivity (max=0) the same project scales to zero.
+		{"adaptive frequent -> one", cadence(mk(bkov1.TierWarm, 900, time.Hour, true, 0), 6), 6 * time.Hour, 1},
+		{"adaptive frequent but capped -> zero", cadence(mk(bkov1.TierWarm, 900, 2*time.Hour, true, 0), 6), time.Hour, 0},
+		{"adaptive single build keeps base idle -> zero", cadence(mk(bkov1.TierWarm, 900, time.Hour, true, 0), 1), 6 * time.Hour, 0},
+	}
+	for _, c := range cases {
+		if got := desiredReplicas(c.bp, now, maxBuild, c.adaptiveMax); got != c.want {
+			t.Errorf("%s: desiredReplicas = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// Adaptive keep-warm: the effective idle is base × builds-in-window, capped, floored at base,
+// and inert for hot/fork/disabled cases.
+func TestEffectiveIdle(t *testing.T) {
+	now := time.Now()
+	mk := func(idleSec int32, key string, builds int) *bkov1.BuildProject {
+		bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: key, IdleTimeoutSec: idleSec}}
+		for i := 0; i < builds; i++ {
+			bp.Status.RecentBuildTimes = append(bp.Status.RecentBuildTimes, metav1.NewTime(now.Add(-time.Duration(i+1)*time.Minute)))
+		}
+		return bp
+	}
+	const max = 6 * time.Hour
 	cases := []struct {
 		name string
 		bp   *bkov1.BuildProject
-		want int32
+		max  time.Duration
+		want time.Duration
 	}{
-		{"hot always on", mk(bkov1.TierHot, 0, 0, false, 0), 1},
-		{"warm recent build", mk(bkov1.TierWarm, 900, time.Minute, true, 0), 1},
-		{"warm idle -> zero", mk(bkov1.TierWarm, 900, time.Hour, true, 0), 0},
-		{"warm never built -> zero", mk(bkov1.TierWarm, 900, 0, false, 0), 0},
-		// In-flight keeps it warm even past the idle window — until the inflight counter goes stale
-		// (a client that missed its /complete can't pin a daemon forever).
-		{"warm in-flight (fresh) -> one", mk(bkov1.TierWarm, 900, time.Hour, true, 2), 1},
-		{"warm in-flight (stale) -> zero", mk(bkov1.TierWarm, 900, 3*time.Hour, true, 2), 0},
+		{"disabled -> base", mk(900, "p1", 8), 0, 900 * time.Second},
+		{"quiet -> base", mk(900, "p1", 0), max, 900 * time.Second},
+		{"single build -> base", mk(900, "p1", 1), max, 900 * time.Second},
+		{"scales with cadence", mk(900, "p1", 4), max, 3600 * time.Second},
+		{"capped", mk(900, "p1", 30), max, max},
+		{"fork excluded", mk(900, "forkp1", 8), max, 900 * time.Second},
+		{"base above max -> base", mk(30000, "p1", 8), 4 * time.Hour, 30000 * time.Second},
 	}
 	for _, c := range cases {
-		if got := desiredReplicas(c.bp, now, maxBuild); got != c.want {
-			t.Errorf("%s: desiredReplicas = %d, want %d", c.name, got, c.want)
+		if got := effectiveIdle(c.bp, now, c.max); got != c.want {
+			t.Errorf("%s: effectiveIdle = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

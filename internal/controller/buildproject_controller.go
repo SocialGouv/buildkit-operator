@@ -38,6 +38,17 @@ type BuildProjectReconciler struct {
 	Cfg             builder.Config
 	KeepSnapshots   int // durability snapshots retained per project (default 3)
 	MaxBuildSeconds int // inflight builds older than this stop pinning a daemon warm (default 7200)
+	// AdaptiveIdleMaxSeconds caps the cadence-scaled effective idle window of warm projects
+	// (see effectiveIdle). 0 disables adaptivity — the spec IdleTimeoutSec applies verbatim.
+	AdaptiveIdleMaxSeconds int
+}
+
+// adaptiveIdleMax is AdaptiveIdleMaxSeconds as a duration (0 = adaptivity off).
+func (r *BuildProjectReconciler) adaptiveIdleMax() time.Duration {
+	if r.AdaptiveIdleMaxSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(r.AdaptiveIdleMaxSeconds) * time.Second
 }
 
 const (
@@ -64,7 +75,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	bp.ApplyDefaults()
 
-	desired := desiredReplicas(&bp, time.Now(), r.maxBuildAge())
+	desired := desiredReplicas(&bp, time.Now(), r.maxBuildAge(), r.adaptiveIdleMax())
 	// Reap an idle ephemeral fork daemon: delete its cache PVC + the fork BuildProject (the owner-ref
 	// cascade removes the STS/Service). Forks are one-shot — nothing warm to keep — so this stops their
 	// retained PVCs and CRs from accumulating.
@@ -138,7 +149,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Requeue at the soonest of: idle re-check (while warm) and the next snapshot due.
 	requeue := time.Duration(0)
 	if desired == 1 && bp.Spec.Tier != bkov1.TierHot {
-		requeue = idleRecheckInterval(&bp)
+		requeue = idleRecheckInterval(&bp, time.Now(), r.adaptiveIdleMax())
 	}
 	// While a daemon is coming up or wedged (Scaling/Failed), poll so readiness/recovery is observed
 	// even on the hot tier — the controller doesn't watch Pods, so a CrashLoop wouldn't re-trigger us.
@@ -249,22 +260,45 @@ func templateHash(t corev1.PodTemplateSpec) string {
 // lag). Once a build is in flight the fork lives on inflight; this only protects the birth window.
 const forkReapGrace = 90 * time.Second
 
-// 1 while a build is in flight or the project was active within IdleTimeoutSec, else 0
+// 1 while a build is in flight or the project was active within its effective idle window, else 0
 // (scale-to-zero — the PVC is retained via volumeClaimTemplates, so the next build just
-// reattaches the warm cache; no restore). Idle timeout default seeded from bench B.
-func desiredReplicas(bp *bkov1.BuildProject, now time.Time, maxBuild time.Duration) int32 {
+// reattaches the warm cache; no restore). Idle timeout default seeded from bench B; adaptiveMax > 0
+// lets a frequently-building project earn a longer window (see effectiveIdle).
+func desiredReplicas(bp *bkov1.BuildProject, now time.Time, maxBuild, adaptiveMax time.Duration) int32 {
 	if bp.Spec.Tier == bkov1.TierHot {
 		return 1
 	}
 	if bp.Status.InflightBuilds > 0 && !inflightStale(bp, now, maxBuild) {
 		return 1
 	}
-	if bp.Status.LastBuildTime != nil && bp.Spec.IdleTimeoutSec > 0 {
-		if now.Sub(bp.Status.LastBuildTime.Time) < time.Duration(bp.Spec.IdleTimeoutSec)*time.Second {
+	if idle := effectiveIdle(bp, now, adaptiveMax); bp.Status.LastBuildTime != nil && idle > 0 {
+		if now.Sub(bp.Status.LastBuildTime.Time) < idle {
 			return 1
 		}
 	}
 	return 0
+}
+
+// effectiveIdle is the idle window before scale-to-zero. With adaptivity enabled (adaptiveMax > 0),
+// the spec idle is multiplied by the number of builds observed in the trailing bkov1.AdaptiveWindow
+// and capped at adaptiveMax — so a project that builds all day stays warm between its builds, while
+// a quiet one keeps the plain spec idle and the fleet cost stays proportional to observed usage.
+// Forks are excluded (one-shot daemons; their short idle + reap path governs), as is a zero base
+// (idle disabled on the spec).
+func effectiveIdle(bp *bkov1.BuildProject, now time.Time, adaptiveMax time.Duration) time.Duration {
+	base := time.Duration(bp.Spec.IdleTimeoutSec) * time.Second
+	if adaptiveMax <= 0 || base <= 0 || base >= adaptiveMax || router.IsForkKey(bp.Spec.Key) {
+		return base
+	}
+	n := bkov1.BuildsInWindow(bp.Status.RecentBuildTimes, now)
+	if n <= 1 {
+		return base
+	}
+	eff := base * time.Duration(n)
+	if eff > adaptiveMax {
+		eff = adaptiveMax
+	}
+	return eff
 }
 
 // inflightStale reports whether the inflight counter is too old to trust — a client almost certainly
@@ -298,9 +332,9 @@ func (r *BuildProjectReconciler) reapFork(ctx context.Context, bp *bkov1.BuildPr
 }
 
 // idleRecheckInterval requeues a warm project often enough to scale it down promptly
-// once it crosses IdleTimeoutSec (events alone won't fire when nothing changes).
-func idleRecheckInterval(bp *bkov1.BuildProject) time.Duration {
-	iv := time.Duration(bp.Spec.IdleTimeoutSec) * time.Second / 6
+// once it crosses its effective idle window (events alone won't fire when nothing changes).
+func idleRecheckInterval(bp *bkov1.BuildProject, now time.Time, adaptiveMax time.Duration) time.Duration {
+	iv := effectiveIdle(bp, now, adaptiveMax) / 6
 	if iv < 30*time.Second {
 		iv = 30 * time.Second
 	}

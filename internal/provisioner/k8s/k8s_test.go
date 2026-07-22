@@ -185,3 +185,26 @@ func TestAddInflight_UpdatesStatus(t *testing.T) {
 		t.Errorf("InflightBuilds = %d after over-decrement, want 0 (floored)", got.Status.InflightBuilds)
 	}
 }
+
+// Only positive deltas (real routed builds) feed the adaptive-idle cadence ring — a prewarm touch
+// (delta 0) or a /complete release (delta -1) must not inflate the observed build frequency.
+func TestAddInflight_RecordsBuildCadence(t *testing.T) {
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "pcadence", Namespace: "buildkit-operator"},
+		Spec:       bkov1.BuildProjectSpec{Key: "pcadence", Repo: "github.com/o/r", Arch: "amd64"},
+	}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+	p := newProv(c, 0, "", 0)
+
+	p.AddInflight(t.Context(), "pcadence", +1)
+	p.AddInflight(t.Context(), "pcadence", 0)  // prewarm touch
+	p.AddInflight(t.Context(), "pcadence", -1) // complete
+	p.AddInflight(t.Context(), "pcadence", +1)
+
+	var got bkov1.BuildProject
+	_ = c.Get(t.Context(), types.NamespacedName{Name: "pcadence", Namespace: "buildkit-operator"}, &got)
+	if n := len(got.Status.RecentBuildTimes); n != 2 {
+		t.Errorf("RecentBuildTimes = %d entries, want 2 (only +1 deltas recorded)", n)
+	}
+}

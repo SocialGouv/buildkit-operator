@@ -91,6 +91,13 @@ func (in *BuildProjectStatus) DeepCopyInto(out *BuildProjectStatus) {
 		in, out := &in.LastBuildTime, &out.LastBuildTime
 		*out = (*in).DeepCopy()
 	}
+	if in.RecentBuildTimes != nil {
+		in, out := &in.RecentBuildTimes, &out.RecentBuildTimes
+		*out = make([]v1.Time, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))
