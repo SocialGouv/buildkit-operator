@@ -19,12 +19,19 @@ THRESHOLD="${2:?usage: coverage.sh <profile> <threshold>}"
 # Function names treated as non-unit-testable bootstrap / runtime glue (space-separated):
 #   main, newRootCmd, run, Start, SetupWithManager — process entrypoints + manager/server bootstrap.
 #   warnIfDaemonCertMissingGatewaySAN — boot-time Secret read; its pure core (certCoversGateway) is tested.
-DENY="main newRootCmd run Start SetupWithManager warnIfDaemonCertMissingGatewaySAN"
+#   runLocalBackend — the local-backend analogue of main()'s manager bootstrap (provisioner + API wiring).
+DENY="main newRootCmd run Start SetupWithManager warnIfDaemonCertMissingGatewaySAN runLocalBackend"
+
+# File paths (ERE, matched against the profile's file column) that are integration surfaces, not units:
+#   local/host.go + host_docker.go — thin exec adapters around the incus/zfs/docker CLIs (every function
+#   shells out; a unit test would only assert argv strings). They are exercised end-to-end by
+#   `task test:e2e` on a live Incus + ZFS host (ADR 0007 records that validation).
+DENYFILE='internal/provisioner/local/host([_]docker)?[.]go'
 
 FUNCS="$(go tool cover -func="$PROFILE")"
 
 pct="$(
-  awk -v deny="$DENY" '
+  awk -v deny="$DENY" -v denyfile="$DENYFILE" '
     BEGIN { split(deny, d, " "); for (i in d) denied[d[i]] = 1 }
 
     # Pass 1: func report ("path/file.go:line:\tFuncName\t12.3%"), in source order. Record each
@@ -49,6 +56,7 @@ pct="$(
       n = $2 + 0; cnt = $3 + 0
 
       if (file ~ /zz_generated/) next
+      if (denyfile != "" && file ~ denyfile) next
 
       drop = 0; m = count[file]
       for (i = 1; i <= m; i++) {

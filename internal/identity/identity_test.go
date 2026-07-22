@@ -275,3 +275,22 @@ func TestNewVerifier_DisabledOrEmpty(t *testing.T) {
 		}
 	}
 }
+
+// asString normalizes heterogeneous JSON claim values for comparison.
+func TestAsString(t *testing.T) {
+	cases := []struct {
+		in   any
+		want string
+	}{
+		{"repo", "repo"},
+		{true, "true"},
+		{false, "false"},
+		{nil, ""},
+		{42.0, "42"},
+	}
+	for _, c := range cases {
+		if got := asString(c.in); got != c.want {
+			t.Errorf("asString(%v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
