@@ -195,8 +195,17 @@ func (p *Provisioner) AddInflight(ctx context.Context, key string, delta int32) 
 // (import+export) behaviour on a transient read error: a spurious export is cheap, a lost import
 // never is.
 func (p *Provisioner) S3CacheDecision(ctx context.Context, key string, exportInterval time.Duration, grantExport bool) (bool, bool) {
+	// Same retry envelope as AddInflight, for the same reason (k8s.go above): the informer
+	// cache lags etcd right after a create/status write — the default ~40ms budget drops the
+	// operation exactly when it matters. AddInflight ALWAYS writes just before this runs on
+	// the /route path, so the first CAS attempt conflicting is the common case, not the edge.
+	retriable := func(err error) bool { return apierrors.IsConflict(err) || apierrors.IsNotFound(err) }
+	backoff := wait.Backoff{Steps: 8, Duration: 100 * time.Millisecond, Factor: 1.6, Jitter: 0.1}
+
 	var bp bkov1.BuildProject
-	if err := p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &bp); err != nil {
+	if err := retry.OnError(backoff, apierrors.IsNotFound, func() error {
+		return p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &bp)
+	}); err != nil {
 		p.log.V(1).Info("S3CacheDecision: project read failed; defaulting to import+export", "key", key, "err", err)
 		return true, true
 	}
@@ -212,10 +221,17 @@ func (p *Provisioner) S3CacheDecision(ctx context.Context, key string, exportInt
 		return true, exportInterval <= 0 && grantExport
 	}
 	granted := false
-	err := retry.OnError(retry.DefaultBackoff, apierrors.IsConflict, func() error {
+	err := retry.OnError(backoff, retriable, func() error {
 		var cur bkov1.BuildProject
 		if err := p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &cur); err != nil {
 			return err
+		}
+		// Re-check the policy on the fresh read: a project flipped to never/always
+		// mid-flight must not consume (or bypass) the cadence window.
+		cur.ApplyDefaults()
+		if cur.Spec.S3CachePolicy != bkov1.S3CacheCadence {
+			granted = cur.Spec.S3CachePolicy == bkov1.S3CacheAlways
+			return nil
 		}
 		if cur.Status.LastCacheExportGrant != nil && time.Since(cur.Status.LastCacheExportGrant.Time) < exportInterval {
 			granted = false

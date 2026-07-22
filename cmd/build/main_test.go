@@ -79,13 +79,19 @@ func TestCacheArgs(t *testing.T) {
 			&router.CacheConfig{Type: "s3", Bucket: "b", Name: "n", Region: "gra", EndpointURL: "https://s3"},
 			[]string{
 				"--cache-from", "type=s3,bucket=b,name=n,region=gra,endpoint_url=https://s3,use_path_style=true",
-				"--cache-to", "type=s3,bucket=b,name=n,region=gra,endpoint_url=https://s3,use_path_style=true,mode=max",
+				"--cache-to", "type=s3,bucket=b,name=n,region=gra,endpoint_url=https://s3,use_path_style=true,mode=max,ignore-error=true",
 			},
 		},
 		{
 			"minimal",
 			&router.CacheConfig{Type: "s3", Bucket: "b", Name: "n"},
-			[]string{"--cache-from", "type=s3,bucket=b,name=n", "--cache-to", "type=s3,bucket=b,name=n,mode=max"},
+			[]string{"--cache-from", "type=s3,bucket=b,name=n", "--cache-to", "type=s3,bucket=b,name=n,mode=max,ignore-error=true"},
+		},
+		{
+			// skipExport (s3CachePolicy cadence, window closed): import only.
+			"skip export",
+			&router.CacheConfig{Type: "s3", Bucket: "b", Name: "n", SkipExport: true},
+			[]string{"--cache-from", "type=s3,bucket=b,name=n"},
 		},
 	}
 	for _, tt := range tests {

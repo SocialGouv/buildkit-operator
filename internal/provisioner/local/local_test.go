@@ -548,3 +548,54 @@ func TestFanout_SpawnsHotCoWClones(t *testing.T) {
 		}
 	}
 }
+
+// S3CacheDecision mirrors the k8s policy semantics over in-memory state: never/always bypass
+// the clock, cadence grants once per window, prewarm probes never consume it, and a bare
+// /complete-minted state is healed by the next Ensure.
+func TestS3CacheDecision_Local(t *testing.T) {
+	f := newFakeHost()
+	p := testProv(f)
+	spec := canonSpec()
+	if err := p.Ensure(t.Context(), spec, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if imp, exp := p.S3CacheDecision(t.Context(), spec.Key, time.Hour, true); !imp || !exp {
+		t.Errorf("first grant = (%v,%v), want (true,true)", imp, exp)
+	}
+	if imp, exp := p.S3CacheDecision(t.Context(), spec.Key, time.Hour, true); !imp || exp {
+		t.Errorf("window closed = (%v,%v), want (true,false)", imp, exp)
+	}
+	if imp, exp := p.S3CacheDecision(t.Context(), spec.Key, time.Hour, false); !imp || exp {
+		t.Errorf("prewarm = (%v,%v), want (true,false)", imp, exp)
+	}
+	if imp, exp := p.S3CacheDecision(t.Context(), spec.Key, 0, true); !imp || !exp {
+		t.Errorf("interval 0 = (%v,%v), want (true,true)", imp, exp)
+	}
+
+	never := spec
+	never.Key = router.ProjectKey("github.com/o/never", "", "", "amd64")
+	never.Repo = "github.com/o/never"
+	never.S3CachePolicy = bkov1.S3CacheNever
+	if err := p.Ensure(t.Context(), never, false); err != nil {
+		t.Fatal(err)
+	}
+	if imp, exp := p.S3CacheDecision(t.Context(), never.Key, time.Hour, true); imp || exp {
+		t.Errorf("never = (%v,%v), want (false,false)", imp, exp)
+	}
+
+	// Bare state (out-of-order /complete) reads the default policy — the first grant of a
+	// fresh window passes, like any new project — then Ensure heals the spec.
+	bare := router.ProjectKey("github.com/o/bare", "", "", "amd64")
+	p.AddInflight(t.Context(), bare, -1)
+	if imp, exp := p.S3CacheDecision(t.Context(), bare, time.Hour, true); !imp || !exp {
+		t.Errorf("bare pre-Ensure = (%v,%v), want (true,true) — default cadence, fresh window", imp, exp)
+	}
+	bareSpec := bkov1.BuildProjectSpec{Key: bare, Repo: "github.com/o/bare", Arch: "amd64", S3CachePolicy: bkov1.S3CacheNever}
+	if err := p.Ensure(t.Context(), bareSpec, false); err != nil {
+		t.Fatal(err)
+	}
+	if imp, exp := p.S3CacheDecision(t.Context(), bare, time.Hour, true); imp || exp {
+		t.Errorf("healed bare = (%v,%v), want (false,false) from the healed spec", imp, exp)
+	}
+}

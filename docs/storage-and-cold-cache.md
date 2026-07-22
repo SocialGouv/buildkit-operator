@@ -45,8 +45,20 @@ flags, no env, no secrets on the client side):
   endpoint, and a `name` = the **project key** (the per-project cache prefix). It carries **NO
   credentials**.
 - **The client applies it automatically.** The `build` CLI (and `build.sh`) read `RouteResponse.Cache`
-  and add `--cache-from type=s3,… --cache-to type=s3,…,mode=max` themselves — no S3 flags, no S3 env
-  on the caller.
+  and add `--cache-from type=s3,…` (plus `--cache-to type=s3,…,mode=max` when the export was granted —
+  see the policy below) themselves — no S3 flags, no S3 env on the caller.
+- **Export runs on a cadence, not per build** (`spec.s3CachePolicy`, default `cadence`). The retained
+  PVC already covers warm restarts, so the cold cache only pays on rare events (inode prune, lost
+  volume, cluster rebuild) — exporting `mode=max` on every build overpaid that by 10-40s per build.
+  Under `cadence`, imports stay on every build (cheap) and buildd grants **one export per project per
+  `--s3-cache-export-interval`** (Helm `s3.cacheExportInterval`, default `6h`; `"0"` restores
+  export-every-build). The grant rides `RouteResponse.Cache.skipExport` (absent = export, so old
+  clients/servers interoperate unchanged) and is CAS'd through `status.lastCacheExportGrant`, so
+  concurrent routes elect a single exporter per window. `s3CachePolicy: always` keeps the historical
+  behaviour; `never` disables S3 for the project entirely (builds whose inputs live in the registry
+  anyway). Seed the policy fleet-wide via the `projectDefaults` rules (`s3Cache:`). Worst-case cache
+  staleness is ~2× the interval (the elected build can fail or be cancelled after the grant — the
+  next window re-exports); that is fine for a rehydration net, size the expectation accordingly.
 - **The AWS credentials live on the daemon pods**, not on the wire and not on the runner: a k8s
   Secret (`--s3-creds-secret`, Helm `s3.credsSecret`) holding `AWS_ACCESS_KEY_ID` /
   `AWS_SECRET_ACCESS_KEY`, mounted as env on the daemons. buildkit's s3 backend falls back to the

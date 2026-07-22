@@ -86,7 +86,8 @@ spec:
             - --s3-region={{ .Values.s3.region }}
             - --s3-endpoint={{ .Values.s3.endpoint }}
             - --s3-creds-secret={{ .Values.s3.credsSecret }}
-            {{- if .Values.s3.cacheExportInterval }}
+            {{- if ne (toString .Values.s3.cacheExportInterval) "" }}
+            # toString: an integer 0 (= export every build) must render, not be dropped as falsy.
             - --s3-cache-export-interval={{ .Values.s3.cacheExportInterval }}
             {{- end }}
             {{- end }}

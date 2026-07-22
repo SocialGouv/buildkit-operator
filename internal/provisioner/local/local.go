@@ -135,6 +135,12 @@ func (p *Provisioner) ensureInstance(ctx context.Context, spec bkov1.BuildProjec
 	if st == nil {
 		st = &projectState{spec: spec, vm: vm, hot: spec.Tier == bkov1.TierHot}
 		p.projects[key] = st
+	} else if st.spec.Repo == "" {
+		// Heal a bare state minted by an out-of-order /complete (e.g. a client's cleanup
+		// trap firing across a buildd restart): it carries only the key, which would pin
+		// wrong policy/tier readings for the whole process lifetime.
+		st.spec = spec
+		st.hot = spec.Tier == bkov1.TierHot
 	}
 	p.mu.Unlock()
 

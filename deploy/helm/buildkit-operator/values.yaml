@@ -85,14 +85,16 @@ autoGrow:
 # rule wins. `repo` uses the SAME semantics as oidc.repoAllowlist ("*" = any, "pfx/*" = prefix that
 # crosses "/" — covers GitLab nested subgroups, patterns copy verbatim between the two lists), over
 # the NORMALIZED repo. `name` is a shell-style glob (path.Match); arch is exact; empty = any.
-# Seedable fields: tier / idleTimeoutSec / cacheVolumeGi / s3Cache (cadence|always|never). Example:
+# Seedable fields: tier / idleTimeoutSec / cacheVolumeGi / s3Cache (cadence|always|never).
+# FIRST MATCH WINS — put specific rules before glob rules, or a broad glob silently
+# shadows the narrow rule below it. Example:
 #   projectDefaults:
-#     - repo: github.com/socialgouv/iterion
-#       name: "iterion-sandbox-*"
-#       cacheVolumeGi: 120
 #     - repo: github.com/socialgouv/iterion
 #       name: iterion-sandbox-finalize
 #       s3Cache: never   # COPY-only builds whose inputs live in the registry — S3 rehydrates nothing
+#     - repo: github.com/socialgouv/iterion
+#       name: "iterion-sandbox-*"
+#       cacheVolumeGi: 120
 #     - repo: "github.com/socialgouv/*"
 #       tier: hot
 projectDefaults: []

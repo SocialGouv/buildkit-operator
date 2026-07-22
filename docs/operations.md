@@ -148,7 +148,11 @@ The reconciler runs on the leader only; `/route` is served by both replicas.
 Pinned image tags follow the chart `appVersion`, so an upgrade is a chart bump:
 
 ```bash
-# re-apply CRDs first (they are NOT upgraded by `helm upgrade` — chart CRDs install once)
+# re-apply CRDs first (they are NOT upgraded by `helm upgrade` — chart CRDs install once).
+# Skipping this is SILENT breakage: fields the new buildd writes that the stored (old) CRD
+# doesn't know are pruned by the apiserver — e.g. status.lastCacheExportGrant never persists
+# (S3 cache exports run on every build instead of the cadence) and spec.s3CachePolicy seeded
+# by projectDefaults rules is dropped (a `never` project keeps exporting).
 task manifests && kubectl apply -f deploy/crd
 
 helm upgrade buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --reuse-values

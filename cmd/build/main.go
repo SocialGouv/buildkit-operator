@@ -450,7 +450,14 @@ func cacheArgs(c *router.CacheConfig) []string {
 		parts = append(parts, "endpoint_url="+c.EndpointURL, "use_path_style=true")
 	}
 	common := strings.Join(parts, ",")
-	return []string{"--cache-from", common, "--cache-to", common + ",mode=max"}
+	args := []string{"--cache-from", common}
+	// Export only when buildd granted it (s3CachePolicy cadence): absent SkipExport = old
+	// server = export, unchanged. ignore-error: concurrent builds of one project race on the
+	// same S3 cache manifest — a failed cache write must never fail the build itself.
+	if !c.SkipExport {
+		args = append(args, "--cache-to", common+",mode=max,ignore-error=true")
+	}
+	return args
 }
 
 // printDryRun reports the resolved identity, the routing result, and the exact
