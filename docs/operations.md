@@ -235,6 +235,13 @@ The daemons do the S3 I/O and read the AWS creds from `credsSecret` (mounted as 
 self-hosted test backend you can run MinIO in-cluster (Deployment + PVC + a `buildcache` bucket); it
 is not part of the chart. See [storage-and-cold-cache.md](storage-and-cold-cache.md).
 
+**Bucket GC** — buildkit's s3 cache exporter never deletes anything, so the chart also applies a
+bucket lifecycle configuration through a post-install/post-upgrade hook Job (`s3.lifecycle`, on by
+default when `s3.bucket` is set): objects expire after 60 days and incomplete multipart uploads are
+aborted after 7 days. Expiry is safe by construction — a cold-cache miss is a rebuild, never an
+error. Tune `s3.lifecycle.{expireDays,abortMultipartDays}` or set `s3.lifecycle.enabled: false` to
+manage the bucket out-of-band.
+
 ## Tear down cleanly (shared cluster hygiene)
 
 ```bash

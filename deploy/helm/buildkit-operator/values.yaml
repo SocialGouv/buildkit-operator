@@ -82,6 +82,19 @@ s3:
   region: us-east-1
   endpoint: "" # e.g. https://s3.gra.io.cloud.ovh.net (empty = AWS default)
   credsSecret: "" # k8s Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+  # Bucket GC. buildkit's s3 cache exporter only ever WRITES (blobs + manifests, mode=max) — it never
+  # deletes, so without a lifecycle policy the bucket grows forever. When enabled (and bucket is set),
+  # a post-install/post-upgrade hook Job applies the bucket lifecycle configuration using the daemons'
+  # creds: objects expire after expireDays (a cold-cache miss is a rebuild, never an error, so expiry
+  # is safe), and incomplete multipart uploads are aborted after abortMultipartDays (reclaims parts
+  # left behind by interrupted or racing cache exports — those are invisible to object listings but
+  # still billed). Set enabled: false to manage the bucket lifecycle out-of-band.
+  lifecycle:
+    enabled: true
+    expireDays: 60
+    abortMultipartDays: 7
+    # renovate: datasource=docker depName=amazon/aws-cli versioning=docker
+    image: amazon/aws-cli:2.30.3
 
 # Network egress lockdown for the build daemons: they keep DNS + registry/package internet + external
 # S3, but cannot reach other in-cluster pods (lateral-movement + inter-daemon isolation). For an

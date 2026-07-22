@@ -1,0 +1,82 @@
+{{- /*
+S3 bucket lifecycle GC. buildkit's s3 cache exporter never deletes anything, so the cold-cache
+bucket needs a lifecycle policy to stay bounded (see values: s3.lifecycle). Applied by a hook Job —
+an idempotent PUT re-run on every install/upgrade, so a values change converges the bucket. Runs in
+the BUILDS namespace: that is where the creds Secret lives and where egress to the S3 endpoint is
+already open (the daemons do their cache I/O from there).
+*/ -}}
+{{- if and .Values.s3.bucket .Values.s3.lifecycle.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-s3-lifecycle
+  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: s3-lifecycle
+  annotations:
+    # Argo CD maps these to PostSync hooks. before-hook-creation (no hook-succeeded) keeps the last
+    # Job around between syncs so a failure stays visible; the TTL below cleans it up eventually.
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "buildkit-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: s3-lifecycle
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: awscli
+          image: {{ .Values.s3.lifecycle.image }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.s3.credsSecret }}
+          env:
+            - name: AWS_DEFAULT_REGION
+              value: {{ .Values.s3.region | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              cat > /tmp/lifecycle.json <<'EOF'
+              {
+                "Rules": [
+                  {
+                    "ID": "expire-cold-cache-{{ .Values.s3.lifecycle.expireDays }}d",
+                    "Status": "Enabled",
+                    "Filter": {"Prefix": ""},
+                    "Expiration": {"Days": {{ .Values.s3.lifecycle.expireDays }}}
+                  },
+                  {
+                    "ID": "abort-incomplete-multipart-{{ .Values.s3.lifecycle.abortMultipartDays }}d",
+                    "Status": "Enabled",
+                    "Filter": {"Prefix": ""},
+                    "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": {{ .Values.s3.lifecycle.abortMultipartDays }}}
+                  }
+                ]
+              }
+              EOF
+              aws {{ with .Values.s3.endpoint }}--endpoint-url {{ . }} {{ end }}s3api put-bucket-lifecycle-configuration \
+                --bucket {{ .Values.s3.bucket }} --lifecycle-configuration file:///tmp/lifecycle.json
+              echo "lifecycle applied to bucket {{ .Values.s3.bucket }}; reading back:"
+              aws {{ with .Values.s3.endpoint }}--endpoint-url {{ . }} {{ end }}s3api get-bucket-lifecycle-configuration \
+                --bucket {{ .Values.s3.bucket }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+{{- end }}
