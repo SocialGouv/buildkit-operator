@@ -59,10 +59,27 @@ buildkit:
   port: 1234
 
 # --- Per-project daemon defaults --------------------------------------------
-# NOTE: the per-project defaults (storageClass, cacheVolumeGi, tier, idleTimeoutSec, securityProfile)
-# are NOT set here — buildd has no flags for them. They are enforced by the CRD's +kubebuilder:default
-# markers (and mirrored by applyDefaults in the controller). To change a default, edit the CRD/BuildProject,
-# or set the field per-project on the BuildProject CR. Putting them here would be silently ignored.
+# Baseline defaults (storageClass, cacheVolumeGi, tier, idleTimeoutSec, securityProfile) come from the
+# CRD's +kubebuilder:default markers. Two chart-level surfaces refine them:
+#
+# adaptiveIdle: a warm project's EFFECTIVE idle window scales with its observed build cadence
+# (spec idleTimeoutSec × builds in the trailing 24h), capped at maxSeconds — frequent builders stay
+# warm between builds without pinning tier=hot, quiet projects still scale to zero, and the fleet
+# cost stays proportional to observed usage. 0 disables adaptivity (spec idle applies verbatim).
+adaptiveIdle:
+  maxSeconds: 21600
+
+# projectDefaults: admin-declared rules seeded into the BuildProject buildd auto-creates at first
+# /route (create-only — existing CRs keep their spec; delete a CR to re-seed it). First matching
+# rule wins; repo/name are shell-style globs over the NORMALIZED identity (empty = any); arch is
+# exact. Only tier / idleTimeoutSec / cacheVolumeGi can be seeded. Example:
+#   projectDefaults:
+#     - repo: github.com/socialgouv/iterion
+#       name: "iterion-sandbox-*"
+#       cacheVolumeGi: 120
+#     - repo: "github.com/socialgouv/*"
+#       tier: hot
+projectDefaults: []
 
 # Snapshot class used by the controller for VolumeSnapshot-based cache seed/durability (M3).
 # OVH ships csi-cinder-snapclass-v1 (at-rest) and csi-cinder-snapclass-in-use-v1 (in-use); the

@@ -13,6 +13,7 @@ import (
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/builder"
 	"github.com/socialgouv/buildkit-operator/internal/identity"
+	"github.com/socialgouv/buildkit-operator/internal/projectdefaults"
 	"github.com/socialgouv/buildkit-operator/internal/provisioner"
 	"github.com/socialgouv/buildkit-operator/internal/router"
 	"golang.org/x/time/rate"
@@ -45,7 +46,10 @@ type routeServer struct {
 	// limiter, when non-nil, caps the routing-API request rate (token bucket shared across endpoints)
 	// so a single caller / compromised token can't churn BuildProjects + attaches without bound.
 	limiter *rate.Limiter
-	log     logr.Logger
+	// defaults, when non-nil, seeds admin-declared per-project spec defaults (tier/idle/cache size)
+	// into the canonical spec before Ensure — the create-only window where they can take effect.
+	defaults *projectdefaults.Config
+	log      logr.Logger
 }
 
 // adminTokenHeader carries the break-glass admin token — a header DISTINCT from Authorization so admin

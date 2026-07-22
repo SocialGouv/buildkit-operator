@@ -13,6 +13,7 @@ import (
 	"github.com/go-logr/logr"
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/builder"
+	"github.com/socialgouv/buildkit-operator/internal/projectdefaults"
 	k8sprov "github.com/socialgouv/buildkit-operator/internal/provisioner/k8s"
 	"github.com/socialgouv/buildkit-operator/internal/router"
 	"golang.org/x/time/rate"
@@ -89,6 +90,32 @@ func TestHandlePrewarm_CreatesProjectNoInflight(t *testing.T) {
 	// No daemon StatefulSet yet -> not ready; the client polls /prewarm on this until it flips true.
 	if resp.Ready {
 		t.Error("Ready = true with no daemon StatefulSet, want false")
+	}
+}
+
+// Admin-declared project defaults seed the auto-created BuildProject's spec — the create-only
+// Ensure means this is the only moment a platform rule (tier/idle/cache) can take effect.
+func TestHandlePrewarm_AppliesProjectDefaults(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).Build()
+	srv := newTestServer(t, c)
+	srv.defaults = &projectdefaults.Config{Rules: []projectdefaults.Rule{
+		{Repo: "github.com/org/*", Tier: bkov1.TierHot, CacheVolumeGi: 120},
+	}}
+
+	body, _ := json.Marshal(router.RouteRequest{Repo: "github.com/org/repo", Arch: "amd64"})
+	rec := httptest.NewRecorder()
+	srv.handlePrewarm(rec, httptest.NewRequest(http.MethodPost, "/prewarm", bytes.NewReader(body)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+
+	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
+	var bp bkov1.BuildProject
+	if err := c.Get(context.Background(), types.NamespacedName{Name: key, Namespace: srv.cfg.Namespace}, &bp); err != nil {
+		t.Fatalf("project not created: %v", err)
+	}
+	if bp.Spec.Tier != bkov1.TierHot || bp.Spec.CacheVolumeGi != 120 {
+		t.Errorf("spec = tier %q cache %d, want hot/120 (defaults not applied)", bp.Spec.Tier, bp.Spec.CacheVolumeGi)
 	}
 }
 

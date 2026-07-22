@@ -16,6 +16,7 @@ import (
 	"github.com/socialgouv/buildkit-operator/internal/builder"
 	"github.com/socialgouv/buildkit-operator/internal/controller"
 	"github.com/socialgouv/buildkit-operator/internal/identity"
+	"github.com/socialgouv/buildkit-operator/internal/projectdefaults"
 	k8sprov "github.com/socialgouv/buildkit-operator/internal/provisioner/k8s"
 	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -80,6 +81,14 @@ func main() {
 	// the request's repo/untrusted — for the manual CLI / in-cluster ops. Env-sourced (mounted Secret).
 	adminToken := os.Getenv("BUILDKIT_OPERATOR_ADMIN_TOKEN")
 	maxBuildSec := flag.Int("max-build-seconds", 7200, "safety net: inflight builds older than this stop pinning a daemon warm (a missed /complete won't leak a hot daemon forever)")
+	// Adaptive keep-warm: a warm project's effective idle window scales with its observed build
+	// cadence (spec idle × builds in the trailing 24h), capped here — so frequent builders stay
+	// warm between builds without pinning tier=hot by hand, and quiet projects still scale to zero.
+	adaptiveIdleMaxSec := flag.Int("adaptive-idle-max-seconds", 21600, "cap of the cadence-scaled idle window for warm projects (0 = disable adaptivity; spec idleTimeoutSec applies verbatim)")
+	// Admin-declared per-project defaults (tier/idleTimeoutSec/cacheVolumeGi seeded at BuildProject
+	// creation), from a mounted ConfigMap file — the create-only Ensure means this is the one seam
+	// where a platform default can take effect without hand-editing hash-named CRs.
+	projectDefaultsPath := flag.String("project-defaults-config", "", "path to a mounted per-project defaults rules file (YAML/JSON: {rules: [{repo, name, arch, tier, idleTimeoutSec, cacheVolumeGi}]})")
 	// Rate limit for the routing API: a token bucket shared across /route, /prewarm and /complete that
 	// caps how fast a single caller (or a compromised token) can churn BuildProjects / attaches. 0 = off.
 	apiRateLimit := flag.Float64("api-rate-limit", 50, "max routing-API requests/sec (token bucket; 0 = unlimited)")
@@ -129,6 +138,14 @@ func main() {
 		log.Error(err, "invalid OIDC config")
 		panic(err)
 	}
+	projDefaults, err := projectdefaults.Load(*projectDefaultsPath)
+	if err != nil {
+		log.Error(err, "invalid project-defaults config")
+		panic(err)
+	}
+	if projDefaults != nil {
+		log.Info("per-project defaults ENABLED", "rules", len(projDefaults.Rules))
+	}
 	verifier, err := identity.NewVerifier(oidcCfg)
 	if err != nil {
 		log.Error(err, "invalid OIDC providers")
@@ -152,7 +169,7 @@ func main() {
 			snapshotEvery: *localSnapEvery, keepSnapshots: *localKeepSnaps, maxBuildSeconds: *maxBuildSec,
 			forkEgressStrict: *forkEgressStrict,
 			endpointDomain:   *localEndpointDomain, certsPath: *localCertsPath, runtime: *localRuntime,
-		}, verifier, authToken, adminToken, log)
+		}, verifier, authToken, adminToken, projDefaults, log)
 		if err != nil {
 			log.Error(err, "local backend exited")
 			panic(err)
@@ -193,11 +210,12 @@ func main() {
 	}
 
 	if err := (&controller.BuildProjectReconciler{
-		Client:          mgr.GetClient(),
-		Scheme:          mgr.GetScheme(),
-		Cfg:             cfg,
-		KeepSnapshots:   *keepSnaps,
-		MaxBuildSeconds: *maxBuildSec,
+		Client:                 mgr.GetClient(),
+		Scheme:                 mgr.GetScheme(),
+		Cfg:                    cfg,
+		KeepSnapshots:          *keepSnaps,
+		MaxBuildSeconds:        *maxBuildSec,
+		AdaptiveIdleMaxSeconds: *adaptiveIdleMaxSec,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller")
 		panic(err)
@@ -220,7 +238,7 @@ func main() {
 		coldStartSem: make(chan struct{}, *maxCold),
 		s3Bucket:     *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
 		verifier: verifier, authToken: authToken, adminToken: adminToken,
-		limiter: limiter, log: ctrl.Log.WithName("route"),
+		limiter: limiter, defaults: projDefaults, log: ctrl.Log.WithName("route"),
 	}); err != nil {
 		log.Error(err, "unable to add route server")
 		panic(err)

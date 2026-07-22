@@ -105,6 +105,7 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	start := time.Now()
 	spec := canonicalSpec(req)
+	s.defaults.Apply(&spec)
 	canonical := spec.Key
 	key, result := canonical, "warm"
 	if req.Untrusted {
@@ -183,6 +184,7 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spec := canonicalSpec(req)
+	s.defaults.Apply(&spec)
 	key := spec.Key
 	if err := s.prov.Ensure(r.Context(), spec, false); err != nil {
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)

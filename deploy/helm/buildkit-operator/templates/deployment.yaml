@@ -15,10 +15,16 @@ spec:
     metadata:
       labels:
         {{- include "buildkit-operator.buildd.selectorLabels" . | nindent 8 }}
-      {{- if .Values.oidc.providers }}
+      {{- if or .Values.oidc.providers .Values.projectDefaults }}
       annotations:
+        {{- if .Values.oidc.providers }}
         # Roll buildd when the OIDC policy changes (the mounted ConfigMap isn't watched by buildd).
         checksum/oidc-config: {{ include (print $.Template.BasePath "/oidc-configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.projectDefaults }}
+        # Roll buildd when the per-project default rules change (same mounted-file reasoning).
+        checksum/project-defaults: {{ include (print $.Template.BasePath "/project-defaults-configmap.yaml") . | sha256sum }}
+        {{- end }}
       {{- end }}
     spec:
       serviceAccountName: {{ include "buildkit-operator.serviceAccountName" . }}
@@ -85,11 +91,23 @@ spec:
             # Secure-by-default identity verification: bind /route to the forge-signed repo claim.
             - --oidc-config=/etc/buildkit-operator/oidc/oidc.yaml
             {{- end }}
-          {{- if .Values.oidc.providers }}
+            # Adaptive keep-warm: cap of the cadence-scaled idle window (0 disables adaptivity).
+            - --adaptive-idle-max-seconds={{ .Values.adaptiveIdle.maxSeconds }}
+            {{- if .Values.projectDefaults }}
+            - --project-defaults-config=/etc/buildkit-operator/project-defaults/rules.yaml
+            {{- end }}
+          {{- if or .Values.oidc.providers .Values.projectDefaults }}
           volumeMounts:
+            {{- if .Values.oidc.providers }}
             - name: oidc-config
               mountPath: /etc/buildkit-operator/oidc
               readOnly: true
+            {{- end }}
+            {{- if .Values.projectDefaults }}
+            - name: project-defaults
+              mountPath: /etc/buildkit-operator/project-defaults
+              readOnly: true
+            {{- end }}
           {{- end }}
           env:
             # buildd creates daemons in --namespace (the builds ns) but its leader-election Lease must
@@ -137,11 +155,18 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
-      {{- if .Values.oidc.providers }}
+      {{- if or .Values.oidc.providers .Values.projectDefaults }}
       volumes:
+        {{- if .Values.oidc.providers }}
         - name: oidc-config
           configMap:
             name: {{ include "buildkit-operator.fullname" . }}-oidc
+        {{- end }}
+        {{- if .Values.projectDefaults }}
+        - name: project-defaults
+          configMap:
+            name: {{ include "buildkit-operator.fullname" . }}-project-defaults
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

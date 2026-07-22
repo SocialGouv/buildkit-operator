@@ -1,0 +1,18 @@
+{{- if .Values.projectDefaults }}
+# Admin-declared per-project daemon defaults, mounted into buildd as --project-defaults-config.
+# Rules seed tier/idleTimeoutSec/cacheVolumeGi on the BuildProject buildd auto-creates at first
+# /route (create-only — an existing CR keeps its spec). First matching rule wins; patterns are
+# shell-style globs over the NORMALIZED repo/name (see internal/projectdefaults). This is an
+# admin-only surface on purpose: routing callers must not be able to self-assign a hot daemon.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "buildkit-operator.fullname" . }}-project-defaults
+  namespace: {{ include "buildkit-operator.operatorNamespace" . }}
+  labels:
+    {{- include "buildkit-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildd
+data:
+  rules.yaml: |
+    {{- dict "rules" .Values.projectDefaults | toYaml | nindent 4 }}
+{{- end }}

@@ -7,6 +7,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/socialgouv/buildkit-operator/internal/builder"
 	"github.com/socialgouv/buildkit-operator/internal/identity"
+	"github.com/socialgouv/buildkit-operator/internal/projectdefaults"
 	"github.com/socialgouv/buildkit-operator/internal/provisioner/local"
 	"golang.org/x/time/rate"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -41,7 +42,7 @@ type localParams struct {
 // runLocalBackend wires the local provisioner + the shared routing API and serves until SIGTERM. It is
 // the single-host analogue of main()'s Kubernetes manager path: a reconcile goroutine (scale-to-zero)
 // plus the HTTP /route server, sharing this run's OIDC verifier and auth tokens.
-func runLocalBackend(p localParams, verifier *identity.Verifier, authToken, adminToken string, log logr.Logger) error {
+func runLocalBackend(p localParams, verifier *identity.Verifier, authToken, adminToken string, defaults *projectdefaults.Config, log logr.Logger) error {
 	if p.pool == "" || p.image == "" {
 		return errors.New("--backend local requires --incus-pool and --incus-image")
 	}
@@ -84,7 +85,7 @@ func runLocalBackend(p localParams, verifier *identity.Verifier, authToken, admi
 		coldStartSem: make(chan struct{}, p.maxCold),
 		s3Bucket:     p.s3Bucket, s3Region: p.s3Region, s3Endpoint: p.s3Endpoint,
 		verifier: verifier, authToken: authToken, adminToken: adminToken,
-		limiter: limiter, log: log.WithName("route"),
+		limiter: limiter, defaults: defaults, log: log.WithName("route"),
 	}
 
 	ctx := ctrl.SetupSignalHandler()
