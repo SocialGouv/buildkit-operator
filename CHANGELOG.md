@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.15.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.14.2...v0.15.0) (2026-07-22)
+
+### Features
+
+* **buildd,api:** S3 cold-cache policy — import always, export on cadence ([d10c3bf](https://github.com/SocialGouv/buildkit-operator/commit/d10c3bf36897676d9be4652819129c20210701e1))
+
+### Bug Fixes
+
+* **build,buildd,chart:** harden the S3 cache policy after adversarial review ([69e8781](https://github.com/SocialGouv/buildkit-operator/commit/69e8781814956f1a608b3938aaa943122fa85a5d))
+* **controller:** reset a stale inflight counter instead of letting it grow forever ([0b5763b](https://github.com/SocialGouv/buildkit-operator/commit/0b5763b64c8cd6c95941ecb2d05bcc28c74c8d90))
+
 ## [0.14.2](https://github.com/SocialGouv/buildkit-operator/compare/v0.14.1...v0.14.2) (2026-07-22)
 
 ### Bug Fixes
