@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.14.2](https://github.com/SocialGouv/buildkit-operator/compare/v0.14.1...v0.14.2) (2026-07-22)
+
+### Bug Fixes
+
+* **controller,buildd:** harden auto-grow + fork sizing after adversarial review ([b8400f8](https://github.com/SocialGouv/buildkit-operator/commit/b8400f8531912e5602182673775140fb8ff670c8))
+
 ## [0.14.1](https://github.com/SocialGouv/buildkit-operator/compare/v0.14.0...v0.14.1) (2026-07-22)
 
 ## [0.14.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.13.0...v0.14.0) (2026-07-22)
