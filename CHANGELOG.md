@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/SocialGouv/buildkit-operator/compare/v1...v0.13.0) (2026-07-22)
+
+### Features
+
+* **buildd:** declarative per-project defaults seeded at BuildProject creation ([4922bd7](https://github.com/SocialGouv/buildkit-operator/commit/4922bd7bf3dd206b56e1cfd4562bc78f395d72e2))
+* **chart:** S3 bucket lifecycle GC (expiry + multipart abort) via hook Job ([a8bd579](https://github.com/SocialGouv/buildkit-operator/commit/a8bd5790b49b469a0c5fbc23c82fe077255e05c9))
+* **controller:** adaptive keep-warm — idle window scales with build cadence ([504a79a](https://github.com/SocialGouv/buildkit-operator/commit/504a79aee3a924c8b210ab0ad0166936f731a5f4))
+
 ## [0.12.0](https://github.com/socialgouv/buildkit-operator/compare/v1...v0.12.0) (2026-07-03)
 
 ### Features
