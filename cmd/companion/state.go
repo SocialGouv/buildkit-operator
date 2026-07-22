@@ -22,11 +22,13 @@ type state struct {
 	// always report not-ready so no new work is scheduled onto us.
 	draining atomic.Bool
 
-	// last inode snapshot, published atomically for /metrics. Stored as bits
-	// so the ratio can be loaded without a lock.
+	// last filesystem snapshot, published atomically for /metrics and /usage.
+	// Stored as bits so the ratio can be loaded without a lock.
 	inodeRatioBits atomic.Uint64
 	inodeUsed      atomic.Uint64
 	inodeTotal     atomic.Uint64
+	bytesUsed      atomic.Uint64
+	bytesTotal     atomic.Uint64
 }
 
 func newState(cfg *config, logger *slog.Logger) *state {
@@ -84,8 +86,8 @@ func (s *state) mux() http.Handler {
 		_, _ = w.Write([]byte("not ready\n"))
 	})
 
-	// /metrics is a tiny plain-text exposition of the inode backstop state.
-	// Deliberately no prometheus dependency; the line format is still
+	// /metrics is a tiny plain-text exposition of the filesystem backstop
+	// state. Deliberately no prometheus dependency; the line format is still
 	// scrapeable by a prometheus textfile-style parser.
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		ratio := math.Float64frombits(s.inodeRatioBits.Load())
@@ -94,6 +96,18 @@ func (s *state) mux() http.Handler {
 		fmt.Fprintf(w, "inode_usage_ratio %g\n", ratio)
 		fmt.Fprintf(w, "inode_used %d\n", s.inodeUsed.Load())
 		fmt.Fprintf(w, "inode_total %d\n", s.inodeTotal.Load())
+		fmt.Fprintf(w, "cache_bytes_used %d\n", s.bytesUsed.Load())
+		fmt.Fprintf(w, "cache_bytes_total %d\n", s.bytesTotal.Load())
+	})
+
+	// /usage is the machine-readable snapshot the operator's bounded
+	// cache-volume auto-grow polls (JSON so the reconciler needs no
+	// prometheus parsing). Values refresh on the inode-check cadence.
+	mux.HandleFunc("/usage", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"bytesUsed":%d,"bytesTotal":%d,"inodeRatio":%g}`+"\n",
+			s.bytesUsed.Load(), s.bytesTotal.Load(), math.Float64frombits(s.inodeRatioBits.Load()))
 	})
 
 	return mux

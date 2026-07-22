@@ -93,6 +93,10 @@ spec:
             {{- end }}
             # Adaptive keep-warm: cap of the cadence-scaled idle window (0 disables adaptivity).
             - --adaptive-idle-max-seconds={{ .Values.adaptiveIdle.maxSeconds }}
+            # Bounded cache-volume auto-grow (0% disables; maxGi is the growth quota).
+            - --auto-grow-threshold-pct={{ .Values.autoGrow.thresholdPct }}
+            - --auto-grow-factor={{ .Values.autoGrow.factor }}
+            - --auto-grow-max-gi={{ .Values.autoGrow.maxGi }}
             {{- if .Values.projectDefaults }}
             - --project-defaults-config=/etc/buildkit-operator/project-defaults/rules.yaml
             {{- end }}

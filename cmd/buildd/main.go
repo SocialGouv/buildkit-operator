@@ -85,6 +85,11 @@ func main() {
 	// cadence (spec idle × builds in the trailing 24h), capped here — so frequent builders stay
 	// warm between builds without pinning tier=hot by hand, and quiet projects still scale to zero.
 	adaptiveIdleMaxSec := flag.Int("adaptive-idle-max-seconds", 21600, "cap of the cadence-scaled idle window for warm projects (0 = disable adaptivity; spec idleTimeoutSec applies verbatim)")
+	// Bounded cache-volume auto-grow: past the usage threshold (companion statfs), grow the project's
+	// PVC by the factor, never beyond max-gi — the quota that keeps automatic growth cost-bounded.
+	autoGrowThresholdPct := flag.Int("auto-grow-threshold-pct", 80, "cache-volume usage percent that triggers a bounded PVC grow (0 = disable auto-grow)")
+	autoGrowFactor := flag.Float64("auto-grow-factor", 1.5, "growth step multiplier for the cache-volume auto-grow")
+	autoGrowMaxGi := flag.Int("auto-grow-max-gi", 240, "per-project ceiling (Gi) of the cache-volume auto-grow — the growth quota")
 	// Admin-declared per-project defaults (tier/idleTimeoutSec/cacheVolumeGi seeded at BuildProject
 	// creation), from a mounted ConfigMap file — the create-only Ensure means this is the one seam
 	// where a platform default can take effect without hand-editing hash-named CRs.
@@ -216,6 +221,10 @@ func main() {
 		KeepSnapshots:          *keepSnaps,
 		MaxBuildSeconds:        *maxBuildSec,
 		AdaptiveIdleMaxSeconds: *adaptiveIdleMaxSec,
+		AutoGrowThresholdPct:   *autoGrowThresholdPct,
+		AutoGrowFactor:         *autoGrowFactor,
+		AutoGrowMaxGi:          *autoGrowMaxGi,
+		ProbeUsage:             controller.HTTPUsageProber(cfg.HealthPort),
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller")
 		panic(err)

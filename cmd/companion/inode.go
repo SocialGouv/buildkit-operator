@@ -32,15 +32,23 @@ func (s *state) inodeLoop(ctx context.Context) {
 	}
 }
 
-// inodeStats is a snapshot of inode accounting for the cache filesystem.
+// inodeStats is a snapshot of inode AND byte accounting for the cache
+// filesystem (one statfs serves both: inodes drive the local prune backstop,
+// bytes feed the operator's bounded cache-volume auto-grow via /usage).
 type inodeStats struct {
 	used  uint64
 	total uint64
 	ratio float64 // used/total in [0,1]; 0 when total is 0.
+
+	bytesUsed  uint64
+	bytesTotal uint64
+	bytesRatio float64 // bytesUsed/bytesTotal in [0,1]; 0 when total is 0.
 }
 
-// statInodes reads inode accounting for dir via statfs. Files is the total
-// inode count and Ffree the free count, so used = Files-Ffree.
+// statInodes reads inode + byte accounting for dir via statfs. Files is the
+// total inode count and Ffree the free count, so used = Files-Ffree; bytes use
+// Blocks/Bfree × Bsize (Bfree, not Bavail: the root reserve is still occupied
+// space from the volume-capacity standpoint the auto-grow reasons about).
 func statInodes(dir string) (inodeStats, error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(dir, &st); err != nil {
@@ -55,7 +63,20 @@ func statInodes(dir string) (inodeStats, error) {
 	if total > 0 {
 		ratio = float64(used) / float64(total)
 	}
-	return inodeStats{used: used, total: total, ratio: ratio}, nil
+	bsize := uint64(st.Bsize)
+	bytesTotal := st.Blocks * bsize
+	var bytesUsed uint64
+	if st.Blocks >= st.Bfree {
+		bytesUsed = (st.Blocks - st.Bfree) * bsize
+	}
+	bytesRatio := 0.0
+	if bytesTotal > 0 {
+		bytesRatio = float64(bytesUsed) / float64(bytesTotal)
+	}
+	return inodeStats{
+		used: used, total: total, ratio: ratio,
+		bytesUsed: bytesUsed, bytesTotal: bytesTotal, bytesRatio: bytesRatio,
+	}, nil
 }
 
 // checkInodes samples inode usage, publishes it for /metrics, and prunes when
@@ -118,9 +139,11 @@ func (s *state) prune(ctx context.Context) error {
 	return nil
 }
 
-// publishInodes stores the snapshot for lock-free reads by /metrics.
+// publishInodes stores the snapshot for lock-free reads by /metrics and /usage.
 func (s *state) publishInodes(stats inodeStats) {
 	s.inodeRatioBits.Store(math.Float64bits(stats.ratio))
 	s.inodeUsed.Store(stats.used)
 	s.inodeTotal.Store(stats.total)
+	s.bytesUsed.Store(stats.bytesUsed)
+	s.bytesTotal.Store(stats.bytesTotal)
 }

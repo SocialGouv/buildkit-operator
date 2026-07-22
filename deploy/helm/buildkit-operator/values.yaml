@@ -69,6 +69,17 @@ buildkit:
 adaptiveIdle:
   maxSeconds: 21600
 
+# autoGrow: bounded cache-volume auto-grow. buildkitd GC reclaims layers past ~85% of the volume, so
+# a project whose working set outgrows its PVC silently thrashes its cache. Past thresholdPct usage
+# (measured by the companion's statfs, polled by the reconciler on warm daemons) the PVC grows by
+# factor — never beyond maxGi, the per-project cost quota. Growth is one-way (Cinder can't shrink);
+# the filesystem resize lands via an idle-time pod bounce. thresholdPct: 0 disables.
+# Requires the storage class to allow volume expansion (csi-cinder gen2 does).
+autoGrow:
+  thresholdPct: 80
+  factor: 1.5
+  maxGi: 240
+
 # projectDefaults: admin-declared rules seeded into the BuildProject buildd auto-creates at first
 # /route (create-only — existing CRs keep their spec; delete a CR to re-seed it). First matching
 # rule wins; repo/name are shell-style globs over the NORMALIZED identity (empty = any); arch is

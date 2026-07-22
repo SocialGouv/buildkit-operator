@@ -41,6 +41,13 @@ type BuildProjectReconciler struct {
 	// AdaptiveIdleMaxSeconds caps the cadence-scaled effective idle window of warm projects
 	// (see effectiveIdle). 0 disables adaptivity — the spec IdleTimeoutSec applies verbatim.
 	AdaptiveIdleMaxSeconds int
+	// Bounded cache-volume auto-grow (see autogrow.go). ThresholdPct 0 or a nil ProbeUsage
+	// disables it; MaxGi is the per-project growth quota, Factor the step (default 1.5×).
+	AutoGrowThresholdPct int
+	AutoGrowFactor       float64
+	AutoGrowMaxGi        int
+	ProbeUsage           UsageProber
+	autoGrowGate         probeGate
 }
 
 // adaptiveIdleMax is AdaptiveIdleMaxSeconds as a duration (0 = adaptivity off).
@@ -143,6 +150,9 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	if ferr := r.reconcileFanout(ctx, &bp); ferr != nil {
 		l.V(1).Info("fanout deferred", "err", ferr.Error())
+	}
+	if gerr := r.maybeAutoGrow(ctx, &bp, ready); gerr != nil {
+		l.V(1).Info("auto-grow deferred", "err", gerr.Error())
 	}
 	l.V(1).Info("reconciled", "key", bp.Spec.Key, "phase", bp.Status.Phase, "ready", ready, "desired", desired)
 
