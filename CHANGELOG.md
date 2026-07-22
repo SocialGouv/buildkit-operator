@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.14.1](https://github.com/SocialGouv/buildkit-operator/compare/v0.14.0...v0.14.1) (2026-07-22)
+
 ## [0.14.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.13.0...v0.14.0) (2026-07-22)
 
 ### Features
