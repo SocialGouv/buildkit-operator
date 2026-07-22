@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.14.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.13.0...v0.14.0) (2026-07-22)
+
+### Features
+
+* **controller,companion:** bounded cache-volume auto-grow ([c6492d5](https://github.com/SocialGouv/buildkit-operator/commit/c6492d52ceb31d9e124cf0170b100ec5014f8291))
+
+### Bug Fixes
+
+* **ci:** unit-coverage gate back above 85% ([1c94314](https://github.com/SocialGouv/buildkit-operator/commit/1c94314597f45e364fda26e0c6e26b1b5479ddb9))
+
 ## [0.13.0](https://github.com/SocialGouv/buildkit-operator/compare/v1...v0.13.0) (2026-07-22)
 
 ### Features
