@@ -134,6 +134,15 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// never clobbers LastBuildTime — that field is written conflict-safely by touchLastBuild.
 	changed := bp.Status.Replicas != ready || bp.Status.Phase != newPhase || bp.Status.Endpoint != newEndpoint ||
 		prev == nil || prev.Status != readyCond || prev.Reason != newPhase
+	// A stale inflight counter is already ignored by desiredReplicas (the max-build-seconds
+	// safety net), but without a reset it accumulates forever: every cancelled CI job routes
+	// a build whose /complete never comes (the runner is killed before its cleanup trap), so
+	// the count net-increments for the CR's whole lifetime and reads as hundreds of phantom
+	// in-flight builds. Zero it once the staleness window has passed.
+	if bp.Status.InflightBuilds > 0 && inflightStale(&bp, time.Now(), r.maxBuildAge()) {
+		bp.Status.InflightBuilds = 0
+		changed = true
+	}
 	bp.Status.Replicas = ready
 	bp.Status.Endpoint = newEndpoint
 	bp.Status.Phase = newPhase

@@ -190,6 +190,30 @@ func TestDesiredReplicas(t *testing.T) {
 	}
 }
 
+// A stale inflight counter (accumulated /complete losses from cancelled CI jobs) is zeroed
+// by the reconciler once past the max-build-seconds window, instead of growing forever.
+func TestReconcile_ResetsStaleInflight(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildkit-operator", "pstale"
+	old := metav1.NewTime(time.Now().Add(-3 * time.Hour))
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Repo: "github.com/o/r", Arch: "amd64"},
+		Status:     bkov1.BuildProjectStatus{InflightBuilds: 110, LastBuildTime: &old},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns}}
+
+	if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}); err != nil {
+		t.Fatal(err)
+	}
+	var got bkov1.BuildProject
+	_ = c.Get(t.Context(), types.NamespacedName{Name: key, Namespace: ns}, &got)
+	if got.Status.InflightBuilds != 0 {
+		t.Errorf("stale InflightBuilds = %d after reconcile, want 0", got.Status.InflightBuilds)
+	}
+}
+
 // Adaptive keep-warm: the effective idle is base × builds-in-window, capped, floored at base,
 // and inert for hot/fork/disabled cases.
 func TestEffectiveIdle(t *testing.T) {
