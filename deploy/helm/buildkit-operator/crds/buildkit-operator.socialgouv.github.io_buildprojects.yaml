@@ -175,6 +175,17 @@ spec:
                   RestoreFromSnapshot, if set, seeds the cache PVC from this VolumeSnapshot on creation
                   (DR / new cluster / lost volume). Ignored once the PVC exists.
                 type: string
+              s3CachePolicy:
+                default: cadence
+                description: |-
+                  S3CachePolicy controls the project's use of the shared S3 cold cache:
+                  cadence = import always / export at most once per the operator's export
+                  interval; always = export every build; never = no S3 cache at all.
+                enum:
+                - cadence
+                - always
+                - never
+                type: string
               securityProfile:
                 default: rootless
                 description: SecurityProfile hardens the buildkitd pod.
@@ -286,6 +297,12 @@ spec:
               lastBuildTime:
                 description: LastBuildTime is when a build last touched this daemon
                   (drives idle).
+                format: date-time
+                type: string
+              lastCacheExportGrant:
+                description: |-
+                  LastCacheExportGrant is when buildd last granted an S3 cache export to a
+                  routed build — the cadence clock of s3CachePolicy=cadence.
                 format: date-time
                 type: string
               lastSnapshot:

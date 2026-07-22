@@ -85,11 +85,14 @@ autoGrow:
 # rule wins. `repo` uses the SAME semantics as oidc.repoAllowlist ("*" = any, "pfx/*" = prefix that
 # crosses "/" — covers GitLab nested subgroups, patterns copy verbatim between the two lists), over
 # the NORMALIZED repo. `name` is a shell-style glob (path.Match); arch is exact; empty = any.
-# Only tier / idleTimeoutSec / cacheVolumeGi can be seeded. Example:
+# Seedable fields: tier / idleTimeoutSec / cacheVolumeGi / s3Cache (cadence|always|never). Example:
 #   projectDefaults:
 #     - repo: github.com/socialgouv/iterion
 #       name: "iterion-sandbox-*"
 #       cacheVolumeGi: 120
+#     - repo: github.com/socialgouv/iterion
+#       name: iterion-sandbox-finalize
+#       s3Cache: never   # COPY-only builds whose inputs live in the registry — S3 rehydrates nothing
 #     - repo: "github.com/socialgouv/*"
 #       tier: hot
 projectDefaults: []
@@ -112,6 +115,12 @@ s3:
   region: us-east-1
   endpoint: "" # e.g. https://s3.gra.io.cloud.ovh.net (empty = AWS default)
   credsSecret: "" # k8s Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+  # Export throttle for the default s3CachePolicy=cadence: the retained PVC already covers warm
+  # restarts, so the cold cache only pays on rare events (inode prune, lost volume, cluster
+  # rebuild) — imports stay on every build (cheap), exports run at most once per interval per
+  # project (a ≤6h-old cache rehydrates just as well). "0" restores export-on-every-build.
+  # Per-project override: spec.s3CachePolicy (always|never|cadence), seeded via projectDefaults.
+  cacheExportInterval: 6h
   # Bucket GC. buildkit's s3 cache exporter only ever WRITES (blobs + manifests, mode=max) — it never
   # deletes, so without a lifecycle policy the bucket grows forever. When enabled (and bucket is set),
   # a post-install/post-upgrade hook Job applies the bucket lifecycle configuration using the daemons'

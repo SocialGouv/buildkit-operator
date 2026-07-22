@@ -11,6 +11,7 @@ package provisioner
 
 import (
 	"context"
+	"time"
 
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 )
@@ -34,4 +35,9 @@ type Provisioner interface {
 	// AddInflight adjusts the inflight-build counter for key (floored at 0) and stamps its last-build
 	// time, keeping the daemon pinned warm for the build's duration. Best-effort: failures are logged.
 	AddInflight(ctx context.Context, key string, delta int32)
+	// S3CacheDecision resolves the project's s3CachePolicy into (import, export) for one routed build.
+	// Under the cadence policy an export is granted at most once per exportInterval (grantExport stamps
+	// the cadence clock; pass false for non-build probes like /prewarm). exportInterval <= 0 means
+	// export on every build (the historical behaviour).
+	S3CacheDecision(ctx context.Context, key string, exportInterval time.Duration, grantExport bool) (imp, exp bool)
 }

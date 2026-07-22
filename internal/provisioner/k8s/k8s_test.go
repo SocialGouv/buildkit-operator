@@ -209,6 +209,60 @@ func TestAddInflight_RecordsBuildCadence(t *testing.T) {
 	}
 }
 
+// S3CacheDecision: policy semantics + the cadence CAS (one export grant per window, stamped
+// on the status; interval 0 restores export-every-build; always/never bypass the clock).
+func TestS3CacheDecision(t *testing.T) {
+	mk := func(policy string, lastGrant *metav1.Time) client.WithWatch {
+		bp := &bkov1.BuildProject{
+			ObjectMeta: metav1.ObjectMeta{Name: "pcache", Namespace: "buildkit-operator"},
+			Spec:       bkov1.BuildProjectSpec{Key: "pcache", Repo: "github.com/o/r", Arch: "amd64", S3CachePolicy: policy},
+			Status:     bkov1.BuildProjectStatus{LastCacheExportGrant: lastGrant},
+		}
+		return fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+	}
+	recent := metav1.NewTime(time.Now().Add(-time.Minute))
+	stale := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+
+	cases := []struct {
+		name        string
+		c           client.WithWatch
+		interval    time.Duration
+		grant       bool
+		wantImp     bool
+		wantExp     bool
+		wantStamped bool
+	}{
+		{"never", mk(bkov1.S3CacheNever, nil), time.Hour, true, false, false, false},
+		{"always", mk(bkov1.S3CacheAlways, &recent), time.Hour, true, true, true, false},
+		{"cadence first grant", mk("", nil), time.Hour, true, true, true, true},
+		{"cadence window open", mk("", &stale), time.Hour, true, true, true, true},
+		{"cadence window closed", mk("", &recent), time.Hour, true, true, false, false},
+		{"cadence prewarm no grant", mk("", &stale), time.Hour, false, true, false, false},
+		{"interval zero = historical", mk("", nil), 0, true, true, true, false},
+	}
+	for _, tc := range cases {
+		p := newProv(tc.c, 0, "", 0)
+		imp, exp := p.S3CacheDecision(t.Context(), "pcache", tc.interval, tc.grant)
+		if imp != tc.wantImp || exp != tc.wantExp {
+			t.Errorf("%s: decision = (%v,%v), want (%v,%v)", tc.name, imp, exp, tc.wantImp, tc.wantExp)
+		}
+		if tc.wantStamped {
+			var got bkov1.BuildProject
+			_ = tc.c.Get(t.Context(), types.NamespacedName{Name: "pcache", Namespace: "buildkit-operator"}, &got)
+			// metav1.Time truncates to seconds — assert freshness, not ordering.
+			if got.Status.LastCacheExportGrant == nil || time.Since(got.Status.LastCacheExportGrant.Time) > time.Minute {
+				t.Errorf("%s: grant not stamped", tc.name)
+			}
+		}
+	}
+
+	// Missing CR (transient read failure surrogate): fail-open to import+export.
+	empty := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
+	if imp, exp := newProv(empty, 0, "", 0).S3CacheDecision(t.Context(), "absent", time.Hour, true); !imp || !exp {
+		t.Errorf("missing CR: decision = (%v,%v), want fail-open (true,true)", imp, exp)
+	}
+}
+
 // A fork derives from the LIVE canonical spec, not the request-reconstructed
 // one: after auto-grow the canonical's CacheVolumeGi exceeds the request/rule
 // value, and a fork PVC smaller than the snapshot it restores from is refused

@@ -10,6 +10,7 @@ const (
 	DefaultTier            = TierWarm
 	DefaultIdleTimeoutSec  = 900
 	DefaultSecurityProfile = ProfileRootless
+	DefaultS3CachePolicy   = S3CacheCadence
 )
 
 // ApplyDefaults fills unset spec fields with their defaults. The apiserver applies the
@@ -33,5 +34,8 @@ func (bp *BuildProject) ApplyDefaults() {
 	}
 	if s.SecurityProfile == "" {
 		s.SecurityProfile = DefaultSecurityProfile
+	}
+	if s.S3CachePolicy == "" {
+		s.S3CachePolicy = DefaultS3CachePolicy
 	}
 }

@@ -239,11 +239,18 @@ if [ "$(printf '%s' "$resp" | jq -r '.cache.type // empty')" = "s3" ]; then
   s3="type=s3,bucket=$(printf '%s' "$resp" | jq -r .cache.bucket),name=$(printf '%s' "$resp" | jq -r .cache.name)"
   rg="$(printf '%s' "$resp" | jq -r '.cache.region // empty')"; [ -n "$rg" ] && s3="$s3,region=$rg"
   ep="$(printf '%s' "$resp" | jq -r '.cache.endpointUrl // empty')"; [ -n "$ep" ] && s3="$s3,endpoint_url=$ep,use_path_style=true"
+  set -- "$@" --cache-from "$s3"
+  # Export only when buildd granted it (s3CachePolicy cadence — the retained PVC covers warm
+  # restarts, so per-build exports overpay; absent skipExport = old server = export, unchanged).
   # ignore-error on the export: concurrent builds of one project (multi-image repos build jobs in
   # parallel) race on the same S3 cache manifest — OVH S3 409s the loser (OperationAborted). A failed
   # cache write must never fail the build itself.
-  set -- "$@" --cache-from "$s3" --cache-to "$s3,mode=max,ignore-error=true"
-  echo "buildkit-operator: S3 cold cache (project-managed) ON"
+  if [ "$(printf '%s' "$resp" | jq -r '.cache.skipExport // false')" = "true" ]; then
+    echo "buildkit-operator: S3 cold cache ON (import only — export not granted this build)"
+  else
+    set -- "$@" --cache-to "$s3,mode=max,ignore-error=true"
+    echo "buildkit-operator: S3 cold cache (project-managed) ON"
+  fi
 fi
 
 # Run the build (not exec'd, so the EXIT trap can release the inflight build afterwards).

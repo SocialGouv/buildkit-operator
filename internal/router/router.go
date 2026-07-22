@@ -49,6 +49,11 @@ type CacheConfig struct {
 	Region      string `json:"region,omitempty"`      // S3 region
 	EndpointURL string `json:"endpointUrl,omitempty"` // S3 endpoint (OVH Object Storage / MinIO)
 	Name        string `json:"name"`                  // per-project cache prefix = the project key
+	// SkipExport tells the client to import only (no --cache-to): the export was not granted
+	// for this build (s3CachePolicy cadence window not elapsed, or a non-build probe). Absent
+	// (false) keeps the historical import+export behaviour, so old servers and old clients
+	// interoperate unchanged.
+	SkipExport bool `json:"skipExport,omitempty"`
 }
 
 // NormalizeRepo reduces a repository reference to a canonical host/path form so

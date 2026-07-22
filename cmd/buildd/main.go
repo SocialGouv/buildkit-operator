@@ -104,6 +104,11 @@ func main() {
 	s3Bucket := flag.String("s3-bucket", "", "shared S3 bucket for the cold cache (empty = disabled); buildd returns the per-project reference to clients")
 	s3Region := flag.String("s3-region", "us-east-1", "S3 region for the cold cache")
 	s3Endpoint := flag.String("s3-endpoint", "", "S3 endpoint URL (OVH Object Storage / MinIO; empty = AWS default)")
+	// The retained PVC already covers warm restarts; the cold cache only pays on rare events
+	// (inode prune, lost volume, cluster rebuild). Exporting on every build overpaid 10-40s per
+	// build — the cadence throttle keeps the rehydration net at a fraction of the cost. Projects
+	// opt out/in via s3CachePolicy (spec / projectDefaults rules).
+	s3ExportInterval := flag.Duration("s3-cache-export-interval", 6*time.Hour, "min interval between S3 cache exports of one project under s3CachePolicy=cadence (0 = export on every build)")
 	// Single-host backend (--backend local) knobs: one buildkitd Incus instance per project, backed by a
 	// retained ZFS dataset (the warm cache). Ignored by the k8s backend.
 	incusPool := flag.String("incus-pool", "", "[backend=local] ZFS parent dataset for per-project caches, e.g. tank/bko")
@@ -173,7 +178,7 @@ func main() {
 		err := runLocalBackend(localParams{
 			cfg: cfg, apiListen: apiListen, routeWait: routeWait, maxCold: *maxCold,
 			apiRateLimit: *apiRateLimit, apiRateBurst: *apiRateBurst,
-			s3Bucket: *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
+			s3Bucket: *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint, s3ExportInterval: *s3ExportInterval,
 			pool: *incusPool, image: *incusImage, vmImage: *incusVMImage,
 			mountPath: *localMountPath, idleTimeout: *localIdle,
 			snapshotEvery: *localSnapEvery, keepSnapshots: *localKeepSnaps, maxBuildSeconds: *maxBuildSec,
@@ -252,7 +257,8 @@ func main() {
 		prov: prov, cfg: cfg, addr: apiListen, wait: routeWait,
 		coldStartSem: make(chan struct{}, *maxCold),
 		s3Bucket:     *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
-		verifier: verifier, authToken: authToken, adminToken: adminToken,
+		s3ExportInterval: *s3ExportInterval,
+		verifier:         verifier, authToken: authToken, adminToken: adminToken,
 		limiter: limiter, defaults: projDefaults, log: ctrl.Log.WithName("route"),
 	}); err != nil {
 		log.Error(err, "unable to add route server")

@@ -187,3 +187,51 @@ func (p *Provisioner) AddInflight(ctx context.Context, key string, delta int32) 
 		p.log.Error(err, "AddInflight failed; inflight count may be skewed until the max-build-seconds safety net", "key", key, "delta", delta)
 	}
 }
+
+// S3CacheDecision resolves the project's s3CachePolicy for one routed build. The retained PVC covers
+// warm restarts, so the cold cache's export side is throttled to exportInterval under the default
+// cadence policy — the grant is CAS'd through the status (conflict-retried re-check), so concurrent
+// routes across buildd replicas elect a single exporter per window. Fail-open to the historical
+// (import+export) behaviour on a transient read error: a spurious export is cheap, a lost import
+// never is.
+func (p *Provisioner) S3CacheDecision(ctx context.Context, key string, exportInterval time.Duration, grantExport bool) (bool, bool) {
+	var bp bkov1.BuildProject
+	if err := p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &bp); err != nil {
+		p.log.V(1).Info("S3CacheDecision: project read failed; defaulting to import+export", "key", key, "err", err)
+		return true, true
+	}
+	bp.ApplyDefaults()
+	switch bp.Spec.S3CachePolicy {
+	case bkov1.S3CacheNever:
+		return false, false
+	case bkov1.S3CacheAlways:
+		return true, true
+	}
+	// cadence: import always; export only when the window elapsed AND this call may grant.
+	if !grantExport || exportInterval <= 0 {
+		return true, exportInterval <= 0 && grantExport
+	}
+	granted := false
+	err := retry.OnError(retry.DefaultBackoff, apierrors.IsConflict, func() error {
+		var cur bkov1.BuildProject
+		if err := p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &cur); err != nil {
+			return err
+		}
+		if cur.Status.LastCacheExportGrant != nil && time.Since(cur.Status.LastCacheExportGrant.Time) < exportInterval {
+			granted = false
+			return nil // another route won this window
+		}
+		now := metav1.Now()
+		cur.Status.LastCacheExportGrant = &now
+		if err := p.c.Status().Update(ctx, &cur); err != nil {
+			return err
+		}
+		granted = true
+		return nil
+	})
+	if err != nil {
+		p.log.V(1).Info("S3CacheDecision: grant stamp failed; skipping export this build", "key", key, "err", err)
+		return true, false
+	}
+	return true, granted
+}

@@ -29,6 +29,7 @@ type localParams struct {
 	image            string // buildkitd Incus image
 	vmImage          string // VM image for untrusted forks (empty = image)
 	mountPath        string // buildkitd data dir the cache dataset mounts at
+	s3ExportInterval time.Duration
 	idleTimeout      time.Duration
 	snapshotEvery    time.Duration
 	keepSnapshots    int
@@ -84,7 +85,8 @@ func runLocalBackend(p localParams, verifier *identity.Verifier, authToken, admi
 		prov: prov, cfg: p.cfg, addr: p.apiListen, wait: p.routeWait,
 		coldStartSem: make(chan struct{}, p.maxCold),
 		s3Bucket:     p.s3Bucket, s3Region: p.s3Region, s3Endpoint: p.s3Endpoint,
-		verifier: verifier, authToken: authToken, adminToken: adminToken,
+		s3ExportInterval: p.s3ExportInterval,
+		verifier:         verifier, authToken: authToken, adminToken: adminToken,
 		limiter: limiter, defaults: defaults, log: log.WithName("route"),
 	}
 

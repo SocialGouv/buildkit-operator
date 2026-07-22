@@ -179,15 +179,48 @@ func TestHandleComplete_RejectsMissingKey(t *testing.T) {
 	}
 }
 
-func TestCacheFor_SkipsForks(t *testing.T) {
-	srv := &routeServer{s3Bucket: "bucket", s3Region: "gra", s3Endpoint: "https://s3.example"}
+// cacheFor: forks get no S3 cache; the default cadence policy grants ONE export per window
+// (later routes and prewarm probes import-only); s3CachePolicy=never yields no cache at all.
+func TestCacheFor_PolicyForksAndCadence(t *testing.T) {
 	canonical := router.ProjectKey("github.com/org/repo", "", "", "amd64")
-
-	if got := srv.cacheFor(canonical); got == nil || got.Name != canonical || got.Bucket != "bucket" {
-		t.Fatalf("canonical cache = %#v, want S3 cache for %s", got, canonical)
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: canonical, Namespace: "buildkit-operator"},
+		Spec:       bkov1.BuildProjectSpec{Key: canonical, Repo: "github.com/org/repo", Arch: "amd64"},
 	}
-	if got := srv.cacheFor(router.ForkKey(canonical)); got != nil {
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+	srv := newTestServer(t, c)
+	srv.s3Bucket, srv.s3Region, srv.s3Endpoint = "bucket", "gra", "https://s3.example"
+	srv.s3ExportInterval = time.Hour
+	ctx := context.Background()
+
+	if got := srv.cacheFor(ctx, router.ForkKey(canonical), true); got != nil {
 		t.Fatalf("fork cache = %#v, want nil", got)
+	}
+	// First routed build of the window: export granted.
+	got := srv.cacheFor(ctx, canonical, true)
+	if got == nil || got.Name != canonical || got.Bucket != "bucket" || got.SkipExport {
+		t.Fatalf("first route cache = %#v, want export granted", got)
+	}
+	// Second build inside the window: import only.
+	if got := srv.cacheFor(ctx, canonical, true); got == nil || !got.SkipExport {
+		t.Fatalf("second route cache = %#v, want SkipExport", got)
+	}
+	// Prewarm probes never grant nor consume the window.
+	if got := srv.cacheFor(ctx, canonical, false); got == nil || !got.SkipExport {
+		t.Fatalf("prewarm cache = %#v, want SkipExport", got)
+	}
+
+	// Policy never: no cache object at all.
+	var cur bkov1.BuildProject
+	if err := c.Get(ctx, types.NamespacedName{Name: canonical, Namespace: "buildkit-operator"}, &cur); err != nil {
+		t.Fatal(err)
+	}
+	cur.Spec.S3CachePolicy = bkov1.S3CacheNever
+	if err := c.Update(ctx, &cur); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.cacheFor(ctx, canonical, true); got != nil {
+		t.Fatalf("never-policy cache = %#v, want nil", got)
 	}
 }
 

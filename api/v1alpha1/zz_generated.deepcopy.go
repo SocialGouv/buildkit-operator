@@ -98,6 +98,10 @@ func (in *BuildProjectStatus) DeepCopyInto(out *BuildProjectStatus) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.LastCacheExportGrant != nil {
+		in, out := &in.LastCacheExportGrant, &out.LastCacheExportGrant
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

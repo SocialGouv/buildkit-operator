@@ -121,7 +121,7 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	respond := func() {
 		metrics.RoutesTotal.WithLabelValues(result).Inc()
 		metrics.RouteDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
-		writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.prov.Endpoint(key), Namespace: s.cfg.Namespace, Ready: true, Cache: s.cacheFor(key)})
+		writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.prov.Endpoint(key), Namespace: s.cfg.Namespace, Ready: true, Cache: s.cacheFor(ctx, key, true)})
 	}
 
 	if err := s.prov.Ensure(ctx, spec, req.Untrusted); err != nil {
@@ -195,7 +195,8 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 	// daemon is warm, then route — instead of holding a blocking /route past the proxy's tunnel timeout.
 	ready := s.prov.Ready(r.Context(), key)
 	w.WriteHeader(http.StatusAccepted)
-	writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.prov.Endpoint(key), Namespace: s.cfg.Namespace, Ready: ready, Cache: s.cacheFor(key)})
+	// grantExport=false: a prewarm is not a build — it must not consume the cadence window.
+	writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.prov.Endpoint(key), Namespace: s.cfg.Namespace, Ready: ready, Cache: s.cacheFor(r.Context(), key, false)})
 }
 
 // handleComplete releases an inflight build counted by /route (the client calls it when buildx exits,

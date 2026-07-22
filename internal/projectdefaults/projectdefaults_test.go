@@ -43,6 +43,7 @@ rules:
 		"bad tier":         `rules: [{tier: scalding}]`,
 		"bad name pattern": `rules: [{name: "iterion-[sandbox"}]`,
 		"bad arch":         `rules: [{arch: x86_64}]`,
+		"bad s3Cache":      `rules: [{s3Cache: sometimes}]`,
 		"negative":         `rules: [{idleTimeoutSec: -5}]`,
 	} {
 		if _, err := Load(writeConfig(t, content)); err == nil {
@@ -78,6 +79,14 @@ func TestApply(t *testing.T) {
 	cfg.Apply(spec)
 	if spec.Tier != bkov1.TierHot || spec.CacheVolumeGi != 0 {
 		t.Errorf("app spec = tier %q cache %d; want hot/0", spec.Tier, spec.CacheVolumeGi)
+	}
+
+	// s3Cache seeds the spec policy.
+	s3cfg := &Config{Rules: []Rule{{Repo: "github.com/socialgouv/iterion", Name: "iterion-sandbox-finalize", S3Cache: bkov1.S3CacheNever}}}
+	spec = mk("github.com/socialgouv/iterion", "iterion-sandbox-finalize", "amd64")
+	s3cfg.Apply(spec)
+	if spec.S3CachePolicy != bkov1.S3CacheNever {
+		t.Errorf("s3Cache spec = %q, want never", spec.S3CachePolicy)
 	}
 
 	// Arch-restricted rule.

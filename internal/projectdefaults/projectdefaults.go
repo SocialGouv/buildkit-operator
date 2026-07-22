@@ -40,6 +40,8 @@ type Rule struct {
 	IdleTimeoutSec int32 `json:"idleTimeoutSec,omitempty"`
 	// CacheVolumeGi seeds spec.cacheVolumeGi. 0 keeps the CRD default.
 	CacheVolumeGi int32 `json:"cacheVolumeGi,omitempty"`
+	// S3Cache seeds spec.s3CachePolicy (cadence|always|never). Empty keeps the CRD default.
+	S3Cache string `json:"s3Cache,omitempty"`
 }
 
 // Config is the mounted rules file ({rules: [...]}).
@@ -72,6 +74,9 @@ func Load(configPath string) (*Config, error) {
 		if r.Tier != "" && r.Tier != bkov1.TierHot && r.Tier != bkov1.TierWarm {
 			return nil, fmt.Errorf("project-defaults rule %d: bad tier %q (hot|warm)", i, r.Tier)
 		}
+		if r.S3Cache != "" && r.S3Cache != bkov1.S3CacheCadence && r.S3Cache != bkov1.S3CacheAlways && r.S3Cache != bkov1.S3CacheNever {
+			return nil, fmt.Errorf("project-defaults rule %d: bad s3Cache %q (cadence|always|never)", i, r.S3Cache)
+		}
 		if r.IdleTimeoutSec < 0 || r.CacheVolumeGi < 0 {
 			return nil, fmt.Errorf("project-defaults rule %d: negative idleTimeoutSec/cacheVolumeGi", i)
 		}
@@ -101,6 +106,9 @@ func (c *Config) Apply(spec *bkov1.BuildProjectSpec) {
 		}
 		if r.CacheVolumeGi > 0 {
 			spec.CacheVolumeGi = r.CacheVolumeGi
+		}
+		if r.S3Cache != "" {
+			spec.S3CachePolicy = r.S3Cache
 		}
 		return
 	}

@@ -11,6 +11,21 @@ const (
 	TierWarm = "warm" // scaled to zero after IdleTimeoutSec
 )
 
+// S3CachePolicy values: how a project uses the shared S3 cold cache. The
+// retained PVC already covers warm restarts, so the cold cache only pays on
+// rare events (inode prune, lost volume, cluster rebuild) — per-build exports
+// overpay for that by 10-40s on every single build.
+const (
+	// S3CacheCadence (default): import always, export at most once per the
+	// operator's export interval — keeps the rehydration net at ~5% of the cost.
+	S3CacheCadence = "cadence"
+	// S3CacheAlways: export on every build (the historical behaviour).
+	S3CacheAlways = "always"
+	// S3CacheNever: no S3 cache at all (builds whose inputs live in the
+	// registry anyway, e.g. binary-stamping finalize images).
+	S3CacheNever = "never"
+)
+
 // SecurityProfile selects how the buildkitd pod is hardened. The default is
 // rootless; the spike on the target cluster decides whether the cluster's
 // admission policy (e.g. Kyverno) forces userns/privileged instead.
@@ -80,6 +95,13 @@ type BuildProjectSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	Fanout int32 `json:"fanout,omitempty"`
 
+	// S3CachePolicy controls the project's use of the shared S3 cold cache:
+	// cadence = import always / export at most once per the operator's export
+	// interval; always = export every build; never = no S3 cache at all.
+	// +kubebuilder:validation:Enum=cadence;always;never
+	// +kubebuilder:default=cadence
+	S3CachePolicy string `json:"s3CachePolicy,omitempty"`
+
 	// SecurityProfile hardens the buildkitd pod.
 	// +kubebuilder:validation:Enum=rootless;userns;privileged
 	// +kubebuilder:default=rootless
@@ -115,6 +137,10 @@ type BuildProjectStatus struct {
 
 	// InflightBuilds is the number of builds currently routed to this daemon.
 	InflightBuilds int32 `json:"inflightBuilds"`
+
+	// LastCacheExportGrant is when buildd last granted an S3 cache export to a
+	// routed build — the cadence clock of s3CachePolicy=cadence.
+	LastCacheExportGrant *metav1.Time `json:"lastCacheExportGrant,omitempty"`
 
 	// Conditions follow the standard k8s condition convention (Ready, Degraded).
 	// +listType=map

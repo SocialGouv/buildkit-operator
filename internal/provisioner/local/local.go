@@ -63,6 +63,8 @@ type projectState struct {
 	ip         string
 	lastSnap   string    // newest durability snapshot (full name dataset@snap), the seed for forks/clones
 	lastSnapAt time.Time // when lastSnap was taken (drives the cadence)
+	// lastCacheExport is when an S3 cache export was last granted (s3CachePolicy=cadence clock).
+	lastCacheExport time.Time
 }
 
 // Provisioner is the single-host (Incus + ZFS) implementation of provisioner.Provisioner.
@@ -304,6 +306,40 @@ func (p *Provisioner) AddInflight(_ context.Context, key string, delta int32) {
 		st.inflight = 0
 	}
 	st.lastBuild = time.Now()
+}
+
+// S3CacheDecision mirrors the k8s backend's policy semantics over the in-memory project state
+// (the single-host backend has no CRs; the cadence clock lives on projectState).
+func (p *Provisioner) S3CacheDecision(_ context.Context, key string, exportInterval time.Duration, grantExport bool) (bool, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st := p.projects[key]
+	policy := bkov1.DefaultS3CachePolicy
+	if st != nil {
+		bp := bkov1.BuildProject{Spec: st.spec}
+		bp.ApplyDefaults()
+		policy = bp.Spec.S3CachePolicy
+	}
+	switch policy {
+	case bkov1.S3CacheNever:
+		return false, false
+	case bkov1.S3CacheAlways:
+		return true, true
+	}
+	if !grantExport {
+		return true, false
+	}
+	if exportInterval <= 0 {
+		return true, true
+	}
+	if st == nil {
+		return true, false // no state yet: the post-Ensure route will have one
+	}
+	if !st.lastCacheExport.IsZero() && time.Since(st.lastCacheExport) < exportInterval {
+		return true, false
+	}
+	st.lastCacheExport = time.Now()
+	return true, true
 }
 
 func (p *Provisioner) setIP(key, ip string) {

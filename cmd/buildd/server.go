@@ -32,6 +32,8 @@ type routeServer struct {
 	s3Bucket   string
 	s3Region   string
 	s3Endpoint string
+	// s3ExportInterval throttles cache exports under the default cadence policy (<= 0 = every build).
+	s3ExportInterval time.Duration
 	// verifier, when non-nil, enforces OIDC identity verification (secure default): /route and /prewarm
 	// require a forge-signed token whose repo claim BECOMES the request's repo (the client can no longer
 	// self-declare it), and untrusted is derived server-side. Nil = OIDC off (in-cluster bearer/admin).
@@ -122,9 +124,15 @@ func bearerEquals(r *http.Request, want string) bool {
 }
 
 // cacheFor returns the project's cold-cache reference (prefix = the key) when an S3 bucket is
-// configured, else nil. No credentials: the daemon holds them via cfg.S3CredsSecret.
-func (s *routeServer) cacheFor(key string) *router.CacheConfig {
+// configured and the project's s3CachePolicy allows it, else nil. grantExport marks a real routed
+// build (may consume the cadence window); /prewarm probes pass false. No credentials: the daemon
+// holds them via cfg.S3CredsSecret.
+func (s *routeServer) cacheFor(ctx context.Context, key string, grantExport bool) *router.CacheConfig {
 	if s.s3Bucket == "" || router.IsForkKey(key) {
+		return nil
+	}
+	imp, exp := s.prov.S3CacheDecision(ctx, key, s.s3ExportInterval, grantExport)
+	if !imp {
 		return nil
 	}
 	return &router.CacheConfig{
@@ -133,6 +141,7 @@ func (s *routeServer) cacheFor(key string) *router.CacheConfig {
 		Region:      s.s3Region,
 		EndpointURL: s.s3Endpoint,
 		Name:        key,
+		SkipExport:  !exp,
 	}
 }
 

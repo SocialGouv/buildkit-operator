@@ -86,6 +86,9 @@ spec:
             - --s3-region={{ .Values.s3.region }}
             - --s3-endpoint={{ .Values.s3.endpoint }}
             - --s3-creds-secret={{ .Values.s3.credsSecret }}
+            {{- if .Values.s3.cacheExportInterval }}
+            - --s3-cache-export-interval={{ .Values.s3.cacheExportInterval }}
+            {{- end }}
             {{- end }}
             {{- if .Values.oidc.providers }}
             # Secure-by-default identity verification: bind /route to the forge-signed repo claim.
