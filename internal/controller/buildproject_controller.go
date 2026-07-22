@@ -47,7 +47,11 @@ type BuildProjectReconciler struct {
 	AutoGrowFactor       float64
 	AutoGrowMaxGi        int
 	ProbeUsage           UsageProber
-	autoGrowGate         probeGate
+	// Direct, when set (mgr.GetAPIReader()), bypasses the informer cache for the
+	// pre-bounce inflight re-check.
+	Direct       client.Reader
+	autoGrowGate probeGate
+	bounceGate   probeGate
 }
 
 // adaptiveIdleMax is AdaptiveIdleMaxSeconds as a duration (0 = adaptivity off).
@@ -343,8 +347,17 @@ func (r *BuildProjectReconciler) reapFork(ctx context.Context, bp *bkov1.BuildPr
 
 // idleRecheckInterval requeues a warm project often enough to scale it down promptly
 // once it crosses its effective idle window (events alone won't fire when nothing changes).
+// Capped at the REMAINING window (+ slack): the adaptive window shrinks as builds age out
+// of the 24h cadence, so a requeue paced on the long window alone would leave the daemon
+// running well past its (recomputed, shorter) idle.
 func idleRecheckInterval(bp *bkov1.BuildProject, now time.Time, adaptiveMax time.Duration) time.Duration {
-	iv := effectiveIdle(bp, now, adaptiveMax) / 6
+	eff := effectiveIdle(bp, now, adaptiveMax)
+	iv := eff / 6
+	if bp.Status.LastBuildTime != nil {
+		if remaining := eff - now.Sub(bp.Status.LastBuildTime.Time) + 5*time.Second; remaining < iv {
+			iv = remaining
+		}
+	}
 	if iv < 30*time.Second {
 		iv = 30 * time.Second
 	}

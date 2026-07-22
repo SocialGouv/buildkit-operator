@@ -82,8 +82,10 @@ autoGrow:
 
 # projectDefaults: admin-declared rules seeded into the BuildProject buildd auto-creates at first
 # /route (create-only — existing CRs keep their spec; delete a CR to re-seed it). First matching
-# rule wins; repo/name are shell-style globs over the NORMALIZED identity (empty = any); arch is
-# exact. Only tier / idleTimeoutSec / cacheVolumeGi can be seeded. Example:
+# rule wins. `repo` uses the SAME semantics as oidc.repoAllowlist ("*" = any, "pfx/*" = prefix that
+# crosses "/" — covers GitLab nested subgroups, patterns copy verbatim between the two lists), over
+# the NORMALIZED repo. `name` is a shell-style glob (path.Match); arch is exact; empty = any.
+# Only tier / idleTimeoutSec / cacheVolumeGi can be seeded. Example:
 #   projectDefaults:
 #     - repo: github.com/socialgouv/iterion
 #       name: "iterion-sandbox-*"

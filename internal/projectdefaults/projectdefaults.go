@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"sigs.k8s.io/yaml"
@@ -20,12 +21,15 @@ import (
 // fields to seed at creation. First matching rule wins; zero-valued fields of
 // the winning rule leave the CRD defaults in charge.
 type Rule struct {
-	// Repo is a shell-style pattern (path.Match: `*` does not cross `/`)
-	// against the NORMALIZED repo, e.g. "github.com/socialgouv/iterion" or
-	// "github.com/socialgouv/*". Empty matches any repo.
+	// Repo matches the NORMALIZED repo with the SAME semantics as the OIDC
+	// repoAllowlist (identity.AllowRepo): "*" = any, "pfx/*" = prefix that
+	// crosses "/" (so "host/group/*" covers nested subgroups), else exact.
+	// Empty matches any repo. Deliberately aligned so an admin can copy a
+	// pattern between the two lists without a silent semantic change.
 	Repo string `json:"repo,omitempty"`
-	// Name is a shell-style pattern against the normalized monorepo component
-	// name, e.g. "iterion-sandbox-*". Empty matches any name (including none).
+	// Name is a shell-style pattern (path.Match) against the normalized
+	// monorepo component name, e.g. "iterion-sandbox-*". Empty matches any
+	// name (including none).
 	Name string `json:"name,omitempty"`
 	// Arch restricts the rule to one architecture (exact). Empty matches any.
 	Arch string `json:"arch,omitempty"`
@@ -59,11 +63,11 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("parse project-defaults config %q: %w", configPath, err)
 	}
 	for i, r := range cfg.Rules {
-		if _, err := path.Match(r.Repo, "probe"); r.Repo != "" && err != nil {
-			return nil, fmt.Errorf("project-defaults rule %d: bad repo pattern %q: %w", i, r.Repo, err)
-		}
 		if _, err := path.Match(r.Name, "probe"); r.Name != "" && err != nil {
 			return nil, fmt.Errorf("project-defaults rule %d: bad name pattern %q: %w", i, r.Name, err)
+		}
+		if r.Arch != "" && r.Arch != "amd64" && r.Arch != "arm64" {
+			return nil, fmt.Errorf("project-defaults rule %d: bad arch %q (amd64|arm64)", i, r.Arch)
 		}
 		if r.Tier != "" && r.Tier != bkov1.TierHot && r.Tier != bkov1.TierWarm {
 			return nil, fmt.Errorf("project-defaults rule %d: bad tier %q (hot|warm)", i, r.Tier)
@@ -83,7 +87,7 @@ func (c *Config) Apply(spec *bkov1.BuildProjectSpec) {
 		return
 	}
 	for _, r := range c.Rules {
-		if !match(r.Repo, spec.Repo) || !match(r.Name, spec.Name) {
+		if !matchRepo(r.Repo, spec.Repo) || !match(r.Name, spec.Name) {
 			continue
 		}
 		if r.Arch != "" && r.Arch != spec.Arch {
@@ -110,4 +114,17 @@ func match(pattern, value string) bool {
 	}
 	ok, _ := path.Match(pattern, value)
 	return ok
+}
+
+// matchRepo mirrors identity.AllowRepo's allowlist entry semantics ("*" = any,
+// "pfx/*" = "/"-crossing prefix, else exact) so patterns copy verbatim between
+// the OIDC allowlist and projectDefaults without a silent semantic change.
+func matchRepo(pattern, repo string) bool {
+	if pattern == "" || pattern == "*" {
+		return true
+	}
+	if pfx, ok := strings.CutSuffix(pattern, "/*"); ok {
+		return repo == pfx || strings.HasPrefix(repo, pfx+"/")
+	}
+	return repo == pattern
 }

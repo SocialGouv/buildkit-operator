@@ -208,3 +208,36 @@ func TestAddInflight_RecordsBuildCadence(t *testing.T) {
 		t.Errorf("RecentBuildTimes = %d entries, want 2 (only +1 deltas recorded)", n)
 	}
 }
+
+// A fork derives from the LIVE canonical spec, not the request-reconstructed
+// one: after auto-grow the canonical's CacheVolumeGi exceeds the request/rule
+// value, and a fork PVC smaller than the snapshot it restores from is refused
+// by the CSI provisioner (the untrusted build would 504 forever).
+func TestEnsure_ForkInheritsLiveCanonicalSpec(t *testing.T) {
+	spec := bkov1.BuildProjectSpec{Key: "pcanon", Repo: "github.com/o/r", Arch: "amd64"}
+	canon := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "pcanon", Namespace: "buildkit-operator"},
+		Spec: bkov1.BuildProjectSpec{
+			Key: "pcanon", Repo: "github.com/o/r", Arch: "amd64",
+			CacheVolumeGi: 240, // auto-grown past the request-derived default
+		},
+		Status: bkov1.BuildProjectStatus{LastSnapshot: "snap-1"},
+	}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(canon).Build()
+	p := newProv(c, 0, "", 0)
+
+	if err := p.Ensure(t.Context(), spec, true); err != nil {
+		t.Fatal(err)
+	}
+	var fork bkov1.BuildProject
+	if err := c.Get(t.Context(), types.NamespacedName{Name: router.ForkKey("pcanon"), Namespace: "buildkit-operator"}, &fork); err != nil {
+		t.Fatalf("fork not created: %v", err)
+	}
+	if fork.Spec.CacheVolumeGi != 240 {
+		t.Errorf("fork CacheVolumeGi = %d, want 240 (live canonical spec)", fork.Spec.CacheVolumeGi)
+	}
+	if fork.Spec.RestoreFromSnapshot != "snap-1" {
+		t.Errorf("fork RestoreFromSnapshot = %q, want snap-1", fork.Spec.RestoreFromSnapshot)
+	}
+}

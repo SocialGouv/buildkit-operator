@@ -151,6 +151,11 @@ func main() {
 	if projDefaults != nil {
 		log.Info("per-project defaults ENABLED", "rules", len(projDefaults.Rules))
 	}
+	// The auto-grow usage signal comes from the companion sidecar; without it every
+	// probe fails quietly at V(1) — surface the dead configuration at boot instead.
+	if *autoGrowThresholdPct > 0 && !cfg.Companion {
+		log.Info("auto-grow is enabled but the companion sidecar is disabled — usage probes will always fail; enable companion or set --auto-grow-threshold-pct=0")
+	}
 	verifier, err := identity.NewVerifier(oidcCfg)
 	if err != nil {
 		log.Error(err, "invalid OIDC providers")
@@ -225,6 +230,7 @@ func main() {
 		AutoGrowFactor:         *autoGrowFactor,
 		AutoGrowMaxGi:          *autoGrowMaxGi,
 		ProbeUsage:             controller.HTTPUsageProber(cfg.HealthPort),
+		Direct:                 mgr.GetAPIReader(),
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller")
 		panic(err)

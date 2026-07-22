@@ -64,6 +64,12 @@ func (p *Provisioner) Ensure(ctx context.Context, spec bkov1.BuildProjectSpec, u
 		var canon bkov1.BuildProject
 		if err := p.c.Get(ctx, types.NamespacedName{Name: canonical, Namespace: p.namespace}, &canon); err == nil {
 			seed = canon.Status.LastSnapshot
+			// Derive from the LIVE canonical spec, not the request-reconstructed
+			// one: auto-grow (and hand edits) move the canonical's CacheVolumeGi
+			// past the request/rule value, and a fork PVC smaller than the
+			// snapshot it restores from is refused by the CSI provisioner — the
+			// untrusted build would then 504 forever.
+			spec = canon.Spec
 		}
 		spec = bkov1.DeriveChild(spec, seed, bkov1.ForkChild, router.ForkKey(canonical))
 	}
@@ -171,7 +177,8 @@ func (p *Provisioner) AddInflight(ctx context.Context, key string, delta int32) 
 		bp.Status.LastBuildTime = &now
 		// A positive delta is a real routed build (not a prewarm touch or a /complete
 		// release) — record it in the cadence ring that drives the adaptive idle window.
-		if delta > 0 {
+		// Forks are excluded from adaptivity, so their one-shot CRs skip the ring.
+		if delta > 0 && !router.IsForkKey(key) {
 			bp.Status.RecentBuildTimes = bkov1.RecordBuildTime(bp.Status.RecentBuildTimes, now)
 		}
 		return p.c.Status().Update(ctx, &bp)

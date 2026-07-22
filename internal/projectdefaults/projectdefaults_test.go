@@ -40,9 +40,10 @@ rules:
 	}
 
 	for name, content := range map[string]string{
-		"bad tier":    `rules: [{tier: scalding}]`,
-		"bad pattern": `rules: [{repo: "github.com/[socialgouv/x"}]`,
-		"negative":    `rules: [{idleTimeoutSec: -5}]`,
+		"bad tier":         `rules: [{tier: scalding}]`,
+		"bad name pattern": `rules: [{name: "iterion-[sandbox"}]`,
+		"bad arch":         `rules: [{arch: x86_64}]`,
+		"negative":         `rules: [{idleTimeoutSec: -5}]`,
 	} {
 		if _, err := Load(writeConfig(t, content)); err == nil {
 			t.Errorf("%s: Load accepted an invalid config", name)
@@ -98,4 +99,27 @@ func TestApply(t *testing.T) {
 		t.Error("unmatched spec must stay zero-valued")
 	}
 	(*Config)(nil).Apply(spec) // must not panic
+}
+
+// Repo patterns share identity.AllowRepo's semantics: "pfx/*" is a "/"-crossing
+// prefix (GitLab nested subgroups), "*" matches everything, else exact.
+func TestMatchRepo(t *testing.T) {
+	cases := []struct {
+		pattern, repo string
+		want          bool
+	}{
+		{"", "anything/at/all", true},
+		{"*", "anything/at/all", true},
+		{"github.com/socialgouv/iterion", "github.com/socialgouv/iterion", true},
+		{"github.com/socialgouv/iterion", "github.com/socialgouv/other", false},
+		{"github.com/socialgouv/*", "github.com/socialgouv/iterion", true},
+		{"github.com/socialgouv/*", "github.com/socialgouv", true},
+		{"gitlab.example.com/studio-tech/*", "gitlab.example.com/studio-tech/architecture/repo", true},
+		{"github.com/socialgouv/*", "github.com/other/iterion", false},
+	}
+	for _, c := range cases {
+		if got := matchRepo(c.pattern, c.repo); got != c.want {
+			t.Errorf("matchRepo(%q, %q) = %v, want %v", c.pattern, c.repo, got, c.want)
+		}
+	}
 }

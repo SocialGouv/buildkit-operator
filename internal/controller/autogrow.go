@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"sync"
@@ -61,32 +62,41 @@ func HTTPUsageProber(healthPort int32) UsageProber {
 			BytesUsed  uint64 `json:"bytesUsed"`
 			BytesTotal uint64 `json:"bytesTotal"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
+		// LimitReader: the endpoint is unauthenticated pod HTTP inside the builds
+		// namespace — a compromised daemon must not be able to feed the elected
+		// leader an unbounded body. The real payload is <100 bytes.
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&u); err != nil {
 			return 0, 0, fmt.Errorf("companion /usage: %w", err)
 		}
 		return u.BytesUsed, u.BytesTotal, nil
 	}
 }
 
-// autoGrowProbeInterval rate-limits per-project usage probes: volume pressure
-// moves on build timescales, not reconcile timescales.
-const autoGrowProbeInterval = 10 * time.Minute
+const (
+	// autoGrowProbeInterval rate-limits per-project usage probes: volume
+	// pressure moves on build timescales, not reconcile timescales.
+	autoGrowProbeInterval = 10 * time.Minute
+	// autoGrowBounceInterval rate-limits the resize-applying pod bounce. If the
+	// filesystem resize never completes (broken CSI, node-side resize failure),
+	// an ungated bounce would kill the daemon on every reconcile forever.
+	autoGrowBounceInterval = 15 * time.Minute
+)
 
-// probeGate tracks the last probe per project key (in-memory: reconciles run on
-// the single elected leader; a restart just probes once more, which is free).
+// probeGate tracks the last action time per project key (in-memory: reconciles
+// run on the single elected leader; a restart just acts once more, harmless).
 type probeGate struct {
 	mu   sync.Mutex
 	last map[string]time.Time
 }
 
-// allow reports whether a probe is due for key and records it if so.
-func (g *probeGate) allow(key string, now time.Time) bool {
+// allow reports whether the action is due again for key and records it if so.
+func (g *probeGate) allow(key string, now time.Time, interval time.Duration) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.last == nil {
 		g.last = map[string]time.Time{}
 	}
-	if t, ok := g.last[key]; ok && now.Sub(t) < autoGrowProbeInterval {
+	if t, ok := g.last[key]; ok && now.Sub(t) < interval {
 		return false
 	}
 	g.last[key] = now
@@ -105,9 +115,12 @@ func autoGrowTarget(currentGi int32, usedPct float64, thresholdPct int, factor f
 	if factor <= 1 {
 		return 0
 	}
-	next := int32(math.Ceil(float64(currentGi) * factor))
-	if next > maxGi {
-		next = maxGi
+	// Compare in float before the int32 cast so an outsized factor saturates at
+	// maxGi instead of overflowing into a negative (silently-inert) value.
+	nf := math.Ceil(float64(currentGi) * factor)
+	next := maxGi
+	if nf < float64(maxGi) {
+		next = int32(nf)
 	}
 	if next <= currentGi {
 		return 0
@@ -134,8 +147,18 @@ func (r *BuildProjectReconciler) maybeAutoGrow(ctx context.Context, bp *bkov1.Bu
 	// A granted-but-unapplied expansion needs a remount: bounce the pod once
 	// the daemon is idle so the capacity lands now instead of at the next
 	// natural restart. (StatefulSet volumeClaimTemplates are immutable, so the
-	// live PVC is the only object that carries the real size.)
+	// live PVC is the only object that carries the real size.) Gated on its own
+	// interval — if the node-side resize keeps failing, an ungated bounce would
+	// kill the daemon on every reconcile — and re-checked against a FRESH
+	// (uncached) read of inflight, so a build routed a beat ago (informer lag)
+	// isn't killed mid-connect.
 	if resizePending(&pvc) && bp.Status.InflightBuilds == 0 && ready >= 1 {
+		if !r.bounceGate.allow(bp.Spec.Key, time.Now(), autoGrowBounceInterval) {
+			return nil
+		}
+		if fresh, err := r.freshInflight(ctx, bp); err != nil || fresh > 0 {
+			return err
+		}
 		var pod corev1.Pod
 		podName := router.DaemonName(bp.Spec.Key) + "-0"
 		if err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: r.Cfg.Namespace}, &pod); err == nil {
@@ -147,7 +170,22 @@ func (r *BuildProjectReconciler) maybeAutoGrow(ctx context.Context, bp *bkov1.Bu
 		return nil
 	}
 
-	if ready < 1 || !r.autoGrowGate.allow(bp.Spec.Key, time.Now()) {
+	// Sizing truth is the PVC, not the spec: a hand-grown PVC (the pre-feature
+	// practice) must be adopted, never "shrunk back"; and a request the storage
+	// backend hasn't fulfilled yet (capacity < request: controller-side
+	// expansion still in flight, e.g. a Cinder quota stall) must not compound
+	// into further growth — the statfs still measures the OLD filesystem.
+	reqGi := giOf(pvc.Spec.Resources.Requests[corev1.ResourceStorage])
+	capGi := giOf(pvc.Status.Capacity[corev1.ResourceStorage])
+	if capGi > 0 && reqGi > capGi {
+		return nil // expansion in flight — wait for it to land before re-deciding
+	}
+	currentGi := bp.Spec.CacheVolumeGi
+	if reqGi > currentGi {
+		currentGi = reqGi
+	}
+
+	if ready < 1 || !r.autoGrowGate.allow(bp.Spec.Key, time.Now(), autoGrowProbeInterval) {
 		return nil
 	}
 	var pod corev1.Pod
@@ -164,14 +202,22 @@ func (r *BuildProjectReconciler) maybeAutoGrow(ctx context.Context, bp *bkov1.Bu
 	}
 	usedPct := float64(used) / float64(total) * 100
 
-	next := autoGrowTarget(bp.Spec.CacheVolumeGi, usedPct, r.AutoGrowThresholdPct, r.autoGrowFactor(), int32(r.AutoGrowMaxGi))
+	next := autoGrowTarget(currentGi, usedPct, r.AutoGrowThresholdPct, r.autoGrowFactor(), int32(r.AutoGrowMaxGi))
 	if next == 0 {
+		// Even without growth, adopt a hand-grown PVC into the spec so a future
+		// daemon re-creation provisions what the project actually runs on.
+		if reqGi > bp.Spec.CacheVolumeGi {
+			return r.recordSpecGi(ctx, bp, reqGi)
+		}
 		return nil
+	}
+	if next <= reqGi {
+		return nil // never write the PVC below (or equal to) its current request
 	}
 
 	l.Info("auto-grow: cache volume past threshold, growing",
 		"key", bp.Spec.Key, "usedPct", fmt.Sprintf("%.1f", usedPct),
-		"fromGi", bp.Spec.CacheVolumeGi, "toGi", next, "maxGi", r.AutoGrowMaxGi)
+		"fromGi", currentGi, "toGi", next, "maxGi", r.AutoGrowMaxGi)
 
 	// PVC first (the object that matters), then the spec (so a future daemon
 	// re-creation provisions the grown size). Both conflict-retried.
@@ -180,22 +226,56 @@ func (r *BuildProjectReconciler) maybeAutoGrow(ctx context.Context, bp *bkov1.Bu
 		if err := r.Get(ctx, types.NamespacedName{Name: pvc.Name, Namespace: pvc.Namespace}, &cur); err != nil {
 			return err
 		}
+		if cur.Spec.Resources.Requests == nil {
+			cur.Spec.Resources.Requests = corev1.ResourceList{}
+		}
+		if giOf(cur.Spec.Resources.Requests[corev1.ResourceStorage]) >= next {
+			return nil // raced with another grow — never shrink
+		}
 		cur.Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse(fmt.Sprintf("%dGi", next))
 		return r.Update(ctx, &cur)
 	}); err != nil {
 		return fmt.Errorf("grow pvc %s: %w", pvc.Name, err)
 	}
+	return r.recordSpecGi(ctx, bp, next)
+}
+
+// recordSpecGi conflict-retries CacheVolumeGi onto the BuildProject spec.
+func (r *BuildProjectReconciler) recordSpecGi(ctx context.Context, bp *bkov1.BuildProject, gi int32) error {
 	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		var cur bkov1.BuildProject
 		if err := r.Get(ctx, types.NamespacedName{Name: bp.Name, Namespace: bp.Namespace}, &cur); err != nil {
 			return err
 		}
-		cur.Spec.CacheVolumeGi = next
+		if cur.Spec.CacheVolumeGi >= gi {
+			return nil
+		}
+		cur.Spec.CacheVolumeGi = gi
 		return r.Update(ctx, &cur)
 	}); err != nil {
 		return fmt.Errorf("record grown size on %s: %w", bp.Name, err)
 	}
 	return nil
+}
+
+// freshInflight reads InflightBuilds bypassing the informer cache (Direct when
+// wired, else the cached client) — the pre-bounce check must not act on a
+// snapshot that predates a just-routed build.
+func (r *BuildProjectReconciler) freshInflight(ctx context.Context, bp *bkov1.BuildProject) (int32, error) {
+	reader := r.Direct
+	if reader == nil {
+		reader = r.Client
+	}
+	var cur bkov1.BuildProject
+	if err := reader.Get(ctx, types.NamespacedName{Name: bp.Name, Namespace: bp.Namespace}, &cur); err != nil {
+		return 0, client.IgnoreNotFound(err)
+	}
+	return cur.Status.InflightBuilds, nil
+}
+
+// giOf converts a storage quantity to whole Gi (floor; zero-quantity => 0).
+func giOf(q resource.Quantity) int32 {
+	return int32(q.Value() >> 30)
 }
 
 // resizePending reports whether the PVC has a granted expansion waiting for a

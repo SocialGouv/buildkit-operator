@@ -221,4 +221,79 @@ func TestMaybeAutoGrow_BouncesIdleOnResizePending(t *testing.T) {
 	if err := r.Get(t.Context(), types.NamespacedName{Name: router.DaemonName("presize") + "-0", Namespace: r.Cfg.Namespace}, &pod); err == nil {
 		t.Error("pod must be deleted to apply the pending resize")
 	}
+
+	// Recreate the pod (as the StatefulSet would): the bounce gate must refuse
+	// a second kill inside its interval — a never-completing resize (broken
+	// CSI) must not murder the daemon on every reconcile.
+	pod = corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: router.DaemonName("presize") + "-0", Namespace: r.Cfg.Namespace}}
+	if err := r.Create(t.Context(), &pod); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.maybeAutoGrow(t.Context(), bp, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Get(t.Context(), types.NamespacedName{Name: router.DaemonName("presize") + "-0", Namespace: r.Cfg.Namespace}, &pod); err != nil {
+		t.Errorf("second bounce inside the gate interval must be refused: %v", err)
+	}
+}
+
+// While a controller-side expansion is still unfulfilled (request > capacity),
+// the probe path must not compound the growth: statfs still measures the OLD
+// filesystem and re-growing from the already-raised spec jumps straight to the
+// quota.
+func TestMaybeAutoGrow_NoCompoundWhileExpansionInFlight(t *testing.T) {
+	r, bp := autoGrowFixture(t, "pinflight", 90, "10.0.0.9")
+	r.ProbeUsage = func(context.Context, string) (uint64, uint64, error) {
+		t.Error("must not probe while an expansion is in flight")
+		return 0, 0, nil
+	}
+	var pvc corev1.PersistentVolumeClaim
+	_ = r.Get(t.Context(), types.NamespacedName{Name: router.CachePVCName("pinflight"), Namespace: r.Cfg.Namespace}, &pvc)
+	pvc.Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("90Gi")
+	if err := r.Update(t.Context(), &pvc); err != nil {
+		t.Fatal(err)
+	}
+	pvc.Status.Capacity = corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("60Gi")}
+	if err := r.Status().Update(t.Context(), &pvc); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.maybeAutoGrow(t.Context(), bp, 1); err != nil {
+		t.Fatal(err)
+	}
+	var got bkov1.BuildProject
+	_ = r.Get(t.Context(), types.NamespacedName{Name: "pinflight", Namespace: r.Cfg.Namespace}, &got)
+	if got.Spec.CacheVolumeGi != 90 {
+		t.Errorf("spec compounded to %d while expansion in flight", got.Spec.CacheVolumeGi)
+	}
+}
+
+// A hand-grown PVC (pre-feature practice) is the sizing truth: the decision
+// bases on it (no shrink attempt), and the spec adopts it.
+func TestMaybeAutoGrow_AdoptsHandGrownPVC(t *testing.T) {
+	r, bp := autoGrowFixture(t, "padopt", 60, "10.0.0.9")
+	r.ProbeUsage = func(context.Context, string) (uint64, uint64, error) { return 10, 300, nil } // 3.3%
+	var pvc corev1.PersistentVolumeClaim
+	_ = r.Get(t.Context(), types.NamespacedName{Name: router.CachePVCName("padopt"), Namespace: r.Cfg.Namespace}, &pvc)
+	pvc.Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("300Gi")
+	if err := r.Update(t.Context(), &pvc); err != nil {
+		t.Fatal(err)
+	}
+	pvc.Status.Capacity = corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("300Gi")}
+	if err := r.Status().Update(t.Context(), &pvc); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.maybeAutoGrow(t.Context(), bp, 1); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Get(t.Context(), types.NamespacedName{Name: router.CachePVCName("padopt"), Namespace: r.Cfg.Namespace}, &pvc)
+	if got := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; got.String() != "300Gi" {
+		t.Errorf("PVC request = %s — a hand-grown PVC must never be shrunk", got.String())
+	}
+	var got bkov1.BuildProject
+	_ = r.Get(t.Context(), types.NamespacedName{Name: "padopt", Namespace: r.Cfg.Namespace}, &got)
+	if got.Spec.CacheVolumeGi != 300 {
+		t.Errorf("spec.CacheVolumeGi = %d, want 300 (adopted from the live PVC)", got.Spec.CacheVolumeGi)
+	}
 }
