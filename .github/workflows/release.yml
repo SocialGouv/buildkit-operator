@@ -48,6 +48,20 @@ jobs:
       - run: gh release create "$(git describe --tags --abbrev=0)" --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Consumers pin the Action as `socialgouv/buildkit-operator@v1` — a MOVING major tag. Moving it
+      # by hand is what let it silently drift 3 releases behind (fleet stuck on an old Action while
+      # the server moved on), so every release re-points it. Bump MAJOR_TAG here (v2, …) only when
+      # the Action itself takes a breaking change — it is the Action's line, not the chart semver.
+      - name: Re-point the moving major tag at this release
+        env:
+          MAJOR_TAG: v1
+        run: |
+          set -eu
+          TAG="$(git describe --tags --abbrev=0)"
+          git tag -f "$MAJOR_TAG" "$TAG^{}"
+          git push -f origin "refs/tags/$MAJOR_TAG"
+          echo "$MAJOR_TAG -> $TAG ($(git rev-parse --short "$TAG^{}"))"
+
       # The v* tag is pushed with GITHUB_TOKEN, which by design does NOT trigger images.yml (GitHub
       # anti-recursion), so build the matching semver images explicitly. (gh workflow run via
       # GITHUB_TOKEN also won't trigger a run — a real token is needed, so dispatch it from the API.)
