@@ -1,6 +1,6 @@
 # gateway — buildkit-operator's shared SNI router for off-cluster CI. A pure Go binary on distroless; it
 # terminates NO TLS (it peeks the ClientHello SNI and pipes the connection), so it carries no certs.
-FROM golang:1.26@sha256:32c0e6e5c4f6707717051091b4d0b077464a679eaab563e11474efc5328e2aa5 AS build
+FROM golang:1.26@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
