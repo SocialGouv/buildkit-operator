@@ -1,0 +1,51 @@
+name: renovate
+
+# Renovate AUTO-HÉBERGÉ. L'app Mend hébergée est bien installée sur l'org (« all repos ») mais
+# n'a plus produit une seule PR nulle part dans SocialGouv depuis fin novembre 2025 — les mises à
+# jour de dépendances se sont donc arrêtées en silence (c'est ainsi qu'un pin d'Action en Node 20
+# a pourri ici pendant des mois, jusqu'à la dépréciation). Ce workflow exécute Renovate nous-mêmes
+# pour ce dépôt, sans dépendre du service hébergé. La configuration reste .github/renovate.json5
+# (inchangée, et validée : un dry-run résout le preset org et détecte les mises à jour réelles).
+#
+# ⚠ Les PR ouvertes avec GITHUB_TOKEN ne déclenchent PAS les autres workflows (anti-récursion
+# GitHub) : leur CI ne partira pas toute seule. Pour l'obtenir, remplacer le token par celui d'une
+# GitHub App (ou un PAT) via un secret dédié — le reste du workflow est identique.
+on:
+  schedule:
+    - cron: "0 3 * * 1" # lundi 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Dry run : journalise ce qui serait fait, ne crée rien"
+        type: boolean
+        default: false
+      logLevel:
+        description: "Niveau de log"
+        type: choice
+        options: [info, debug]
+        default: info
+
+permissions:
+  contents: write # branches de mise à jour
+  pull-requests: write # ouverture/màj des PR
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: renovatebot/github-action@1a96852b0384df1837619d04c60b2d10d1f9ff08 # v46.1.21
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          RENOVATE_PLATFORM: github
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          # La config vit dans le dépôt : ne jamais ouvrir de PR d'onboarding, et échouer
+          # bruyamment si elle venait à disparaître plutôt que de tourner sur des défauts.
+          RENOVATE_ONBOARDING: "false"
+          RENOVATE_REQUIRE_CONFIG: "required"
+          RENOVATE_DRY_RUN: ${{ inputs.dryRun && 'full' || '' }}
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
