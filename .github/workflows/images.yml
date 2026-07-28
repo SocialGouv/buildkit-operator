@@ -18,9 +18,16 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - ".release-it.json"
+      - "deploy/helm/**" # a chart bump ships no binary change
       - ".github/workflows/pages.yml"
       - ".github/workflows/release.yml"
   workflow_dispatch:
+
+# The release pushes a commit and then a tag; both reach this workflow now that
+# it authenticates as an App. Same ref never builds twice.
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
