@@ -7,6 +7,17 @@
     ":semanticCommits", // align PR titles with our Conventional Commits / release-it changelog
     "helpers:pinGitHubActionDigests", // keep .github/workflows actions pinned by SHA (+ # vX comment)
   ],
+  // Cooldown: a release must have been public for 14 days before it becomes a PR. Catches the
+  // window in which a compromised or botched publish is yanked, and keeps the update stream from
+  // tracking every point release. `strict` makes Renovate WAIT instead of opening a PR whose
+  // internal check is still pending, so a branch never exists before the delay has elapsed.
+  minimumReleaseAge: "14 days",
+  internalChecksFilter: "strict",
+  // A known CVE is the one case where waiting is the greater risk: security updates bypass the
+  // cooldown entirely.
+  vulnerabilityAlerts: {
+    minimumReleaseAge: null,
+  },
   // Native managers already cover everything that has a lockfile or a standard pin:
   //   gomod (go.mod/go.sum) · npm (package.json + pnpm-lock.yaml) · dockerfile (golang/distroless
   //   digests) · github-actions · devbox (devbox.json/devbox.lock via the nixhub datasource).

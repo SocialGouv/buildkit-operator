@@ -16,14 +16,28 @@ permissions:
   contents: write # tag + GitHub release
   packages: write # push the OCI chart
   actions: write # dispatch images.yml for the new tag
+  id-token: write # OIDC exchange for the token-bureau App token (see below)
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # `main` requires the ci checks to pass, and release-it pushes its
+      # "chore: release vX" commit + tag straight to main — a push that carries
+      # no checks of its own. GITHUB_TOKEN cannot be granted a ruleset bypass
+      # (a repository ruleset only accepts actors from the owning org), so the
+      # release authenticates as the org's token-bureau App, which the ruleset
+      # does bypass. Same mechanism SocialGouv/iterion uses for its releases.
+      - uses: SocialGouv/token-bureau@main
+        id: token
+        with:
+          token-bureau-url: https://token-bureau.fabrique.social.gouv.fr
+          audience: socialgouv
+          permissions: '{"contents": "write"}'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "lts/*"
