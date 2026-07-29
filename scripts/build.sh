@@ -49,6 +49,24 @@ curl_auth() {
 
 # api POSTs $2 (JSON) to the buildd path $1. Bounded by --max-time so a stalled proxy can't hang a
 # non-blocking call (/prewarm, /complete) indefinitely.
+# mint_oidc prints a freshly-minted forge identity token, or nothing when this runner has no OIDC to
+# offer. GitHub Actions exposes a minting endpoint to every step, so the token can be re-issued at any
+# point in the build — which matters because a build routinely outlives the one minted at job start.
+mint_oidc() {
+  [ -n "${BKO_OIDC_AUDIENCE:-}" ] || return 0
+  [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] || return 0
+  curl -sS --max-time 10 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+    "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${BKO_OIDC_AUDIENCE}" 2>/dev/null \
+    | jq -r '.value // empty' 2>/dev/null || true
+}
+
+# No identity token yet (a caller invoking this script directly, rather than through the Action)?
+# Mint one, so the OIDC path is taken wherever the runner supports it.
+if [ -z "${BUILDKIT_OPERATOR_TOKEN:-}" ]; then
+  BUILDKIT_OPERATOR_TOKEN="$(mint_oidc || true)"
+  [ -n "${BUILDKIT_OPERATOR_TOKEN:-}" ] && echo "buildkit-operator: using a forge OIDC identity token (audience=${BKO_OIDC_AUDIENCE})"
+fi
+
 api() {
   curl_auth -fsS --max-time "${BUILDKIT_OPERATOR_API_TIMEOUT:-60}" -XPOST "$BUILDKIT_OPERATOR_BUILDD_URL$1" \
     -H 'content-type: application/json' -d "$2"
@@ -147,14 +165,11 @@ fi
 cleanup() {
   rm -rf "$certs"
   if [ -n "${key:-}" ] && [ "$key" != null ]; then
-    # A forge's OIDC token is minted when the job starts and lives minutes (GitHub's, about two), so by
-    # the time a real build ends it has usually expired. buildd accepts the buildId as proof on its own,
-    # but re-minting when the forge lets us keeps the release attributable to a verified identity.
-    if [ -n "${BKO_OIDC_AUDIENCE:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-      fresh="$(curl -sS --max-time 10 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-        "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${BKO_OIDC_AUDIENCE}" 2>/dev/null | jq -r '.value // empty' 2>/dev/null || true)"
-      [ -n "$fresh" ] && BUILDKIT_OPERATOR_TOKEN="$fresh"
-    fi
+    # The identity token minted when the job started has usually expired by the time a real build ends
+    # (GitHub's live about two minutes). buildd accepts the build token on its own, but a fresh identity
+    # keeps the release subject to the repo check rather than to the build token alone.
+    fresh="$(mint_oidc || true)"
+    [ -n "$fresh" ] && BUILDKIT_OPERATOR_TOKEN="$fresh"
     # buildId is OMITTED when empty: an empty id means the server that routed us predates the field,
     # and that server rejects unknown fields with 400 — which would drop the release entirely.
     if [ -n "${build_id:-}" ]; then

@@ -217,7 +217,7 @@ func TestInflight_UpdatesStatus(t *testing.T) {
 
 	p.EndInflight(t.Context(), "pcount", "a")
 	got = read()
-	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != "b" {
+	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != bkov1.InflightID("b") {
 		t.Errorf("inflight = %v, want only b left", got.Status.Inflight)
 	}
 	p.EndInflight(t.Context(), "pcount", "nope") // unknown id: no-op, never negative
@@ -387,7 +387,7 @@ func TestEndInflight_ReportsAndDoesNotTouchOnMiss(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "prel", Namespace: "buildkit-operator"},
 		Spec:       bkov1.BuildProjectSpec{Key: "prel", Repo: "github.com/o/r", Arch: "amd64"},
 	}
-	bp.Status.SetInflight([]bkov1.InflightBuild{{ID: "a", Since: metav1.Now()}})
+	bp.Status.SetInflight(bkov1.StartInflight(nil, "aaaaaaaaaaaaaaaa", metav1.Now()))
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
 		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
 	p := newProv(c, 0, "", 0)
@@ -397,13 +397,13 @@ func TestEndInflight_ReportsAndDoesNotTouchOnMiss(t *testing.T) {
 		return got
 	}
 
-	if released := p.EndInflight(t.Context(), "prel", "nope"); released {
+	if released := p.EndInflight(t.Context(), "prel", "0000000000000000"); released {
 		t.Error("releasing an unknown id reported success")
 	}
 	if got := read(); got.Status.LastBuildTime != nil || got.Status.InflightCount() != 1 {
 		t.Errorf("a miss must not write: lastBuild=%v inflight=%v", got.Status.LastBuildTime, got.Status.Inflight)
 	}
-	if released := p.EndInflight(t.Context(), "prel", "a"); !released {
+	if released := p.EndInflight(t.Context(), "prel", "aaaaaaaaaaaaaaaa"); !released {
 		t.Error("releasing a live id reported failure")
 	}
 	if got := read(); got.Status.InflightCount() != 0 || got.Status.LastBuildTime == nil {

@@ -7,10 +7,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ids maps entries back to the TOKENS they were registered with, so a test can talk in tokens while
+// the status stores their hashes.
 func ids(entries []InflightBuild) []string {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, e.ID)
+	}
+	return out
+}
+
+// tokens is ids() expressed in token space: hash each expected token and compare.
+func hashed(tokens ...string) []string {
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		out = append(out, InflightID(t))
 	}
 	return out
 }
@@ -31,7 +42,7 @@ func eq(got, want []string) bool {
 func TestStartInflight(t *testing.T) {
 	now := metav1.Now()
 	entries := StartInflight(StartInflight(nil, "a", now), "b", now)
-	if !eq(ids(entries), []string{"a", "b"}) {
+	if !eq(ids(entries), hashed("a", "b")) {
 		t.Errorf("entries = %v, want [a b]", ids(entries))
 	}
 
@@ -50,13 +61,13 @@ func TestEndInflight(t *testing.T) {
 	now := metav1.Now()
 	base := StartInflight(StartInflight(StartInflight(nil, "a", now), "b", now), "c", now)
 
-	if got, ok := EndInflight(base, "b"); !ok || !eq(ids(got), []string{"a", "c"}) {
+	if got, ok := EndInflight(base, "b"); !ok || !eq(ids(got), hashed("a", "c")) {
 		t.Errorf("EndInflight(b) = %v ok=%v, want [a c] true", ids(got), ok)
 	}
-	if got, ok := EndInflight(base, ""); !ok || !eq(ids(got), []string{"b", "c"}) {
+	if got, ok := EndInflight(base, ""); !ok || !eq(ids(got), hashed("b", "c")) {
 		t.Errorf(`EndInflight("") = %v ok=%v, want the oldest gone -> [b c] true`, ids(got), ok)
 	}
-	if got, ok := EndInflight(base, "zzz"); ok || !eq(ids(got), []string{"a", "b", "c"}) {
+	if got, ok := EndInflight(base, "zzz"); ok || !eq(ids(got), hashed("a", "b", "c")) {
 		t.Errorf("EndInflight(unknown) = %v ok=%v, want unchanged and false", ids(got), ok)
 	}
 	if got, ok := EndInflight(nil, ""); ok || len(got) != 0 {
@@ -160,5 +171,31 @@ func TestEndInflightBefore(t *testing.T) {
 	// A named release is unaffected by the cutoff.
 	if got, ok := EndInflightBefore(live, "newer", cutoff); !ok || !eq(ids(got), []string{"older"}) {
 		t.Errorf("named release = %v ok=%v, want exactly the named entry gone", ids(got), ok)
+	}
+}
+
+// The token /route hands the client is a credential; only its hash is ever written to the status,
+// which anything with read access to the builds namespace can see. A release presents the token.
+func TestInflightIDHashesTheToken(t *testing.T) {
+	now := metav1.Now()
+	entries := StartInflight(nil, "deadbeefdeadbeef", now)
+	if entries[0].ID == "deadbeefdeadbeef" {
+		t.Fatal("the raw token was stored on the status — it is a credential, store its hash")
+	}
+	if entries[0].ID != InflightID("deadbeefdeadbeef") {
+		t.Errorf("stored id = %q, want the token's hash", entries[0].ID)
+	}
+	// Presenting the token releases it; presenting the stored hash does not (it is not the secret).
+	if _, ok := EndInflight(entries, "deadbeefdeadbeef"); !ok {
+		t.Error("presenting the token did not release the build")
+	}
+	if _, ok := EndInflight(entries, "beefdeadbeefdead"); ok {
+		t.Error("a different token released the build")
+	}
+	// Entries written before hashing hold the token verbatim; they must still release, or a build in
+	// flight across the upgrade leaks until it expires.
+	legacy := []InflightBuild{{ID: "deadbeefdeadbeef", Since: now}}
+	if _, ok := EndInflight(legacy, "deadbeefdeadbeef"); !ok {
+		t.Error("a pre-hashing entry no longer releases")
 	}
 }

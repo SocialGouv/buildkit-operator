@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -16,11 +18,21 @@ const InflightCap = 64
 // clock, so a build whose /complete never arrives expires by itself — without touching the entries
 // of builds that are still running.
 type InflightBuild struct {
-	// ID is the opaque token /route returned to the client, which /complete echoes back.
+	// ID identifies the build. It is the SHA-256 of the token /route handed the client, never the
+	// token itself: releasing a build is authorized by presenting that token, and the status of a
+	// BuildProject is readable by anything with get/list in the builds namespace. Storing the token
+	// would put a live credential in plain sight there.
 	ID string `json:"id"`
 	// Since is when /route registered this build. The reconciler expires entries older than
 	// --max-build-seconds.
 	Since metav1.Time `json:"since"`
+}
+
+// InflightID is the stored form of a build token: its SHA-256, hex-encoded. The token is a
+// credential, the status is not a secret store, so only this ever lands on the object.
+func InflightID(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // SetInflight is the ONLY way to record inflight builds on the status: it writes the entries and
@@ -66,11 +78,11 @@ func AdoptLegacyInflight(s *BuildProjectStatus) bool {
 	return true
 }
 
-// StartInflight registers a routed build and returns the updated status entries.
-func StartInflight(inflight []InflightBuild, id string, now metav1.Time) []InflightBuild {
+// StartInflight registers a routed build under the HASH of its token (see InflightID).
+func StartInflight(inflight []InflightBuild, token string, now metav1.Time) []InflightBuild {
 	out := make([]InflightBuild, len(inflight), len(inflight)+1)
 	copy(out, inflight)
-	return capInflight(append(out, InflightBuild{ID: id, Since: now}))
+	return capInflight(append(out, InflightBuild{ID: InflightID(token), Since: now}))
 }
 
 // EndInflight releases the entry matching id and reports whether one was found. An EMPTY id — a
@@ -104,8 +116,12 @@ func endInflight(inflight []InflightBuild, id string, cutoff *time.Time) ([]Infl
 			}
 		}
 	} else {
+		hashed := InflightID(id)
 		for i := range inflight {
-			if inflight[i].ID == id {
+			// Entries written before tokens were hashed hold the token verbatim; accept those too so
+			// a build in flight across the upgrade still releases instead of leaking until it expires.
+			// They age out within --max-build-seconds, after which only the hashed form remains.
+			if inflight[i].ID == hashed || inflight[i].ID == id {
 				drop = i
 				break
 			}

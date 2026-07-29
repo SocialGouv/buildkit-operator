@@ -155,8 +155,8 @@ func TestHandleComplete_ReleasesNamedBuild(t *testing.T) {
 		bp := &bkov1.BuildProject{}
 		bp.Name, bp.Namespace = key, "buildkit-operator"
 		bp.Status.SetInflight([]bkov1.InflightBuild{
-			{ID: "first", Since: older},
-			{ID: "second", Since: metav1.Now()},
+			{ID: bkov1.InflightID("1111111111111111"), Since: older},
+			{ID: bkov1.InflightID("2222222222222222"), Since: metav1.Now()},
 		})
 		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
 		srv := newTestServer(t, c)
@@ -174,12 +174,12 @@ func TestHandleComplete_ReleasesNamedBuild(t *testing.T) {
 		return got
 	}
 
-	got := complete(t, map[string]string{"key": key, "buildId": "second"})
-	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != "first" {
+	got := complete(t, map[string]string{"key": key, "buildId": "2222222222222222"})
+	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != bkov1.InflightID("1111111111111111") {
 		t.Errorf("inflight = %v, want the named build released and first left", got.Status.Inflight)
 	}
 	got = complete(t, map[string]string{"key": key}) // no buildId: oldest goes
-	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != "second" {
+	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != bkov1.InflightID("2222222222222222") {
 		t.Errorf("inflight = %v, want the OLDEST released when no buildId is sent", got.Status.Inflight)
 	}
 	if got.Status.InflightBuilds != 1 {
@@ -331,7 +331,7 @@ func TestHandleComplete_RequiresBuildIDWhenConfigured(t *testing.T) {
 		t.Helper()
 		bp := &bkov1.BuildProject{}
 		bp.Name, bp.Namespace = key, "buildkit-operator"
-		bp.Status.SetInflight([]bkov1.InflightBuild{{ID: "b1", Since: metav1.Now()}})
+		bp.Status.SetInflight([]bkov1.InflightBuild{{ID: bkov1.InflightID("b1b1b1b1b1b1b1b1"), Since: metav1.Now()}})
 		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
 		srv := newTestServer(t, c)
 		srv.requireBuildID = require
@@ -343,7 +343,7 @@ func TestHandleComplete_RequiresBuildIDWhenConfigured(t *testing.T) {
 	if got := post(t, true, map[string]string{"key": key}); got != http.StatusBadRequest {
 		t.Errorf("release with no buildId = %d, want 400 when requireBuildId is on", got)
 	}
-	if got := post(t, true, map[string]string{"key": key, "buildId": "b1"}); got != http.StatusNoContent {
+	if got := post(t, true, map[string]string{"key": key, "buildId": "b1b1b1b1b1b1b1b1"}); got != http.StatusNoContent {
 		t.Errorf("named release = %d, want 204 even with requireBuildId on", got)
 	}
 	// Off by default, so clients that predate the id keep working through the migration.
@@ -370,13 +370,13 @@ func TestHandleComplete_VerifiedCallerCannotReleaseAnotherRepo(t *testing.T) {
 			bp := &bkov1.BuildProject{}
 			bp.Name, bp.Namespace = name, "buildkit-operator"
 			bp.Spec = bkov1.BuildProjectSpec{Key: name, Repo: repo, Arch: "amd64"}
-			bp.Status.SetInflight([]bkov1.InflightBuild{{ID: "b1", Since: metav1.Now()}})
+			bp.Status.SetInflight([]bkov1.InflightBuild{{ID: bkov1.InflightID("b1b1b1b1b1b1b1b1"), Since: metav1.Now()}})
 			objs = append(objs, bp)
 		}
 		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(objs...).Build()
 		srv := newTestServer(t, c)
 		srv.verifier, srv.log = v, logr.Discard()
-		raw, _ := json.Marshal(map[string]string{"key": key, "buildId": "b1"})
+		raw, _ := json.Marshal(map[string]string{"key": key, "buildId": "b1b1b1b1b1b1b1b1"})
 		req := httptest.NewRequest(http.MethodPost, "/complete", bytes.NewReader(raw))
 		req.Header.Set("Authorization", "Bearer "+f.token(t, "attacker/foo", "refs/heads/main"))
 		rec := httptest.NewRecorder()
@@ -415,8 +415,8 @@ func TestHandleComplete_ExpiredIdentityAuthorizedByBuildID(t *testing.T) {
 		bp.Name, bp.Namespace = key, "buildkit-operator"
 		bp.Spec = bkov1.BuildProjectSpec{Key: key, Repo: "github.com/org/repo", Arch: "amd64"}
 		bp.Status.SetInflight([]bkov1.InflightBuild{
-			{ID: "mine", Since: metav1.NewTime(time.Now().Add(-time.Minute))},
-			{ID: "other", Since: metav1.Now()},
+			{ID: bkov1.InflightID("aaaaaaaaaaaaaaaa"), Since: metav1.NewTime(time.Now().Add(-time.Minute))},
+			{ID: bkov1.InflightID("bbbbbbbbbbbbbbbb"), Since: metav1.Now()},
 		})
 		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
 		srv := newTestServer(t, c)
@@ -431,16 +431,16 @@ func TestHandleComplete_ExpiredIdentityAuthorizedByBuildID(t *testing.T) {
 		return rec.Code, got.Status.Inflight
 	}
 
-	code, left := post(t, map[string]string{"key": key, "buildId": "mine"})
+	code, left := post(t, map[string]string{"key": key, "buildId": "aaaaaaaaaaaaaaaa"})
 	if code != http.StatusNoContent {
 		t.Errorf("release naming a live build id = %d, want 204 — the id is the proof", code)
 	}
-	if len(left) != 1 || left[0].ID != "other" {
+	if len(left) != 1 || left[0].ID != bkov1.InflightID("bbbbbbbbbbbbbbbb") {
 		t.Errorf("inflight = %v, want only the OTHER build left", left)
 	}
 
 	// An id that names nothing proves nothing.
-	code, left = post(t, map[string]string{"key": key, "buildId": "guessed"})
+	code, left = post(t, map[string]string{"key": key, "buildId": "cccccccccccccccc"})
 	if code != http.StatusUnauthorized {
 		t.Errorf("release naming an unknown id = %d, want 401", code)
 	}
