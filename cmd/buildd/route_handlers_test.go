@@ -13,6 +13,7 @@ import (
 	"github.com/go-logr/logr"
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/builder"
+	"github.com/socialgouv/buildkit-operator/internal/identity"
 	"github.com/socialgouv/buildkit-operator/internal/projectdefaults"
 	k8sprov "github.com/socialgouv/buildkit-operator/internal/provisioner/k8s"
 	"github.com/socialgouv/buildkit-operator/internal/router"
@@ -348,5 +349,44 @@ func TestHandleComplete_RequiresBuildIDWhenConfigured(t *testing.T) {
 	// Off by default, so clients that predate the id keep working through the migration.
 	if got := post(t, false, map[string]string{"key": key}); got != http.StatusNoContent {
 		t.Errorf("release with no buildId = %d, want 204 with requireBuildId off", got)
+	}
+}
+
+// A verified (OIDC) caller may only release ITS OWN project's builds. Releasing lets the daemon scale
+// down, so honouring a bare key from any authenticated caller would hand everyone a lever on every
+// other project. This needs no flag and no migration: the repo is already verified on the request.
+func TestHandleComplete_VerifiedCallerCannotReleaseAnotherRepo(t *testing.T) {
+	f := newOIDCForge(t)
+	v, err := identity.NewVerifier(identity.Config{Providers: []identity.Provider{{Type: "github", Issuer: f.srv.URL, Audience: "bko"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine := router.ProjectKey("github.com/attacker/foo", "", "", "amd64")
+	theirs := router.ProjectKey("github.com/victim/secret", "", "", "amd64")
+	post := func(t *testing.T, key string) int {
+		t.Helper()
+		var objs []client.Object
+		for name, repo := range map[string]string{mine: "github.com/attacker/foo", theirs: "github.com/victim/secret"} {
+			bp := &bkov1.BuildProject{}
+			bp.Name, bp.Namespace = name, "buildkit-operator"
+			bp.Spec = bkov1.BuildProjectSpec{Key: name, Repo: repo, Arch: "amd64"}
+			bp.Status.SetInflight([]bkov1.InflightBuild{{ID: "b1", Since: metav1.Now()}})
+			objs = append(objs, bp)
+		}
+		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(objs...).Build()
+		srv := newTestServer(t, c)
+		srv.verifier, srv.log = v, logr.Discard()
+		raw, _ := json.Marshal(map[string]string{"key": key, "buildId": "b1"})
+		req := httptest.NewRequest(http.MethodPost, "/complete", bytes.NewReader(raw))
+		req.Header.Set("Authorization", "Bearer "+f.token(t, "attacker/foo", "refs/heads/main"))
+		rec := httptest.NewRecorder()
+		srv.handleComplete(rec, req)
+		return rec.Code
+	}
+	if got := post(t, mine); got != http.StatusNoContent {
+		t.Errorf("releasing own project = %d, want 204", got)
+	}
+	if got := post(t, theirs); got != http.StatusForbidden {
+		t.Errorf("releasing ANOTHER repo's project = %d, want 403", got)
 	}
 }

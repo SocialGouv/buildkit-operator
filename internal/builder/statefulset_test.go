@@ -305,30 +305,31 @@ func TestStatefulSet_StorageClassPVC(t *testing.T) {
 }
 
 // A node drain evicts daemon pods, severing every build on them — the one disruption this control
-// plane cannot see coming. Each warm daemon therefore carries a PodDisruptionBudget that refuses the
-// eviction; scale-to-zero is what keeps that from blocking cluster maintenance forever. A HOT daemon
-// never scales down, so it gets none rather than wedging a drain.
+// plane cannot veto by itself. The budget therefore tracks whether the daemon is BUSY: it refuses the
+// eviction while builds run, and permits it when idle so cluster maintenance is never stalled by a
+// daemon with nothing to lose. This holds for every tier, hot included.
 func TestPodDisruptionBudget(t *testing.T) {
 	cfg := Config{Namespace: "ns", Port: 1234}
-	warm := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "pwarm", Arch: "amd64", Tier: bkov1.TierWarm}}
-	pdb := PodDisruptionBudget(warm, cfg)
-	if pdb == nil {
-		t.Fatal("a warm daemon must carry a PDB — a node drain would otherwise sever its builds")
-	}
-	if pdb.Name != "buildkitd-pwarm" || pdb.Namespace != "ns" {
-		t.Errorf("PDB = %s/%s, want ns/buildkitd-pwarm", pdb.Namespace, pdb.Name)
-	}
-	if pdb.Spec.MinAvailable == nil || pdb.Spec.MinAvailable.IntValue() != 1 {
-		t.Errorf("minAvailable = %v, want 1 (a StatefulSet-of-1 must not be evicted while it serves)", pdb.Spec.MinAvailable)
-	}
-	// The selector must match the daemon pods exactly, or the budget guards nothing.
-	sts := StatefulSet(warm, cfg)
-	for k, v := range pdb.Spec.Selector.MatchLabels {
-		if sts.Spec.Template.Labels[k] != v {
-			t.Errorf("PDB selector %s=%s does not match the daemon pod labels %v", k, v, sts.Spec.Template.Labels)
+	for _, tier := range []string{bkov1.TierWarm, bkov1.TierHot} {
+		bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "p" + tier, Arch: "amd64", Tier: tier}}
+
+		busy := PodDisruptionBudget(bp, cfg, true)
+		if busy == nil || busy.Spec.MinAvailable.IntValue() != 1 {
+			t.Errorf("%s serving: minAvailable = %v, want 1 (an eviction would sever its builds)", tier, busy.Spec.MinAvailable)
 		}
-	}
-	if PodDisruptionBudget(&bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "phot", Arch: "amd64", Tier: bkov1.TierHot}}, cfg) != nil {
-		t.Error("a hot daemon never scales to zero, so a PDB on it would block node drains forever")
+		idle := PodDisruptionBudget(bp, cfg, false)
+		if idle == nil || idle.Spec.MinAvailable.IntValue() != 0 {
+			t.Errorf("%s idle: minAvailable = %v, want 0 (nothing to protect, do not stall drains)", tier, idle.Spec.MinAvailable)
+		}
+		if busy.Name != "buildkitd-p"+tier || busy.Namespace != "ns" {
+			t.Errorf("PDB = %s/%s, want ns/buildkitd-p%s", busy.Namespace, busy.Name, tier)
+		}
+		// The selector must match the daemon pods exactly, or the budget guards nothing.
+		sts := StatefulSet(bp, cfg)
+		for k, v := range busy.Spec.Selector.MatchLabels {
+			if sts.Spec.Template.Labels[k] != v {
+				t.Errorf("%s: PDB selector %s=%s does not match the daemon pod labels %v", tier, k, v, sts.Spec.Template.Labels)
+			}
+		}
 	}
 }

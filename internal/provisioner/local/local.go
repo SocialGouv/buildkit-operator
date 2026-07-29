@@ -324,6 +324,17 @@ func (p *Provisioner) Touch(_ context.Context, key string) {
 	p.stateFor(key).lastBuild = time.Now()
 }
 
+// ProjectRepo reports the repo recorded for a key in the in-memory project state.
+func (p *Provisioner) ProjectRepo(_ context.Context, key string) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st := p.projects[key]
+	if st == nil {
+		return "", false
+	}
+	return st.spec.Repo, true
+}
+
 // stateFor returns the project's state, creating it on first touch. Callers hold p.mu.
 func (p *Provisioner) stateFor(key string) *projectState {
 	st := p.projects[key]

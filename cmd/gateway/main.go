@@ -41,6 +41,7 @@ func main() {
 	flag.StringVar(&g.namespace, "namespace", envOr("BUILDKIT_OPERATOR_NAMESPACE", "buildkit-builds"), "namespace the per-project daemons run in (the 'builds' ns the SNI backend resolves into)")
 	flag.IntVar(&g.port, "daemon-port", 1234, "daemon mTLS port")
 	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent connections (0 = unlimited; bounds resource use under abuse)")
+	drainSeconds := flag.Int("drain-seconds", 3600, "on SIGTERM, how long to keep proxying builds that are already streaming before exiting. Every open connection IS a build, so this must outlast a realistic build; it has to stay under the pod terminationGracePeriodSeconds, which is what actually kills us")
 	flag.Parse()
 	for _, d := range strings.Split(domainCSV, ",") {
 		if d = strings.TrimSpace(d); d != "" {
@@ -92,8 +93,9 @@ func main() {
 	go func() { g.inflight.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(115 * time.Second): // under the pod terminationGracePeriod
-		slog.Warn("drain timeout, exiting with connections still open")
+		slog.Info("all builds drained")
+	case <-time.After(time.Duration(*drainSeconds) * time.Second):
+		slog.Warn("drain timeout, exiting with builds still connected", "drainSeconds", *drainSeconds)
 	}
 	slog.Info("gateway stopped")
 }

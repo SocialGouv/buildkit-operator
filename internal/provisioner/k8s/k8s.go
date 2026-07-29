@@ -208,6 +208,15 @@ func (p *Provisioner) EndInflight(ctx context.Context, key, id string) {
 	})
 }
 
+// ProjectRepo reads the repo recorded on the BuildProject (normalized at creation by the router).
+func (p *Provisioner) ProjectRepo(ctx context.Context, key string) (string, bool) {
+	var bp bkov1.BuildProject
+	if err := p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &bp); err != nil {
+		return "", false
+	}
+	return bp.Spec.Repo, true
+}
+
 // live is the project's inflight set with the entries past --max-build-seconds already shed, and any
 // pre-entries count adopted first. Every status write goes through it, so the routing API and the
 // reconciler agree on what "still running" means.

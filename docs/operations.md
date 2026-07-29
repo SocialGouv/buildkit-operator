@@ -210,19 +210,22 @@ CrashLoopBackOff is rolled regardless — the roll is usually the repair.
 
 The other ways a daemon can go away under a build are guarded too:
 
-- **Node drains** — each warm daemon carries a PodDisruptionBudget (`minAvailable: 1`), so an eviction
-  waits. Scale-to-zero is what keeps that from blocking maintenance: once the project idles out the
-  daemon is gone and the drain proceeds. A `hot` daemon gets no PDB — it never scales down, and a
-  budget on it would block drains indefinitely.
+- **Node drains** — every daemon carries a PodDisruptionBudget whose `minAvailable` follows its
+  in-flight set: `1` while builds run (the eviction is refused), `0` when idle (the drain passes
+  straight through). A drain therefore waits exactly as long as the builds on that node, on every
+  tier — including `hot`, which never scales to zero and is the most likely to be sitting on a node
+  someone drains.
 - **Scale-to-zero and fork reaping** re-read the in-flight set from the API server before acting, not
   from the informer cache.
 - **Lowering `fanout`** leaves a clone that is still serving builds for a later reconcile.
 - **Gateway rollouts** stop accepting and keep proxying open builds for `gateway.drainSeconds`
   (default 1h; the pod's grace period sits 60s above it).
 
-`api.requireBuildId` closes the last hole: without it a `/complete` naming only a project key is
-honoured, which any authenticated caller can aim at any project. Every client has sent the id since
-v0.17.0 — turn it on once no consumer predates that.
+A `/complete` from an OIDC-verified caller is refused (403) unless the key belongs to that caller's own
+repo — releasing a build lets the daemon scale down, so a bare key must not be a lever anyone can pull
+on anyone's project. Callers still on the legacy bearer carry no repo to check; `api.requireBuildId`
+covers them by requiring the unguessable id `/route` minted. Every client has sent that id since
+v0.17.0, so it can be turned on once no consumer predates that.
 
 A project that stays warm with no build running: read `.status.inflight`. Each routed build holds one
 timestamped entry, released by the client's `/complete`. An entry left behind by a build whose client
