@@ -55,6 +55,7 @@ func main() {
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
 	flag.StringVar(&cfg.DefaultStorageClass, "default-storage-class", "", "default StorageClass for cache PVCs when a BuildProject sets none (empty = the cluster's default StorageClass; OVH MKS: csi-cinder-high-speed-gen2; EKS: e.g. ebs-gp3)")
 	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
+	requireBuildID := flag.Bool("require-build-id", false, "reject a /complete that carries no buildId. The id is minted per build by /route, so requiring it stops any authenticated caller from releasing ANOTHER project's builds by key alone. Turn it on once every client is new enough to echo it back")
 	flag.StringVar(&cfg.SandboxRuntimeClass, "sandbox-runtime-class", "", "RuntimeClass applied to UNTRUSTED fork daemons only (e.g. kata-clh / sysbox-runc); empty = the default runtime")
 	flag.StringVar(&cfg.SandboxBuildkitImage, "sandbox-buildkit-image", "", "NON-rootless buildkit image for sandboxed (Kata) forks; empty = derived from --buildkit-image by stripping -rootless")
 	daemonScheduling := flag.String("daemon-scheduling", "", `JSON {"nodeSelector":{},"tolerations":[],"affinity":{},"pinArch":false} for daemon pods. pinArch=true adds a kubernetes.io/arch nodeSelector from each build's arch (native multi-arch, no QEMU). Empty = cluster default`)
@@ -261,7 +262,8 @@ func main() {
 		s3Bucket:     *s3Bucket, s3Region: *s3Region, s3Endpoint: *s3Endpoint,
 		s3ExportInterval: *s3ExportInterval,
 		verifier:         verifier, authToken: authToken, adminToken: adminToken,
-		limiter: limiter, defaults: projDefaults, log: ctrl.Log.WithName("route"),
+		requireBuildID: *requireBuildID,
+		limiter:        limiter, defaults: projDefaults, log: ctrl.Log.WithName("route"),
 	}); err != nil {
 		log.Error(err, "unable to add route server")
 		panic(err)

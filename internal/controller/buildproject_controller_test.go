@@ -11,6 +11,7 @@ import (
 	"github.com/socialgouv/buildkit-operator/internal/router"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -743,5 +744,76 @@ func TestReconcile_FanoutCreatesClones(t *testing.T) {
 		if clone.Spec.Fanout != 0 {
 			t.Errorf("clone %d must not fan out itself", i)
 		}
+	}
+}
+
+// Lowering Fanout deletes the surplus clones, and that cascade takes their StatefulSets — and any
+// build running on them — with it. A clone still serving builds is left for a later reconcile.
+func TestReconcileFanout_KeepsBusyClone(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildkit-operator", "pfan"
+	parent := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Fanout: 0},
+		Status:     bkov1.BuildProjectStatus{LastSnapshot: "snap-1"},
+	}
+	mkClone := func(name string, inflight []bkov1.InflightBuild) *bkov1.BuildProject {
+		c := &bkov1.BuildProject{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{cloneOfLabel: key}},
+			Spec:       bkov1.BuildProjectSpec{Key: name, Arch: "amd64"},
+		}
+		c.Status.SetInflight(inflight)
+		return c
+	}
+	busy := mkClone(key+"-c1", []bkov1.InflightBuild{{ID: "b", Since: metav1.Now()}})
+	idle := mkClone(key+"-c2", nil)
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(parent, busy, idle).WithStatusSubresource(&bkov1.BuildProject{}).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234}}
+
+	if err := r.reconcileFanout(t.Context(), parent); err != nil {
+		t.Fatal(err)
+	}
+	var got bkov1.BuildProject
+	if err := c.Get(t.Context(), types.NamespacedName{Name: busy.Name, Namespace: ns}, &got); err != nil {
+		t.Errorf("the clone serving a build was deleted: %v", err)
+	}
+	if err := c.Get(t.Context(), types.NamespacedName{Name: idle.Name, Namespace: ns}, &got); err == nil {
+		t.Error("the idle surplus clone should have been pruned")
+	}
+}
+
+// Every daemon carries a PodDisruptionBudget so a node drain waits for its builds; switching a project
+// to the hot tier removes it, since a hot daemon never scales down and would block drains forever.
+func TestReconcile_ManagesDaemonPDB(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildkit-operator", "ppdb"
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierWarm},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}
+	pdbName := types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}
+
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	var pdb policyv1.PodDisruptionBudget
+	if err := c.Get(t.Context(), pdbName, &pdb); err != nil {
+		t.Fatalf("no PDB for a warm daemon: %v", err)
+	}
+
+	var cur bkov1.BuildProject
+	_ = c.Get(t.Context(), req.NamespacedName, &cur)
+	cur.Spec.Tier = bkov1.TierHot
+	if err := c.Update(t.Context(), &cur); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(t.Context(), pdbName, &pdb); err == nil {
+		t.Error("a hot daemon must not keep a PDB — it never scales down, so drains would block forever")
 	}
 }

@@ -208,6 +208,22 @@ REPLACES every daemon pod. Two things keep that from killing builds:
 StatefulSet carries `buildkit-operator.socialgouv.github.io/roll-held-since`. A daemon wedged in
 CrashLoopBackOff is rolled regardless — the roll is usually the repair.
 
+The other ways a daemon can go away under a build are guarded too:
+
+- **Node drains** — each warm daemon carries a PodDisruptionBudget (`minAvailable: 1`), so an eviction
+  waits. Scale-to-zero is what keeps that from blocking maintenance: once the project idles out the
+  daemon is gone and the drain proceeds. A `hot` daemon gets no PDB — it never scales down, and a
+  budget on it would block drains indefinitely.
+- **Scale-to-zero and fork reaping** re-read the in-flight set from the API server before acting, not
+  from the informer cache.
+- **Lowering `fanout`** leaves a clone that is still serving builds for a later reconcile.
+- **Gateway rollouts** stop accepting and keep proxying open builds for `gateway.drainSeconds`
+  (default 1h; the pod's grace period sits 60s above it).
+
+`api.requireBuildId` closes the last hole: without it a `/complete` naming only a project key is
+honoured, which any authenticated caller can aim at any project. Every client has sent the id since
+v0.17.0 — turn it on once no consumer predates that.
+
 A project that stays warm with no build running: read `.status.inflight`. Each routed build holds one
 timestamped entry, released by the client's `/complete`. An entry left behind by a build whose client
 never released it (a cancelled CI job kills the runner before its cleanup) expires on its OWN clock

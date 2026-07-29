@@ -303,3 +303,32 @@ func TestStatefulSet_StorageClassPVC(t *testing.T) {
 		t.Errorf("empty storageClass: PVC StorageClassName = %v, want nil (cluster default)", sc)
 	}
 }
+
+// A node drain evicts daemon pods, severing every build on them — the one disruption this control
+// plane cannot see coming. Each warm daemon therefore carries a PodDisruptionBudget that refuses the
+// eviction; scale-to-zero is what keeps that from blocking cluster maintenance forever. A HOT daemon
+// never scales down, so it gets none rather than wedging a drain.
+func TestPodDisruptionBudget(t *testing.T) {
+	cfg := Config{Namespace: "ns", Port: 1234}
+	warm := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "pwarm", Arch: "amd64", Tier: bkov1.TierWarm}}
+	pdb := PodDisruptionBudget(warm, cfg)
+	if pdb == nil {
+		t.Fatal("a warm daemon must carry a PDB — a node drain would otherwise sever its builds")
+	}
+	if pdb.Name != "buildkitd-pwarm" || pdb.Namespace != "ns" {
+		t.Errorf("PDB = %s/%s, want ns/buildkitd-pwarm", pdb.Namespace, pdb.Name)
+	}
+	if pdb.Spec.MinAvailable == nil || pdb.Spec.MinAvailable.IntValue() != 1 {
+		t.Errorf("minAvailable = %v, want 1 (a StatefulSet-of-1 must not be evicted while it serves)", pdb.Spec.MinAvailable)
+	}
+	// The selector must match the daemon pods exactly, or the budget guards nothing.
+	sts := StatefulSet(warm, cfg)
+	for k, v := range pdb.Spec.Selector.MatchLabels {
+		if sts.Spec.Template.Labels[k] != v {
+			t.Errorf("PDB selector %s=%s does not match the daemon pod labels %v", k, v, sts.Spec.Template.Labels)
+		}
+	}
+	if PodDisruptionBudget(&bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "phot", Arch: "amd64", Tier: bkov1.TierHot}}, cfg) != nil {
+		t.Error("a hot daemon never scales to zero, so a PDB on it would block node drains forever")
+	}
+}

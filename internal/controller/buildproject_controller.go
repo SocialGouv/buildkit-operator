@@ -22,6 +22,7 @@ import (
 	"github.com/socialgouv/buildkit-operator/internal/router"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -98,6 +99,7 @@ const (
 // +kubebuilder:rbac:groups="",resources=secrets,resourceNames=buildkit-daemon-certs,verbs=get
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshots,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile ensures the Service + StatefulSet exist and reflects readiness in status.
@@ -118,6 +120,19 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// records, so they are computed once here rather than derived twice from the same entries.
 	liveInflight, expired := bkov1.ExpireInflight(bp.Status.Inflight, time.Now(), r.maxBuildAge())
 	desired := desiredReplicas(&bp, liveInflight, time.Now(), r.adaptiveIdleMax())
+	// Taking a daemon down — scaling it to zero, or reaping a fork outright — is irreversible for a
+	// build running on it, and `desired` came from the informer cache, which can lag a build routed a
+	// beat ago by another buildd replica. Confirm against the API server first (the same guard the
+	// auto-grow bounce and the template roll use).
+	if desired == 0 {
+		fresh, err := r.freshInflight(ctx, &bp)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("re-read inflight before taking the daemon down: %w", err)
+		}
+		if fresh > 0 {
+			desired = 1
+		}
+	}
 	// Reap an idle ephemeral fork daemon: delete its cache PVC + the fork BuildProject (the owner-ref
 	// cascade removes the STS/Service). Forks are one-shot — nothing warm to keep — so this stops their
 	// retained PVCs and CRs from accumulating.
@@ -136,17 +151,8 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.ensureService(ctx, &bp); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure service: %w", err)
 	}
-	// Scaling a daemon to zero is the one irreversible thing a reconcile does to a running build, and
-	// `desired` was computed from the informer cache — which can lag a build routed a beat ago. Confirm
-	// against the API server before pulling the daemon down (same guard the auto-grow bounce uses).
-	if desired == 0 {
-		fresh, err := r.freshInflight(ctx, &bp)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("re-read inflight before scale-down: %w", err)
-		}
-		if fresh > 0 {
-			desired = 1
-		}
+	if err := r.ensurePDB(ctx, &bp); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure poddisruptionbudget: %w", err)
 	}
 	rollHeld, err := r.ensureStatefulSet(ctx, &bp, desired, liveInflight)
 	if err != nil {
@@ -268,6 +274,38 @@ func (r *BuildProjectReconciler) ensureService(ctx context.Context, bp *bkov1.Bu
 	}
 	existing.Spec.Type = want.Spec.Type // converge an old per-daemon LoadBalancer down to ClusterIP (the gateway is the external path now)
 	existing.Spec.Ports = want.Spec.Ports
+	existing.Spec.Selector = want.Spec.Selector
+	return r.Update(ctx, &existing)
+}
+
+// ensurePDB keeps the daemon's PodDisruptionBudget in place, so a node drain waits for the builds
+// running on it instead of evicting them. The hot tier gets none (see builder.PodDisruptionBudget) —
+// and if a project is switched to hot, the one it had is removed rather than left to block drains.
+func (r *BuildProjectReconciler) ensurePDB(ctx context.Context, bp *bkov1.BuildProject) error {
+	name := types.NamespacedName{Name: router.DaemonName(bp.Spec.Key), Namespace: r.Cfg.Namespace}
+	want := builder.PodDisruptionBudget(bp, r.Cfg)
+	if want == nil {
+		var existing policyv1.PodDisruptionBudget
+		if err := r.Get(ctx, name, &existing); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		return client.IgnoreNotFound(r.Delete(ctx, &existing))
+	}
+	if err := ctrl.SetControllerReference(bp, want, r.Scheme); err != nil {
+		return err
+	}
+	var existing policyv1.PodDisruptionBudget
+	err := r.Get(ctx, name, &existing)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, want)
+	} else if err != nil {
+		return err
+	}
+	if reflect.DeepEqual(existing.Spec.MinAvailable, want.Spec.MinAvailable) &&
+		reflect.DeepEqual(existing.Spec.Selector, want.Spec.Selector) {
+		return nil // already converged — skip the write and the watch event it would cause
+	}
+	existing.Spec.MinAvailable = want.Spec.MinAvailable
 	existing.Spec.Selector = want.Spec.Selector
 	return r.Update(ctx, &existing)
 }
@@ -658,10 +696,20 @@ func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.
 		return err
 	}
 	for i := range clones.Items {
-		if !want[clones.Items[i].Name] {
-			if err := r.Delete(ctx, &clones.Items[i]); err != nil && !apierrors.IsNotFound(err) {
-				return err
-			}
+		clone := &clones.Items[i]
+		if want[clone.Name] {
+			continue
+		}
+		// Deleting the clone cascades to its StatefulSet, which severs whatever is building on it.
+		// Lowering Fanout is not urgent — leave a busy clone for the next reconcile, by which time its
+		// builds have been released or have aged out of the inflight set.
+		if live, _ := bkov1.ExpireInflight(clone.Status.Inflight, time.Now(), r.maxBuildAge()); len(live) > 0 {
+			log.FromContext(ctx).Info("keeping a fan-out clone that is still serving builds",
+				"clone", clone.Name, "of", bp.Spec.Key, "inflight", len(live))
+			continue
+		}
+		if err := r.Delete(ctx, clone); err != nil && !apierrors.IsNotFound(err) {
+			return err
 		}
 	}
 
@@ -700,7 +748,8 @@ func (r *BuildProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&bkov1.BuildProject{}).
 		Owns(&appsv1.StatefulSet{}).
-		Owns(&corev1.Service{})
+		Owns(&corev1.Service{}).
+		Owns(&policyv1.PodDisruptionBudget{})
 	// Only watch VolumeSnapshots when the durability-snapshot feature is enabled. Otherwise the manager
 	// would require the external-snapshotter CRDs to exist just to START — they aren't installed on every
 	// cluster (e.g. a default EKS without the snapshot controller), which would crash an otherwise-fine

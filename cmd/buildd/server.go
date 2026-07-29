@@ -52,6 +52,10 @@ type routeServer struct {
 	// into the canonical spec before Ensure — the create-only window where they can take effect.
 	defaults *projectdefaults.Config
 	log      logr.Logger
+	// requireBuildID rejects a /complete with no buildId. The id is minted per build by /route, so
+	// requiring it means a caller can only release builds it actually started — without it, any
+	// authenticated caller can drain another project's inflight set by key alone.
+	requireBuildID bool
 }
 
 // adminTokenHeader carries the break-glass admin token — a header DISTINCT from Authorization so admin

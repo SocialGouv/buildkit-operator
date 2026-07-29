@@ -80,6 +80,9 @@ spec:
             {{- end }}
             {{- if hasKey . "rateBurst" }}
             - --api-rate-burst={{ .rateBurst }}
+            {{- if .requireBuildId }}
+            - --require-build-id
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- if .Values.s3.bucket }}

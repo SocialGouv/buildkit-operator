@@ -252,6 +252,13 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: buildId is too long", http.StatusBadRequest)
 		return
 	}
+	if s.requireBuildID && req.BuildID == "" {
+		// Without an id the release would fall back to "retire this project's oldest build", which is
+		// a capability any authenticated caller could aim at any project. Refused once the fleet is
+		// new enough to echo the id back.
+		http.Error(w, "bad request: buildId is required", http.StatusBadRequest)
+		return
+	}
 	s.prov.EndInflight(r.Context(), req.Key, req.BuildID)
 	w.WriteHeader(http.StatusNoContent)
 }

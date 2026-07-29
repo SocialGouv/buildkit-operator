@@ -23,6 +23,12 @@ rules:
     resources: ["statefulsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
+  # --- policy: one PodDisruptionBudget per daemon, so a node drain waits for
+  # the builds running on it instead of evicting them mid-stream.
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
   # --- core: per-project Service / Pods / PVC, plus mounted config ----------
   # Services (one per project, TCP+mTLS :1234) and PVCs (the warm cache) are
   # created/owned by the controller.

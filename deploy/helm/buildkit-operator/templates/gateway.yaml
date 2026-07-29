@@ -23,9 +23,10 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: gateway
     spec:
-      # Give in-flight builds time to drain on rollout/scale-down (the gateway stops accepting on
-      # SIGTERM and waits ~115s for open connections).
-      terminationGracePeriodSeconds: 120
+      # Every connection through the gateway is a build in progress, so a rollout must not cut them:
+      # on SIGTERM it stops accepting and keeps proxying what is already open. The grace period is the
+      # real deadline (the kubelet SIGKILLs at it), and the process's own budget sits just under it.
+      terminationGracePeriodSeconds: {{ add .Values.gateway.drainSeconds 60 }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -45,6 +46,7 @@ spec:
             - --domain={{ prepend .Values.gateway.extraDomains .Values.gateway.host | join "," }}
             - --namespace={{ include "buildkit-operator.buildsNamespace" . }}
             - --daemon-port={{ .Values.buildkit.port }} # internal: the gateway dials daemons on the mTLS port
+            - --drain-seconds={{ .Values.gateway.drainSeconds }}
             {{- with .Values.gateway.maxConns }}
             # Cap concurrent TCP connections BEFORE mTLS auth, so an unauthenticated flood can't exhaust
             # the public-facing gateway's resources. 0 = unlimited.
