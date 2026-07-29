@@ -48,7 +48,7 @@ Inputs:
 | `secrets` | build secrets, one `id=value` per line — forwarded to buildx as `--secret id=…,env=…`. Sent over the build session only: hashed into the cache key, never stored in a layer, the cache, or the image config |
 | `push` | push the result to the registry (default `false`) |
 | `oidc-audience` | audience of the minted GitHub OIDC token (default `buildkit-operator`; must match buildd's provider audience) |
-| `token` | fallback `/route` credential when OIDC isn't used: a legacy bearer or an admin token. Leave empty under OIDC |
+| `token` | legacy `/route` bearer, for a deployment with no OIDC. Leave empty otherwise — it proves the caller, not the project (see below) |
 | `admin-token` | break-glass admin token (`X-Buildkit-Operator-Admin-Token`) — bypasses OIDC; ops only |
 | `untrusted` | fork-PR build: ephemeral daemon, **no write-back** to the shared cache (default `false`) |
 | `gateway-ip` | map `<daemon>.<gateway-host>` → this gateway LB IP for the run (escape hatch when there is no wildcard DNS yet) |
@@ -244,14 +244,25 @@ Configure providers in the chart (`oidc.providers` — built-in `type: github` /
 `type: forgejo`), and optionally a hard org gate with `oidc.repoAllowlist` (a verified-but-unlisted repo
 gets `403`).
 
-**Fallbacks.** Without `oidc.providers`, `/route` falls back to the legacy bearer (`auth.tokenSecret`,
-constant-time compared, passed via the Action's `token` input) — keep that for **in-cluster only**
-deployments. A break-glass **admin token** (`oidc.adminTokenSecret`, sent in the
+**The legacy bearer is not an equivalent option.** `auth.tokenSecret` authenticates the *caller* but not
+the *project*: on that path the client declares its own `repo`, so any holder can build as — and poison
+the cache of — any project, and none of the repo-scoped checks apply. Keep it only for an in-cluster
+deployment with no OIDC available, and clear it as soon as callers can mint tokens. The reference
+deployment (ovh-prod) has none: a caller that gets `401` needs `permissions: id-token: write`, not a
+token. A break-glass **admin token** (`oidc.adminTokenSecret`, sent in the
 `X-Buildkit-Operator-Admin-Token` header via the `admin-token` input / `BUILDKIT_OPERATOR_ADMIN_TOKEN`)
-bypasses OIDC for the manual `build` CLI and ops. For public exposure prefer the **TLS Ingress**; the raw
-L4 `service.type: LoadBalancer` serves plain HTTP and the chart refuses it without **both** an IP
-allowlist (`service.loadBalancerSourceRanges`) and `auth.tokenSecret`. The gateway needs no token of its
-own — it is guarded by mTLS — but caps pre-auth connections via `gateway.maxConns`.
+bypasses OIDC for the manual `build` CLI and ops — same caveat, same advice.
+
+For public exposure prefer the **TLS Ingress**; the raw L4 `service.type: LoadBalancer` serves plain HTTP
+and the chart refuses it without an IP allowlist (`service.loadBalancerSourceRanges`). Either exposure
+needs authentication configured — `oidc.providers` or, failing that, `auth.tokenSecret`. The gateway
+needs no token of its own — it is guarded by mTLS — but caps pre-auth connections via `gateway.maxConns`.
+
+**Releasing a build.** `/route` returns a `buildId` that the client echoes back on `/complete`. That id
+is what authorizes the release when the job's identity token has expired — forge tokens live minutes
+(GitHub's, about two) and a build does not, so requiring a live one would reject the release of every
+build longer than its own token and leak an in-flight entry each time. The shipped clients handle this;
+a hand-rolled caller should send the `buildId` it was given.
 
 ### The certificate SAN requirement
 

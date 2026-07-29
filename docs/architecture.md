@@ -80,12 +80,32 @@ controller-runtime loop. Per object it converges:
    CloneChild, key)` — the *same* function the `/route` fork path uses (with `ForkChild`), so a
    fan-out clone and a fork daemon can never drift in how they inherit storage/security and seed
    from the parent snapshot.
-5. **Status** — `phase` (Pending/Warm/Idle/Scaling/Failed), `replicas`, `endpoint`, `lastSnapshot`.
-   Status is only written when it actually changes — unconditional status writes would re-trigger
-   reconcile in a loop.
+5. **Status** — `phase` (Pending/Warm/Idle/Scaling/Failed), `replicas`, `endpoint`, `lastSnapshot`,
+   and `inflight`. Status is only written when it actually changes — unconditional status writes would
+   re-trigger reconcile in a loop.
+
+### Nothing takes a daemon away from a running build
+
+`status.inflight` holds one timestamped entry per routed build: `/route` adds one, `/complete` removes
+it, and an entry whose release never arrives expires on **its own** clock past `--max-build-seconds`.
+That set is what every destructive decision consults, each re-reading it from the API server rather
+than the informer cache, because `/route` runs on every replica while the reconciler runs on the leader:
+
+- **scale-to-zero** and **fork reaping** hold off while a build is in flight;
+- a **pod-template roll** (any chart upgrade that changes the rendered daemon — a companion tag is
+  enough) is withheld until the daemon drains. Every build gets at least an hour before a forced roll
+  can cut it; `--max-build-seconds` caps the wait so a project that builds back-to-back still takes new
+  images. A wedged daemon is rolled regardless — the roll is usually the repair;
+- `/route` stops advertising a daemon mid-roll, so a build is never handed the endpoint of a pod
+  Kubernetes is about to delete;
+- a **PodDisruptionBudget** exists exactly while the daemon serves builds, so a node drain waits for
+  them — the one disruption the control plane cannot otherwise veto — and is deleted once idle, since a
+  zero-minimum budget would block drains on an unhealthy pod instead of permitting them;
+- **lowering `fanout`** leaves a clone that is still serving builds for a later reconcile.
 
 Metrics emitted: `buildkit_operator_routes_total`, `buildkit_operator_route_duration_seconds`,
-`buildkit_operator_coldstarts_inflight`, `buildkit_operator_scale_events_total`, `buildkit_operator_snapshots_total`.
+`buildkit_operator_coldstarts_inflight`, `buildkit_operator_scale_events_total`,
+`buildkit_operator_snapshots_total`, `buildkit_operator_daemon_rolls_held`.
 
 ## Control-plane HA
 

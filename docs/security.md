@@ -104,10 +104,12 @@ need elevated rights to run Kata anyway). Disabling verification entirely is an 
 empty, OIDC is off and `/route` falls back to the legacy bearer (`auth.tokenSecret`) or open in-cluster
 use — keep that only for fully in-cluster deployments.
 
-**Zero-downtime migration.** Enabling OIDC while a legacy bearer (`auth.tokenSecret`) is still set keeps
-that bearer working as a fallback, so CI consumers migrate to token-minting at their own pace with no
-breakage; once everyone mints OIDC tokens, remove `auth.tokenSecret` to enforce OIDC strictly (the
-secure end state — the global bearer is then no longer accepted). Fallback use is logged per call.
+**Zero-downtime migration, then finish it.** Enabling OIDC while a legacy bearer (`auth.tokenSecret`) is
+still set keeps that bearer working as a fallback, so CI consumers migrate to token-minting at their own
+pace with no breakage — and every fallback use is logged, so you can tell when the last one stops.
+**Removing `auth.tokenSecret` is the point of the exercise, not an optional last step:** while it is set,
+any holder can still declare its own repo, which makes every repo-scoped check moot for them. The
+reference deployment (ovh-prod) has completed this — OIDC only, no bearer.
 
 ## Where buildkit-operator is actually *more* secure than a shared daemon
 
@@ -147,8 +149,9 @@ isolation**, which a single shared `buildkitd` cannot offer:
   gateway caps pre-auth connections (`gateway.maxConns`) so an unauthenticated flood can't exhaust it.
   The separate `/route` API is **identity-verified** (OIDC, above), with the legacy bearer / admin token
   as the in-cluster fallback. Prefer the **TLS Ingress** for public `/route` access — the raw L4
-  `service.type: LoadBalancer` serves plain HTTP, so the chart refuses it unless you set **both**
-  `service.loadBalancerSourceRanges` (an IP allowlist) **and** `auth.tokenSecret`. External surface is
+  `service.type: LoadBalancer` serves plain HTTP, so the chart refuses it without an IP allowlist
+  (`service.loadBalancerSourceRanges`); either exposure also requires authentication to be configured
+  (`oidc.providers`, or `auth.tokenSecret` where no OIDC is available). External surface is
   fixed and small regardless of project count; keep both off (in-cluster runners only) when you don't
   need internet-facing builds.
 - **Retained cache PVCs are GC'd when their project disappears.** A project's cache PVC is retained

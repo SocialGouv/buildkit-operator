@@ -24,10 +24,10 @@ gh variable set BUILDKIT_OPERATOR_BUILDD_URL --org $ORG --visibility selected --
 gh variable set BUILDKIT_OPERATOR_GATEWAY_IP  --org $ORG --visibility selected --repos $REPOS --body "57.128.55.172"
 ```
 
-> Non-OIDC buildd (no `oidc.providers`)? Then a shared bearer is still possible — set
-> `BUILDKIT_OPERATOR_TOKEN` (legacy) or `BUILDKIT_OPERATOR_ADMIN_TOKEN` (break-glass admin) as an org
-> secret and pass it via the Action's `token` / `admin-token` input. OIDC is preferred — no secret to
-> rotate or leak.
+> A buildd with no `oidc.providers` can still take a shared bearer (`BUILDKIT_OPERATOR_TOKEN`) or the
+> break-glass admin token, passed via the Action's `token` / `admin-token` input. Prefer OIDC in every
+> case: a shared bearer proves who is calling but not which project they may build, so any holder can
+> build as — and poison the cache of — any repo. The reference deployment accepts OIDC only.
 
 To onboard another repo later, just add it to `--repos` on each (re-running `gh secret set` is fine), or
 flip to `--visibility all`.
