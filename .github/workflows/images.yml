@@ -26,7 +26,7 @@ on:
 # The release pushes a commit and then a tag; both reach this workflow now that
 # it authenticates as an App. Same ref never builds twice.
 concurrency:
-  group: images-${{ github.ref }}
+  group: images-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:
