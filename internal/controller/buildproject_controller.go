@@ -473,12 +473,11 @@ func phaseFrom(desired, ready int32) string {
 // pod transitioning into Failed, then recovering) is observed even without a Pod watch.
 const scalingRecheckInterval = 30 * time.Second
 
-// maxRollHold bounds how long a pending pod template can be withheld from a daemon. Draining is
-// per-build, but a project that always has a build in flight would otherwise never take a new image —
-// and the busiest project is exactly the one a security fix most needs to reach. Past this the roll
-// goes through, severing whatever is running: an image the operator has abandoned is the worse of the
-// two failures, and CI retries a build.
-const maxRollHold = 30 * time.Minute
+// minBuildGrace is the floor the drain guarantees: a forced roll NEVER severs a build younger than
+// this, so any build gets at least an hour to finish once it has been routed. Long builds are the
+// norm here (the safety net for a build that never releases is --max-build-seconds, 2h), so a roll
+// that cut a 45-minute build would trade one broken promise for another.
+const minBuildGrace = time.Hour
 
 // rollHeldSinceAnnotation stamps when a daemon's pending template was first withheld, so the hold is
 // bounded across reconciles (and across an operator restart) and is visible on the object rather than
@@ -504,9 +503,18 @@ func (r *BuildProjectReconciler) holdRoll(ctx context.Context, bp *bkov1.BuildPr
 		since = time.Now()
 		sts.Annotations[rollHeldSinceAnnotation] = since.UTC().Format(time.RFC3339)
 	}
-	if held := time.Since(since); held > maxRollHold {
-		l.Info("roll held too long, rolling through the builds still in flight",
-			"key", bp.Spec.Key, "heldFor", held.Round(time.Second), "inflight", len(liveInflight))
+	// Entries are chronological, so the last one is the youngest build on this daemon. Once even that
+	// build has had its grace period, every build here has, and the roll may go through.
+	youngest := time.Since(liveInflight[len(liveInflight)-1].Since.Time)
+	heldFor := time.Since(since)
+	// The absolute cap covers a project that builds back-to-back: new routes keep the youngest build
+	// young forever, and without it the busiest project — the one a security fix most needs to reach —
+	// would never take a new image. It matches the inflight safety net, past which a build has already
+	// outlived what the operator promises it.
+	if youngest > minBuildGrace || heldFor > r.maxBuildAge() {
+		l.Info("rolling through the builds still in flight",
+			"key", bp.Spec.Key, "heldFor", heldFor.Round(time.Second),
+			"youngestBuild", youngest.Round(time.Second), "inflight", len(liveInflight))
 		delete(sts.Annotations, rollHeldSinceAnnotation)
 		return false
 	}
