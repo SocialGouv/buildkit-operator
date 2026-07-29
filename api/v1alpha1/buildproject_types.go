@@ -137,7 +137,17 @@ type BuildProjectStatus struct {
 	// LastSnapshot is the name of the most recent VolumeSnapshot (M3).
 	LastSnapshot string `json:"lastSnapshot,omitempty"`
 
-	// InflightBuilds is the number of builds currently routed to this daemon.
+	// Inflight are the builds currently routed to this daemon, each with the time /route registered
+	// it. This is the source of truth: entries expire individually (--max-build-seconds), so a build
+	// whose /complete never arrives cannot pin the daemon warm forever, and cannot drag a genuinely
+	// long-running sibling down with it either.
+	// +optional
+	// +listType=map
+	// +listMapKey=id
+	Inflight []InflightBuild `json:"inflight,omitempty"`
+
+	// InflightBuilds is len(Inflight), maintained in the same write for `kubectl get` and dashboards.
+	// It is a PROJECTION, never a decision input — read Inflight (or InflightCount) instead.
 	InflightBuilds int32 `json:"inflightBuilds"`
 
 	// LastCacheExportGrant is when buildd last granted an S3 cache export to a

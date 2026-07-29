@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -85,6 +87,22 @@ func TestHandleRoute_WarmReturnsEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), key) {
 		t.Errorf("response missing key %q: %s", key, rec.Body.String())
+	}
+	// The response carries the build's own token, and the project's inflight set holds exactly that
+	// entry — that pairing is what lets /complete release THIS build rather than a concurrent one.
+	var resp router.RouteResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.BuildID == "" {
+		t.Fatal("route response carries no buildId")
+	}
+	var bp bkov1.BuildProject
+	if err := c.Get(t.Context(), types.NamespacedName{Name: key, Namespace: "buildkit-operator"}, &bp); err != nil {
+		t.Fatalf("get buildproject: %v", err)
+	}
+	if bp.Status.InflightCount() != 1 || bp.Status.Inflight[0].ID != resp.BuildID {
+		t.Errorf("inflight = %v, want exactly the returned buildId %q", bp.Status.Inflight, resp.BuildID)
 	}
 }
 

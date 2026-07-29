@@ -291,9 +291,40 @@ spec:
               endpoint:
                 description: Endpoint is the mTLS address clients dial (tcp://svc.ns.svc:1234).
                 type: string
+              inflight:
+                description: |-
+                  Inflight are the builds currently routed to this daemon, each with the time /route registered
+                  it. This is the source of truth: entries expire individually (--max-build-seconds), so a build
+                  whose /complete never arrives cannot pin the daemon warm forever, and cannot drag a genuinely
+                  long-running sibling down with it either.
+                items:
+                  description: |-
+                    InflightBuild is one routed build that has not been released yet. Each entry ages on its OWN
+                    clock, so a build whose /complete never arrives expires by itself — without touching the entries
+                    of builds that are still running.
+                  properties:
+                    id:
+                      description: ID is the opaque token /route returned to the client,
+                        which /complete echoes back.
+                      type: string
+                    since:
+                      description: |-
+                        Since is when /route registered this build. The reconciler expires entries older than
+                        --max-build-seconds.
+                      format: date-time
+                      type: string
+                  required:
+                  - id
+                  - since
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
               inflightBuilds:
-                description: InflightBuilds is the number of builds currently routed
-                  to this daemon.
+                description: |-
+                  InflightBuilds is len(Inflight), maintained in the same write for `kubectl get` and dashboards.
+                  It is a PROJECTION, never a decision input — read Inflight (or InflightCount) instead.
                 format: int32
                 type: integer
               lastBuildTime:

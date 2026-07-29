@@ -227,21 +227,23 @@ func TestRouteBuild_EmptyEndpoint(t *testing.T) {
 	}
 }
 
-func TestCompleteBuild_PostsKey(t *testing.T) {
-	got := make(chan string, 1)
+// The release carries the buildId /route handed out, so buildd retires THIS build's inflight entry
+// rather than a concurrent build's.
+func TestCompleteBuild_PostsKeyAndBuildID(t *testing.T) {
+	got := make(chan map[string]string, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		got <- body["key"]
+		got <- body
 	}))
 	defer srv.Close()
 
 	cfg := &config{builddURL: srv.URL, token: "tok"}
-	completeBuild(cfg, "p1", quietLogger()) // best-effort, never panics
+	completeBuild(cfg, "p1", "b7f3a2", quietLogger()) // best-effort, never panics
 	select {
-	case k := <-got:
-		if k != "p1" {
-			t.Errorf("posted key = %q, want p1", k)
+	case b := <-got:
+		if b["key"] != "p1" || b["buildId"] != "b7f3a2" {
+			t.Errorf("posted %v, want key=p1 buildId=b7f3a2", b)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("completeBuild did not POST /complete")
@@ -251,7 +253,7 @@ func TestCompleteBuild_PostsKey(t *testing.T) {
 // completeBuild swallows transport errors (unreachable buildd) — it must not panic.
 func TestCompleteBuild_UnreachableIsSilent(t *testing.T) {
 	cfg := &config{builddURL: "http://127.0.0.1:1"}
-	completeBuild(cfg, "p1", quietLogger())
+	completeBuild(cfg, "p1", "b7f3a2", quietLogger())
 }
 
 // --- exec-backed: git / buildx ---------------------------------------------

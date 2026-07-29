@@ -152,7 +152,7 @@ func (r *BuildProjectReconciler) maybeAutoGrow(ctx context.Context, bp *bkov1.Bu
 	// kill the daemon on every reconcile — and re-checked against a FRESH
 	// (uncached) read of inflight, so a build routed a beat ago (informer lag)
 	// isn't killed mid-connect.
-	if resizePending(&pvc) && bp.Status.InflightBuilds == 0 && ready >= 1 {
+	if resizePending(&pvc) && bp.Status.InflightCount() == 0 && ready >= 1 {
 		if !r.bounceGate.allow(bp.Spec.Key, time.Now(), autoGrowBounceInterval) {
 			return nil
 		}
@@ -258,10 +258,10 @@ func (r *BuildProjectReconciler) recordSpecGi(ctx context.Context, bp *bkov1.Bui
 	return nil
 }
 
-// freshInflight reads InflightBuilds bypassing the informer cache (Direct when
+// freshInflight counts the unreleased builds bypassing the informer cache (Direct when
 // wired, else the cached client) — the pre-bounce check must not act on a
 // snapshot that predates a just-routed build.
-func (r *BuildProjectReconciler) freshInflight(ctx context.Context, bp *bkov1.BuildProject) (int32, error) {
+func (r *BuildProjectReconciler) freshInflight(ctx context.Context, bp *bkov1.BuildProject) (int, error) {
 	reader := r.Direct
 	if reader == nil {
 		reader = r.Client
@@ -270,7 +270,7 @@ func (r *BuildProjectReconciler) freshInflight(ctx context.Context, bp *bkov1.Bu
 	if err := reader.Get(ctx, types.NamespacedName{Name: bp.Name, Namespace: bp.Namespace}, &cur); err != nil {
 		return 0, client.IgnoreNotFound(err)
 	}
-	return cur.Status.InflightBuilds, nil
+	return cur.Status.InflightCount(), nil
 }
 
 // giOf converts a storage quantity to whole Gi (floor; zero-quantity => 0).

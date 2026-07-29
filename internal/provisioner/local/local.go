@@ -14,6 +14,7 @@ import (
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/provisioner"
 	"github.com/socialgouv/buildkit-operator/internal/router"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // dialProbe reports whether something is accepting TCP connections at addr (host:port). It is the
@@ -57,8 +58,8 @@ type Config struct {
 type projectState struct {
 	spec       bkov1.BuildProjectSpec
 	vm         bool
-	hot        bool // fan-out clone: stays up, never scaled to zero by the idle loop
-	inflight   int32
+	hot        bool                  // fan-out clone: stays up, never scaled to zero by the idle loop
+	inflight   []bkov1.InflightBuild // routed builds not released yet, each on its own expiry clock
 	lastBuild  time.Time
 	ip         string
 	lastSnap   string    // newest durability snapshot (full name dataset@snap), the seed for forks/clones
@@ -297,21 +298,40 @@ func (p *Provisioner) Endpoint(key string) string {
 	return router.EndpointHost(ip, p.cfg.Port)
 }
 
-// AddInflight adjusts the in-memory inflight counter (floored at 0) and stamps last-build, keeping the
-// instance pinned warm against the scale-to-zero loop for the build's duration.
-func (p *Provisioner) AddInflight(_ context.Context, key string, delta int32) {
+// StartInflight registers a routed build under id, pinning the instance warm against the
+// scale-to-zero loop until it is released or expires.
+func (p *Provisioner) StartInflight(_ context.Context, key, id string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	st := p.stateFor(key)
+	st.inflight = bkov1.StartInflight(st.inflight, id, metav1.Now())
+	st.lastBuild = time.Now()
+}
+
+// EndInflight releases the build registered under id (empty id releases the oldest entry).
+func (p *Provisioner) EndInflight(_ context.Context, key, id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st := p.stateFor(key)
+	st.inflight, _ = bkov1.EndInflight(st.inflight, id)
+	st.lastBuild = time.Now()
+}
+
+// Touch stamps last-build without registering a build (the /prewarm path).
+func (p *Provisioner) Touch(_ context.Context, key string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.stateFor(key).lastBuild = time.Now()
+}
+
+// stateFor returns the project's state, creating it on first touch. Callers hold p.mu.
+func (p *Provisioner) stateFor(key string) *projectState {
 	st := p.projects[key]
 	if st == nil {
 		st = &projectState{spec: bkov1.BuildProjectSpec{Key: key}}
 		p.projects[key] = st
 	}
-	st.inflight += delta
-	if st.inflight < 0 {
-		st.inflight = 0
-	}
-	st.lastBuild = time.Now()
+	return st
 }
 
 // S3CacheDecision mirrors the k8s backend's policy semantics over the in-memory project state
@@ -365,12 +385,13 @@ func (p *Provisioner) Reconcile(ctx context.Context) {
 	var idle, snap []cand
 	p.mu.Lock()
 	for key, st := range p.projects {
-		// An inflight build pins the daemon warm — UNLESS it is older than the MaxBuildSeconds safety net
-		// (a missed /complete must not pin a daemon forever; mirrors the k8s reconciler).
-		pinned := st.inflight > 0
-		if pinned && p.cfg.MaxBuildSeconds > 0 && now.Sub(st.lastBuild) > time.Duration(p.cfg.MaxBuildSeconds)*time.Second {
-			pinned = false
+		// An inflight build pins the daemon warm. Entries expire on their OWN clock past the
+		// MaxBuildSeconds safety net, so a missed /complete cannot pin a daemon forever and cannot
+		// release a sibling that is still building (mirrors the k8s reconciler).
+		if p.cfg.MaxBuildSeconds > 0 {
+			st.inflight, _ = bkov1.ExpireInflight(st.inflight, now, time.Duration(p.cfg.MaxBuildSeconds)*time.Second)
 		}
+		pinned := len(st.inflight) > 0
 		// Scale-to-zero: warm (non-hot) projects idle past the timeout. Hot fan-out clones never idle out.
 		if !st.hot && !pinned && !st.lastBuild.IsZero() && now.Sub(st.lastBuild) > p.cfg.IdleTimeout {
 			idle = append(idle, cand{key: key, name: router.DaemonName(key)})

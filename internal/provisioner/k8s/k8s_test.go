@@ -187,9 +187,10 @@ func TestReady(t *testing.T) {
 	}
 }
 
-// TestAddInflight_UpdatesStatus: AddInflight increments the inflight counter, stamps LastBuildTime,
-// and floors a negative result at zero (a /complete that races ahead of /route can't go negative).
-func TestAddInflight_UpdatesStatus(t *testing.T) {
+// TestInflight_UpdatesStatus: StartInflight records one entry per routed build (and the derived
+// count) and stamps LastBuildTime; EndInflight retires the entry it names and leaves the others; a
+// release naming an unknown build is a no-op (a duplicate /complete can never go negative).
+func TestInflight_UpdatesStatus(t *testing.T) {
 	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcount", Namespace: "buildkit-operator"},
 		Spec:       bkov1.BuildProjectSpec{Key: "pcount", Repo: "github.com/o/r", Arch: "amd64"},
@@ -198,26 +199,37 @@ func TestAddInflight_UpdatesStatus(t *testing.T) {
 		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
 	p := newProv(c, 0, "", 0)
 
-	p.AddInflight(t.Context(), "pcount", +2)
-	var got bkov1.BuildProject
-	_ = c.Get(t.Context(), types.NamespacedName{Name: "pcount", Namespace: "buildkit-operator"}, &got)
-	if got.Status.InflightBuilds != 2 {
-		t.Errorf("InflightBuilds = %d, want 2", got.Status.InflightBuilds)
+	read := func() bkov1.BuildProject {
+		var got bkov1.BuildProject
+		_ = c.Get(t.Context(), types.NamespacedName{Name: "pcount", Namespace: "buildkit-operator"}, &got)
+		return got
+	}
+
+	p.StartInflight(t.Context(), "pcount", "a")
+	p.StartInflight(t.Context(), "pcount", "b")
+	got := read()
+	if got.Status.InflightCount() != 2 || got.Status.InflightBuilds != 2 {
+		t.Errorf("inflight = %v (count field %d), want 2 entries", got.Status.Inflight, got.Status.InflightBuilds)
 	}
 	if got.Status.LastBuildTime == nil {
 		t.Error("LastBuildTime not stamped")
 	}
 
-	p.AddInflight(t.Context(), "pcount", -5) // floors at 0
-	_ = c.Get(t.Context(), types.NamespacedName{Name: "pcount", Namespace: "buildkit-operator"}, &got)
-	if got.Status.InflightBuilds != 0 {
-		t.Errorf("InflightBuilds = %d after over-decrement, want 0 (floored)", got.Status.InflightBuilds)
+	p.EndInflight(t.Context(), "pcount", "a")
+	got = read()
+	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != "b" {
+		t.Errorf("inflight = %v, want only b left", got.Status.Inflight)
+	}
+	p.EndInflight(t.Context(), "pcount", "nope") // unknown id: no-op, never negative
+	got = read()
+	if got.Status.InflightCount() != 1 || got.Status.InflightBuilds != 1 {
+		t.Errorf("inflight = %v (count field %d), want b still there", got.Status.Inflight, got.Status.InflightBuilds)
 	}
 }
 
-// Only positive deltas (real routed builds) feed the adaptive-idle cadence ring — a prewarm touch
-// (delta 0) or a /complete release (delta -1) must not inflate the observed build frequency.
-func TestAddInflight_RecordsBuildCadence(t *testing.T) {
+// Only routed builds feed the adaptive-idle cadence ring — a prewarm Touch or a /complete release
+// must not inflate the observed build frequency.
+func TestStartInflight_RecordsBuildCadence(t *testing.T) {
 	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcadence", Namespace: "buildkit-operator"},
 		Spec:       bkov1.BuildProjectSpec{Key: "pcadence", Repo: "github.com/o/r", Arch: "amd64"},
@@ -226,15 +238,15 @@ func TestAddInflight_RecordsBuildCadence(t *testing.T) {
 		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
 	p := newProv(c, 0, "", 0)
 
-	p.AddInflight(t.Context(), "pcadence", +1)
-	p.AddInflight(t.Context(), "pcadence", 0)  // prewarm touch
-	p.AddInflight(t.Context(), "pcadence", -1) // complete
-	p.AddInflight(t.Context(), "pcadence", +1)
+	p.StartInflight(t.Context(), "pcadence", "a")
+	p.Touch(t.Context(), "pcadence")            // prewarm
+	p.EndInflight(t.Context(), "pcadence", "a") // complete
+	p.StartInflight(t.Context(), "pcadence", "b")
 
 	var got bkov1.BuildProject
 	_ = c.Get(t.Context(), types.NamespacedName{Name: "pcadence", Namespace: "buildkit-operator"}, &got)
 	if n := len(got.Status.RecentBuildTimes); n != 2 {
-		t.Errorf("RecentBuildTimes = %d entries, want 2 (only +1 deltas recorded)", n)
+		t.Errorf("RecentBuildTimes = %d entries, want 2 (only routed builds recorded)", n)
 	}
 }
 

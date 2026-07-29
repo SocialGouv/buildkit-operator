@@ -146,9 +146,12 @@ func TestReconcile_RollsTemplateOnChange(t *testing.T) {
 // M2 elasticity: the scale decision must honor tier + idle window + in-flight.
 func TestDesiredReplicas(t *testing.T) {
 	now := time.Now()
-	mk := func(tier string, idleSec int32, ago time.Duration, hasBuilt bool, inflight int32) *bkov1.BuildProject {
+	// inflightAge registers one build that started that long ago (0 = no inflight build).
+	mk := func(tier string, idleSec int32, ago time.Duration, hasBuilt bool, inflightAge time.Duration) *bkov1.BuildProject {
 		bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Tier: tier, IdleTimeoutSec: idleSec}}
-		bp.Status.InflightBuilds = inflight
+		if inflightAge > 0 {
+			bp.Status.SetInflight([]bkov1.InflightBuild{{ID: "b", Since: metav1.NewTime(now.Add(-inflightAge))}})
+		}
 		if hasBuilt {
 			ts := metav1.NewTime(now.Add(-ago))
 			bp.Status.LastBuildTime = &ts
@@ -173,10 +176,12 @@ func TestDesiredReplicas(t *testing.T) {
 		{"warm recent build", mk(bkov1.TierWarm, 900, time.Minute, true, 0), 0, 1},
 		{"warm idle -> zero", mk(bkov1.TierWarm, 900, time.Hour, true, 0), 0, 0},
 		{"warm never built -> zero", mk(bkov1.TierWarm, 900, 0, false, 0), 0, 0},
-		// In-flight keeps it warm even past the idle window — until the inflight counter goes stale
-		// (a client that missed its /complete can't pin a daemon forever).
-		{"warm in-flight (fresh) -> one", mk(bkov1.TierWarm, 900, time.Hour, true, 2), 0, 1},
-		{"warm in-flight (stale) -> zero", mk(bkov1.TierWarm, 900, 3*time.Hour, true, 2), 0, 0},
+		// In-flight keeps it warm past the idle window — until THAT ENTRY is older than
+		// max-build-seconds. The entry's own age decides, not the project's last activity: a project
+		// that keeps routing builds must still shed the one whose /complete never came.
+		{"warm in-flight (fresh) -> one", mk(bkov1.TierWarm, 900, time.Hour, true, time.Minute), 0, 1},
+		{"warm in-flight (expired) -> zero", mk(bkov1.TierWarm, 900, 3*time.Hour, true, 3*time.Hour), 0, 0},
+		{"warm in-flight expired but project still active -> zero", mk(bkov1.TierWarm, 900, time.Hour, true, 3*time.Hour), 0, 0},
 		// Adaptive keep-warm: 6 builds in the window stretch the 900s idle to 5400s, so a build
 		// 1h ago still holds the daemon; without adaptivity (max=0) the same project scales to zero.
 		{"adaptive frequent -> one", cadence(mk(bkov1.TierWarm, 900, time.Hour, true, 0), 6), 6 * time.Hour, 1},
@@ -190,16 +195,52 @@ func TestDesiredReplicas(t *testing.T) {
 	}
 }
 
-// A stale inflight counter (accumulated /complete losses from cancelled CI jobs) is zeroed
-// by the reconciler once past the max-build-seconds window, instead of growing forever.
-func TestReconcile_ResetsStaleInflight(t *testing.T) {
+// The leaked inflight entries (a cancelled CI job kills the runner before its /complete) expire
+// PER BUILD once past max-build-seconds — even while the project keeps routing new builds, which is
+// exactly when the leak accumulates. A build that started recently survives the sweep.
+func TestReconcile_ExpiresLeakedInflightWhileProjectIsActive(t *testing.T) {
 	s := testScheme(t)
 	ns, key := "buildkit-operator", "pstale"
-	old := metav1.NewTime(time.Now().Add(-3 * time.Hour))
+	justNow := metav1.Now()
 	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
 		Spec:       bkov1.BuildProjectSpec{Key: key, Repo: "github.com/o/r", Arch: "amd64"},
-		Status:     bkov1.BuildProjectStatus{InflightBuilds: 110, LastBuildTime: &old},
+		// LastBuildTime is fresh: the project is actively building, so a window keyed on project
+		// activity would never fire. The leaked entries are old on their own clock.
+		Status: bkov1.BuildProjectStatus{LastBuildTime: &justNow},
+	}
+	leaked := metav1.NewTime(time.Now().Add(-3 * time.Hour))
+	bp.Status.SetInflight([]bkov1.InflightBuild{
+		{ID: "leak1", Since: leaked},
+		{ID: "leak2", Since: leaked},
+		{ID: "running", Since: justNow},
+	})
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns}}
+
+	if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}); err != nil {
+		t.Fatal(err)
+	}
+	var got bkov1.BuildProject
+	_ = c.Get(t.Context(), types.NamespacedName{Name: key, Namespace: ns}, &got)
+	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != "running" {
+		t.Errorf("inflight = %v, want only the still-running build", got.Status.Inflight)
+	}
+	if got.Status.InflightBuilds != 1 {
+		t.Errorf("InflightBuilds projection = %d, want 1 (must track the entries)", got.Status.InflightBuilds)
+	}
+}
+
+// A status written before inflight became a set carries only the counter — no entry pins the daemon,
+// so the reconciler zeroes the number instead of leaving it claiming builds that are not tracked.
+func TestReconcile_HealsCounterWithoutEntries(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildkit-operator", "plegacy"
+	now := metav1.Now()
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Repo: "github.com/o/r", Arch: "amd64"},
+		Status:     bkov1.BuildProjectStatus{InflightBuilds: 3, LastBuildTime: &now},
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
 	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns}}
@@ -209,8 +250,8 @@ func TestReconcile_ResetsStaleInflight(t *testing.T) {
 	}
 	var got bkov1.BuildProject
 	_ = c.Get(t.Context(), types.NamespacedName{Name: key, Namespace: ns}, &got)
-	if got.Status.InflightBuilds != 0 {
-		t.Errorf("stale InflightBuilds = %d after reconcile, want 0", got.Status.InflightBuilds)
+	if got.Status.InflightBuilds != 0 || got.Status.InflightCount() != 0 {
+		t.Errorf("InflightBuilds = %d, entries = %v, want both empty", got.Status.InflightBuilds, got.Status.Inflight)
 	}
 }
 

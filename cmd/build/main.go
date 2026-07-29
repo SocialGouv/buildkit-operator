@@ -211,7 +211,7 @@ func run(ctx context.Context, cfg *config) error {
 	// Release the inflight build buildd counted on /route so the daemon can scale to zero promptly
 	// (best-effort; buildd's safety net bounds a missed release). Skipped on dry-run (no route side effect).
 	if !cfg.dryRun {
-		defer completeBuild(cfg, resp.Key, logger)
+		defer completeBuild(cfg, resp.Key, resp.BuildID, logger)
 	}
 	if resp.Key != localKey {
 		// Not fatal — buildd owns the authoritative key — but worth a loud log:
@@ -325,8 +325,9 @@ func routeBuild(ctx context.Context, cfg *config, req router.RouteRequest) (rout
 // completeBuild best-effort releases the inflight build buildd counted on /route, so the daemon can
 // scale to zero once idle. Failures are logged and ignored — buildd's --max-build-seconds safety net
 // bounds a missed release.
-func completeBuild(cfg *config, key string, logger *slog.Logger) {
-	body, _ := json.Marshal(map[string]string{"key": key})
+func completeBuild(cfg *config, key, buildID string, logger *slog.Logger) {
+	// buildId targets THIS build's entry; an older buildd leaves it empty and releases the oldest one.
+	body, _ := json.Marshal(map[string]string{"key": key, "buildId": buildID})
 	url := strings.TrimRight(cfg.builddURL, "/") + "/complete"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

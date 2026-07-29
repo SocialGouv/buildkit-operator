@@ -144,28 +144,45 @@ func TestHandlePrewarm_ReadyWhenDaemonReady(t *testing.T) {
 	}
 }
 
-// /complete decrements the inflight counter that /route incremented, floored at 0.
-func TestHandleComplete_DecrementsInflight(t *testing.T) {
+// /complete releases the entry named by buildId — the caller's OWN build, not whichever happens to
+// be first. A client that predates build IDs omits the field and releases the oldest entry.
+func TestHandleComplete_ReleasesNamedBuild(t *testing.T) {
 	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
-	bp := &bkov1.BuildProject{}
-	bp.Name, bp.Namespace = key, "buildkit-operator"
-	bp.Status.InflightBuilds = 2
-	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
-	srv := newTestServer(t, c)
+	older := metav1.NewTime(time.Now().Add(-time.Minute))
+	complete := func(t *testing.T, body map[string]string) bkov1.BuildProject {
+		t.Helper()
+		bp := &bkov1.BuildProject{}
+		bp.Name, bp.Namespace = key, "buildkit-operator"
+		bp.Status.SetInflight([]bkov1.InflightBuild{
+			{ID: "first", Since: older},
+			{ID: "second", Since: metav1.Now()},
+		})
+		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+		srv := newTestServer(t, c)
 
-	body, _ := json.Marshal(map[string]string{"key": key})
-	rec := httptest.NewRecorder()
-	srv.handleComplete(rec, httptest.NewRequest(http.MethodPost, "/complete", bytes.NewReader(body)))
-
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", rec.Code)
+		raw, _ := json.Marshal(body)
+		rec := httptest.NewRecorder()
+		srv.handleComplete(rec, httptest.NewRequest(http.MethodPost, "/complete", bytes.NewReader(raw)))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", rec.Code)
+		}
+		var got bkov1.BuildProject
+		if err := c.Get(context.Background(), types.NamespacedName{Name: key, Namespace: srv.cfg.Namespace}, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
 	}
-	var got bkov1.BuildProject
-	if err := c.Get(context.Background(), types.NamespacedName{Name: key, Namespace: srv.cfg.Namespace}, &got); err != nil {
-		t.Fatal(err)
+
+	got := complete(t, map[string]string{"key": key, "buildId": "second"})
+	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != "first" {
+		t.Errorf("inflight = %v, want the named build released and first left", got.Status.Inflight)
+	}
+	got = complete(t, map[string]string{"key": key}) // no buildId: oldest goes
+	if got.Status.InflightCount() != 1 || got.Status.Inflight[0].ID != "second" {
+		t.Errorf("inflight = %v, want the OLDEST released when no buildId is sent", got.Status.Inflight)
 	}
 	if got.Status.InflightBuilds != 1 {
-		t.Errorf("InflightBuilds = %d, want 1", got.Status.InflightBuilds)
+		t.Errorf("InflightBuilds projection = %d, want 1", got.Status.InflightBuilds)
 	}
 }
 

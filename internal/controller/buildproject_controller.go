@@ -134,13 +134,20 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// never clobbers LastBuildTime — that field is written conflict-safely by touchLastBuild.
 	changed := bp.Status.Replicas != ready || bp.Status.Phase != newPhase || bp.Status.Endpoint != newEndpoint ||
 		prev == nil || prev.Status != readyCond || prev.Reason != newPhase
-	// A stale inflight counter is already ignored by desiredReplicas (the max-build-seconds
-	// safety net), but without a reset it accumulates forever: every cancelled CI job routes
-	// a build whose /complete never comes (the runner is killed before its cleanup trap), so
-	// the count net-increments for the CR's whole lifetime and reads as hundreds of phantom
-	// in-flight builds. Zero it once the staleness window has passed.
-	if bp.Status.InflightBuilds > 0 && inflightStale(&bp, time.Now(), r.maxBuildAge()) {
-		bp.Status.InflightBuilds = 0
+	// Expire the builds whose /complete never came (a cancelled CI job kills the runner before its
+	// cleanup, so the release never reaches us). Each entry ages on its own clock, so this reclaims
+	// the leak WITHOUT releasing a sibling that has legitimately been building for hours — and it
+	// works on an actively-building project, which a window keyed on the project's last activity
+	// could never do (that clock is pushed forward by every new route).
+	entries, dropped := bkov1.ExpireInflight(bp.Status.Inflight, time.Now(), r.maxBuildAge())
+	if dropped > 0 {
+		log.FromContext(ctx).Info("expired inflight builds past --max-build-seconds", "key", bp.Spec.Key, "dropped", dropped, "remaining", len(entries))
+	}
+	// The count also gets rewritten when it disagrees with the entries — which is how a status
+	// carrying only the pre-entries counter heals: no entry pins the daemon any more, so the number
+	// must stop claiming builds are running.
+	if dropped > 0 || int(bp.Status.InflightBuilds) != len(entries) {
+		bp.Status.SetInflight(entries)
 		changed = true
 	}
 	bp.Status.Replicas = ready
@@ -291,7 +298,9 @@ func desiredReplicas(bp *bkov1.BuildProject, now time.Time, maxBuild, adaptiveMa
 	if bp.Spec.Tier == bkov1.TierHot {
 		return 1
 	}
-	if bp.Status.InflightBuilds > 0 && !inflightStale(bp, now, maxBuild) {
+	// Only builds still within the safety-net window pin the daemon; an entry whose /complete never
+	// came stops counting on its own, without waiting for the project to go quiet.
+	if live, _ := bkov1.ExpireInflight(bp.Status.Inflight, now, maxBuild); len(live) > 0 {
 		return 1
 	}
 	if idle := effectiveIdle(bp, now, adaptiveMax); bp.Status.LastBuildTime != nil && idle > 0 {
@@ -324,14 +333,7 @@ func effectiveIdle(bp *bkov1.BuildProject, now time.Time, adaptiveMax time.Durat
 	return eff
 }
 
-// inflightStale reports whether the inflight counter is too old to trust — a client almost certainly
-// missed its /complete call. It bounds the blast radius of a leaked counter to maxBuild, so a crashed
-// build can't pin a hot daemon forever (buildd increments inflight on /route, decrements on /complete).
-func inflightStale(bp *bkov1.BuildProject, now time.Time, maxBuild time.Duration) bool {
-	return bp.Status.LastBuildTime == nil || now.Sub(bp.Status.LastBuildTime.Time) > maxBuild
-}
-
-// maxBuildAge is the staleness window for the inflight safety net (default 2h).
+// maxBuildAge is the per-entry expiry window for the inflight safety net (default 2h).
 func (r *BuildProjectReconciler) maxBuildAge() time.Duration {
 	if r.MaxBuildSeconds <= 0 {
 		return 2 * time.Hour

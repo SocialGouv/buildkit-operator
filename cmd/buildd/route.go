@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,16 @@ import (
 )
 
 const maxRouteRequestBytes int64 = 8 << 10
+
+// newBuildID mints the token that identifies ONE routed build across /route and /complete. Random
+// (not a counter) because buildd runs several replicas with no shared sequence; 8 bytes make a
+// collision within a project's inflight set irrelevant. crypto/rand.Read never fails on the
+// platforms we run (it panics on a broken entropy source rather than returning short reads).
+func newBuildID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
 
 // decodeReq enforces auth, the rate limit and POST, then decodes a RouteRequest, writing the HTTP
 // error itself. Returns ok=false when the caller should return immediately — the shared preamble for
@@ -118,10 +130,14 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	// can reconstruct who built what (the bearer token is never logged).
 	s.log.Info("route", "key", key, "repo", spec.Repo, "untrusted", req.Untrusted, "remote", clientIP(r))
 
+	// One token per routed build, echoed back on /complete so the release lands on THIS build's entry
+	// and not on a sibling's — the project's inflight set is per-build, not a counter.
+	buildID := newBuildID()
+
 	respond := func() {
 		metrics.RoutesTotal.WithLabelValues(result).Inc()
 		metrics.RouteDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
-		writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.prov.Endpoint(key), Namespace: s.cfg.Namespace, Ready: true, Cache: s.cacheFor(ctx, key, true)})
+		writeJSON(s.log, w, router.RouteResponse{Key: key, BuildID: buildID, Endpoint: s.prov.Endpoint(key), Namespace: s.cfg.Namespace, Ready: true, Cache: s.cacheFor(ctx, key, true)})
 	}
 
 	if err := s.prov.Ensure(ctx, spec, req.Untrusted); err != nil {
@@ -130,9 +146,9 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Mark a build in flight: keeps the daemon pinned warm for the whole build (not just IdleTimeoutSec
-	// from now), and is released by the client's /complete call. The reconciler ignores inflight older
+	// from now), and is released by the client's /complete call. The reconciler expires an entry older
 	// than --max-build-seconds, so a missed /complete can't leak a hot daemon forever.
-	s.prov.AddInflight(ctx, key, +1)
+	s.prov.StartInflight(ctx, key, buildID)
 	// The client only calls /complete after a SUCCESSFUL /route, so on any error path below we must
 	// release the inflight here — otherwise a failed cold start (504/499) pins the daemon warm for up
 	// to --max-build-seconds. respond() (the success path) cancels this by setting routed=true; the
@@ -140,7 +156,7 @@ func (s *routeServer) handleRoute(w http.ResponseWriter, r *http.Request) {
 	routed := false
 	defer func() {
 		if !routed {
-			s.prov.AddInflight(context.Background(), key, -1)
+			s.prov.EndInflight(context.Background(), key, buildID)
 		}
 	}()
 
@@ -190,7 +206,7 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ensure project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.prov.AddInflight(r.Context(), key, 0) // touch LastBuildTime without counting an inflight build
+	s.prov.Touch(r.Context(), key) // keep the project from idling out without counting a build
 	// Report readiness so a proxy-tunnelled client can poll /prewarm (cheap, non-blocking) until the
 	// daemon is warm, then route — instead of holding a blocking /route past the proxy's tunnel timeout.
 	ready := s.prov.Ready(r.Context(), key)
@@ -199,12 +215,12 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(s.log, w, router.RouteResponse{Key: key, Endpoint: s.prov.Endpoint(key), Namespace: s.cfg.Namespace, Ready: ready, Cache: s.cacheFor(r.Context(), key, false)})
 }
 
-// handleComplete releases an inflight build counted by /route (the client calls it when buildx exits,
-// success or fail), keyed by the resolved key /route returned. It is best-effort: a missed call is
-// bounded by the reconciler's --max-build-seconds safety net, which stops stale inflight from pinning
-// a daemon warm forever.
+// handleComplete releases an inflight build registered by /route (the client calls it when buildx exits,
+// success or fail), keyed by the resolved key and the buildId /route returned. It is best-effort: a
+// missed call is bounded by the reconciler's --max-build-seconds safety net, which expires that build's
+// entry on its own clock.
 func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
-	// /complete only decrements an inflight counter by key; it needs an authenticated caller but not repo
+	// /complete only releases one inflight entry by key; it needs an authenticated caller but not repo
 	// binding (the key was already returned by a verified /route), so the identity override is ignored.
 	if _, status, err := s.identify(r); err != nil {
 		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "err", err.Error())
@@ -220,6 +236,9 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Key string `json:"key"`
+		// BuildID is the token /route returned. A client that predates it omits the field; the
+		// provisioner then releases the project's OLDEST entry, which is the pre-buildId behaviour.
+		BuildID string `json:"buildId"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
@@ -229,6 +248,10 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: need {\"key\":\"...\"}", http.StatusBadRequest)
 		return
 	}
-	s.prov.AddInflight(r.Context(), req.Key, -1)
+	if len(req.BuildID) > 64 {
+		http.Error(w, "bad request: buildId is too long", http.StatusBadRequest)
+		return
+	}
+	s.prov.EndInflight(r.Context(), req.Key, req.BuildID)
 	w.WriteHeader(http.StatusNoContent)
 }
