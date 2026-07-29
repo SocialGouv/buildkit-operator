@@ -191,8 +191,15 @@ warm-pool/idle-timeout tuning); `buildkit_operator_coldstart_seconds` isolates t
 (provision + Cinder attach) from warm route latency — the bench B/C signal — while
 `route_duration_seconds` covers all routes.
 
+A project that stays warm with no build running: read `.status.inflight`. Each routed build holds one
+timestamped entry, released by the client's `/complete`. An entry left behind by a build whose client
+never released it (a cancelled CI job kills the runner before its cleanup) expires on its OWN clock
+past `--max-build-seconds` (default 2h) — the reconciler logs `expired inflight builds` when it sweeps
+one. Entries never expire as a group, so a build that legitimately runs for hours keeps its daemon.
+
 ```bash
 kubectl -n buildkit-builds   get buildproject          # PHASE (Warm/Idle/...), REPLICAS, ENDPOINT per project
+kubectl -n buildkit-builds   get buildproject <key> -o jsonpath='{.status.inflight}'  # who is holding the daemon warm
 kubectl -n buildkit-builds   get volumesnapshot        # durability snapshots
 kubectl -n buildkit-operator logs deploy/buildkit-operator-buildd -f   # buildd runs in the operator ns
 ```

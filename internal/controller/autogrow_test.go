@@ -204,7 +204,7 @@ func TestMaybeAutoGrow_BouncesIdleOnResizePending(t *testing.T) {
 	}
 
 	// In-flight build: no bounce.
-	bp.Status.InflightBuilds = 1
+	bp.Status.SetInflight([]bkov1.InflightBuild{{ID: "b", Since: metav1.Now()}})
 	if err := r.maybeAutoGrow(t.Context(), bp, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestMaybeAutoGrow_BouncesIdleOnResizePending(t *testing.T) {
 	}
 
 	// Idle: bounce.
-	bp.Status.InflightBuilds = 0
+	bp.Status.SetInflight(nil)
 	if err := r.maybeAutoGrow(t.Context(), bp, 1); err != nil {
 		t.Fatal(err)
 	}

@@ -28,7 +28,11 @@ type RouteRequest struct {
 // RouteResponse is the wire response: the resolved key, the mTLS endpoint to build against, and
 // (optionally) the project's cold-cache reference for the client to apply.
 type RouteResponse struct {
-	Key       string `json:"key"`
+	Key string `json:"key"`
+	// BuildID identifies THIS routed build; the client echoes it back on /complete so the release
+	// lands on its own inflight entry instead of a concurrent build's. Empty on /prewarm (no build
+	// is registered) and from servers that predate it — /complete then falls back to the oldest entry.
+	BuildID   string `json:"buildId,omitempty"`
 	Endpoint  string `json:"endpoint"`
 	Namespace string `json:"namespace"`
 	// Ready reports whether the daemon already has a ready replica. /route only returns once the daemon

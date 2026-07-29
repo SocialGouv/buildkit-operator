@@ -127,6 +127,9 @@ while :; do
 done
 endpoint="$(printf '%s' "$resp" | jq -r .endpoint)"
 key="$(printf '%s' "$resp" | jq -r .key)"
+# Token identifying THIS build, echoed back on /complete so buildd releases our own inflight entry
+# and not a concurrent build's. Empty against a server that predates it (it then releases the oldest).
+build_id="$(printf '%s' "$resp" | jq -r '.buildId // empty')"
 echo "buildkit-operator: routed $REPO${NAME:+/$NAME} ($ARCH${UNTRUSTED:+, untrusted=$UNTRUSTED}) -> $endpoint"
 
 # Per-client gateway override: when this runner reaches the gateway under a DIFFERENT domain/port than
@@ -144,7 +147,7 @@ fi
 cleanup() {
   rm -rf "$certs"
   if [ -n "${key:-}" ] && [ "$key" != null ]; then
-    complete_payload="$(jq -nc --arg key "$key" '{key:$key}')" || return 0
+    complete_payload="$(jq -nc --arg key "$key" --arg id "${build_id:-}" '{key:$key, buildId:$id}')" || return 0
     api /complete "$complete_payload" >/dev/null 2>&1 || true
   fi
 }

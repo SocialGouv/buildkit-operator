@@ -10,6 +10,7 @@ import (
 	"github.com/go-logr/logr"
 	bkov1 "github.com/socialgouv/buildkit-operator/api/v1alpha1"
 	"github.com/socialgouv/buildkit-operator/internal/router"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TestMain stubs the buildkitd port probe true by default — unit tests have no real daemon listening.
@@ -338,28 +339,39 @@ func TestWaitReady(t *testing.T) {
 	}
 }
 
-// AddInflight increments, stamps last-build, and floors a negative result at zero.
-func TestAddInflight(t *testing.T) {
+// StartInflight registers one entry per build and stamps last-build; EndInflight retires exactly the
+// build it names, leaving its concurrent siblings pinned.
+func TestStartEndInflight(t *testing.T) {
 	f := newFakeHost()
 	p := testProv(f)
 	key := canonSpec().Key
 
-	p.AddInflight(context.Background(), key, +2)
+	p.StartInflight(context.Background(), key, "a")
+	p.StartInflight(context.Background(), key, "b")
 	p.mu.Lock()
 	st := p.projects[key]
 	p.mu.Unlock()
-	if st == nil || st.inflight != 2 {
-		t.Fatalf("inflight = %v, want 2", st)
+	if st == nil || len(st.inflight) != 2 {
+		t.Fatalf("inflight = %v, want 2 entries", st)
 	}
 	if st.lastBuild.IsZero() {
 		t.Error("lastBuild not stamped")
 	}
-	p.AddInflight(context.Background(), key, -5)
+
+	p.EndInflight(context.Background(), key, "a")
 	p.mu.Lock()
-	got := p.projects[key].inflight
+	left := append([]bkov1.InflightBuild{}, p.projects[key].inflight...)
 	p.mu.Unlock()
-	if got != 0 {
-		t.Errorf("inflight = %d after over-decrement, want 0 (floored)", got)
+	if len(left) != 1 || left[0].ID != "b" {
+		t.Errorf("inflight = %v, want only b left", left)
+	}
+	// An unknown id (duplicate release, or one the safety net already expired) is a no-op.
+	p.EndInflight(context.Background(), key, "zzz")
+	p.mu.Lock()
+	n := len(p.projects[key].inflight)
+	p.mu.Unlock()
+	if n != 1 {
+		t.Errorf("inflight = %d after releasing an unknown id, want 1", n)
 	}
 }
 
@@ -381,7 +393,7 @@ func TestReconcile_ScalesToZeroWhenIdle(t *testing.T) {
 	p.mu.Lock()
 	p.projects[idle.Key].lastBuild = time.Now().Add(-2 * time.Minute)
 	p.projects[busy.Key].lastBuild = time.Now()
-	p.projects[busy.Key].inflight = 1
+	p.projects[busy.Key].inflight = []bkov1.InflightBuild{{ID: "b", Since: metav1.Now()}}
 	p.mu.Unlock()
 
 	p.Reconcile(context.Background())
@@ -404,9 +416,9 @@ func TestReconcile_MaxBuildSecondsReleasesStaleInflight(t *testing.T) {
 	if err := p.Ensure(context.Background(), spec, false); err != nil {
 		t.Fatal(err)
 	}
-	// An inflight build, but its last build is well past both the idle window and the safety net.
+	// An inflight build, but the entry itself is older than the safety net.
 	p.mu.Lock()
-	p.projects[spec.Key].inflight = 1
+	p.projects[spec.Key].inflight = []bkov1.InflightBuild{{ID: "b", Since: metav1.NewTime(time.Now().Add(-2 * time.Minute))}}
 	p.projects[spec.Key].lastBuild = time.Now().Add(-2 * time.Minute)
 	p.mu.Unlock()
 
@@ -477,7 +489,7 @@ func TestReconcile_SnapshotCadenceAndRetention(t *testing.T) {
 	// Two pre-existing snapshots + a build so the cadence fires.
 	ds := p.dataset(spec.Key)
 	f.snaps[ds] = []string{ds + "@old0", ds + "@old1"}
-	p.AddInflight(context.Background(), spec.Key, 0) // stamps lastBuild
+	p.Touch(context.Background(), spec.Key) // stamps lastBuild
 
 	p.Reconcile(context.Background())
 
@@ -505,7 +517,7 @@ func TestReconcile_SkipsForkSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	forkKey := router.ForkKey(canonSpec().Key)
-	p.AddInflight(context.Background(), forkKey, 0)
+	p.Touch(context.Background(), forkKey)
 
 	p.Reconcile(context.Background())
 
@@ -587,7 +599,7 @@ func TestS3CacheDecision_Local(t *testing.T) {
 	// Bare state (out-of-order /complete) reads the default policy — the first grant of a
 	// fresh window passes, like any new project — then Ensure heals the spec.
 	bare := router.ProjectKey("github.com/o/bare", "", "", "amd64")
-	p.AddInflight(t.Context(), bare, -1)
+	p.EndInflight(t.Context(), bare, "")
 	if imp, exp := p.S3CacheDecision(t.Context(), bare, time.Hour, true); !imp || !exp {
 		t.Errorf("bare pre-Ensure = (%v,%v), want (true,true) — default cadence, fresh window", imp, exp)
 	}

@@ -204,8 +204,9 @@ curl -XPOST http://buildkit-operator-buildd.buildkit-operator.svc:8080/prewarm -
 curl -XPOST http://buildkit-operator-buildd.buildkit-operator.svc:8080/route   -d '{"repo":"...","arch":"amd64","untrusted":true}'   # fork PR -> isolated daemon
 ```
 
-`buildd` HTTP API: `POST /route` (ensure + wait Ready, returns the mTLS endpoint + optional cache
-reference), `POST /prewarm` (anticipatory scale-up, returns immediately), `GET /healthz`, and
+`buildd` HTTP API: `POST /route` (ensure + wait Ready, returns the mTLS endpoint, a `buildId` and an
+optional cache reference), `POST /complete` (`{key, buildId}` — releases the build so the daemon can
+idle out), `POST /prewarm` (anticipatory scale-up, returns immediately), `GET /healthz`, and
 Prometheus on `--metrics-addr` (`:8081`).
 
 ---
