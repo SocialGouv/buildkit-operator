@@ -240,6 +240,11 @@ before releasing when the forge allows it, so releases stay attributable where p
 project's oldest build). Every client has sent the id since v0.17.0, so it can be turned on once no
 consumer predates that.
 
+`auth.tokenSecret` is the legacy shared bearer. It authenticates the caller but not the project: on
+that path the client declares its own repo, so any holder can build as — and poison the cache of — any
+project, and none of the repo-scoped checks apply. Once every consumer mints OIDC tokens, clear it; the
+chart accepts `oidc.providers` alone as authentication for a public Ingress or LoadBalancer.
+
 A project that stays warm with no build running: read `.status.inflight`. Each routed build holds one
 timestamped entry, released by the client's `/complete`. An entry left behind by a build whose client
 never released it (a cancelled CI job kills the runner before its cleanup) expires on its OWN clock

@@ -118,10 +118,7 @@ func endInflight(inflight []InflightBuild, id string, cutoff *time.Time) ([]Infl
 	} else {
 		hashed := InflightID(id)
 		for i := range inflight {
-			// Entries written before tokens were hashed hold the token verbatim; accept those too so
-			// a build in flight across the upgrade still releases instead of leaking until it expires.
-			// They age out within --max-build-seconds, after which only the hashed form remains.
-			if inflight[i].ID == hashed || inflight[i].ID == id {
+			if inflight[i].ID == hashed {
 				drop = i
 				break
 			}

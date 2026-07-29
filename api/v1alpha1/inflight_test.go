@@ -153,23 +153,23 @@ func TestEndInflightBefore(t *testing.T) {
 	now := time.Now()
 	cutoff := now.Add(-2 * time.Hour)
 	entries := []InflightBuild{
-		{ID: "livest", Since: metav1.NewTime(now.Add(-3 * time.Hour))}, // expired
-		{ID: "running", Since: metav1.NewTime(now.Add(-time.Minute))},
+		{ID: InflightID("livest"), Since: metav1.NewTime(now.Add(-3 * time.Hour))}, // expired
+		{ID: InflightID("running"), Since: metav1.NewTime(now.Add(-time.Minute))},
 	}
 	got, ok := EndInflightBefore(entries, "", cutoff)
-	if !ok || !eq(ids(got), []string{"running"}) {
+	if !ok || !eq(ids(got), hashed("running")) {
 		t.Errorf("unnamed release = %v ok=%v, want the expired entry gone", ids(got), ok)
 	}
 	// With nothing expired it falls back to the oldest, as before.
 	live := []InflightBuild{
-		{ID: "older", Since: metav1.NewTime(now.Add(-10 * time.Minute))},
-		{ID: "newer", Since: metav1.NewTime(now.Add(-time.Minute))},
+		{ID: InflightID("older"), Since: metav1.NewTime(now.Add(-10 * time.Minute))},
+		{ID: InflightID("newer"), Since: metav1.NewTime(now.Add(-time.Minute))},
 	}
-	if got, ok := EndInflightBefore(live, "", cutoff); !ok || !eq(ids(got), []string{"newer"}) {
+	if got, ok := EndInflightBefore(live, "", cutoff); !ok || !eq(ids(got), hashed("newer")) {
 		t.Errorf("unnamed release with nothing expired = %v ok=%v, want the oldest gone", ids(got), ok)
 	}
 	// A named release is unaffected by the cutoff.
-	if got, ok := EndInflightBefore(live, "newer", cutoff); !ok || !eq(ids(got), []string{"older"}) {
+	if got, ok := EndInflightBefore(live, "newer", cutoff); !ok || !eq(ids(got), hashed("older")) {
 		t.Errorf("named release = %v ok=%v, want exactly the named entry gone", ids(got), ok)
 	}
 }
@@ -192,10 +192,10 @@ func TestInflightIDHashesTheToken(t *testing.T) {
 	if _, ok := EndInflight(entries, "beefdeadbeefdead"); ok {
 		t.Error("a different token released the build")
 	}
-	// Entries written before hashing hold the token verbatim; they must still release, or a build in
-	// flight across the upgrade leaks until it expires.
-	legacy := []InflightBuild{{ID: "deadbeefdeadbeef", Since: now}}
-	if _, ok := EndInflight(legacy, "deadbeefdeadbeef"); !ok {
-		t.Error("a pre-hashing entry no longer releases")
+	// A stored token is NOT a key to itself: an entry whose id is the raw token (as written before
+	// hashing, or by anyone able to write the status) must not be releasable by presenting that value.
+	// Only the hash of a token the server actually minted matches.
+	if _, ok := EndInflight([]InflightBuild{{ID: "deadbeefdeadbeef", Since: now}}, "deadbeefdeadbeef"); ok {
+		t.Error("a raw-token entry released on its own value — the stored form must be the hash")
 	}
 }
