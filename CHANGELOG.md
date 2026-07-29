@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.16.0...v0.17.0) (2026-07-29)
+
+### Features
+
+* **chart:** expose maxBuildSeconds ([4a221ef](https://github.com/SocialGouv/buildkit-operator/commit/4a221ef2b2470588fb00498f6dad2651b2441ef8))
+
+### Bug Fixes
+
+* **api,buildd,controller:** track inflight builds as timestamped entries ([e510894](https://github.com/SocialGouv/buildkit-operator/commit/e51089413d1b4436b2a42c43c993cd39cf0b7066))
+* **buildd,controller:** close the upgrade hazards found in adversarial review ([53105ea](https://github.com/SocialGouv/buildkit-operator/commit/53105ea3ddf4bcdddcf9b9ff1226ff4212861731))
+
 ## [0.16.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.15.2...v0.16.0) (2026-07-29)
 
 ### Features
