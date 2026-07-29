@@ -124,7 +124,8 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			desired = 1
 		}
 	}
-	if err := r.ensureStatefulSet(ctx, &bp, desired); err != nil {
+	rollHeld, err := r.ensureStatefulSet(ctx, &bp, desired, liveInflight)
+	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure statefulset: %w", err)
 	}
 
@@ -211,6 +212,12 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if snapAfter > 0 && (requeue == 0 || snapAfter < requeue) {
 		requeue = snapAfter
 	}
+	// A held roll has no watch to wake it: a client's /complete does write the status (which retriggers
+	// us), but the LAST thing keeping a roll back can also be an entry that simply expires — nothing
+	// writes then. Poll so the pending template lands promptly once the daemon drains.
+	if rollHeld && (requeue == 0 || drainRecheckInterval < requeue) {
+		requeue = drainRecheckInterval
+	}
 	if requeue > 0 {
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
@@ -249,7 +256,14 @@ const templateHashAnnotation = "buildkit-operator.socialgouv.github.io/template-
 // count, and the pod template when its desired hash changes (a buildkit-image bump, S3 creds, etc. —
 // rolled onto the daemon; the retained PVC survives the restart). The immutable volumeClaimTemplates
 // and selector are never touched (k8s forbids it).
-func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *bkov1.BuildProject, desired int32) error {
+//
+// A template change REPLACES the daemon pod, which severs the mTLS stream of every build running on
+// it — the client sees the connection close mid-build. So the roll is held back while the daemon is
+// serving builds: liveInflight is the set of builds that have not been released, and it drains
+// either as clients call /complete or as entries pass --max-build-seconds, so the roll always lands.
+// Replicas are still converged meanwhile — scaling up a held daemon is safe, and a daemon serving
+// builds is never scaled down (desiredReplicas keeps it at 1). Returns whether the roll was held.
+func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *bkov1.BuildProject, desired int32, liveInflight []bkov1.InflightBuild) (bool, error) {
 	want := builder.StatefulSet(bp, r.Cfg)
 	want.Spec.Replicas = &desired
 	hash := templateHash(want.Spec.Template)
@@ -258,14 +272,14 @@ func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *bkov
 	}
 	want.Annotations[templateHashAnnotation] = hash
 	if err := ctrl.SetControllerReference(bp, want, r.Scheme); err != nil {
-		return err
+		return false, err
 	}
 	var existing appsv1.StatefulSet
 	err := r.Get(ctx, types.NamespacedName{Name: want.Name, Namespace: want.Namespace}, &existing)
 	if apierrors.IsNotFound(err) {
-		return r.Create(ctx, want)
+		return false, r.Create(ctx, want)
 	} else if err != nil {
-		return err
+		return false, err
 	}
 
 	old := int32(1)
@@ -273,8 +287,17 @@ func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *bkov
 		old = *existing.Spec.Replicas
 	}
 	templateChanged := existing.Annotations[templateHashAnnotation] != hash
+	// Only a READY daemon can be serving a build; holding the roll on a daemon that is down would
+	// keep a broken pod (bad image, bad config) from ever being repaired by the very change that
+	// fixes it.
+	held := templateChanged && len(liveInflight) > 0 && existing.Status.ReadyReplicas >= 1
+	if held {
+		log.FromContext(ctx).Info("holding the daemon roll until its builds finish",
+			"key", bp.Spec.Key, "inflight", len(liveInflight), "oldest", liveInflight[0].Since.Time)
+		templateChanged = false
+	}
 	if old == desired && !templateChanged {
-		return nil
+		return held, nil
 	}
 	patch := client.MergeFrom(existing.DeepCopy())
 	existing.Spec.Replicas = &desired
@@ -286,14 +309,14 @@ func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *bkov
 		existing.Annotations[templateHashAnnotation] = hash
 	}
 	if err := r.Patch(ctx, &existing, patch); err != nil {
-		return err
+		return held, err
 	}
 	if old > desired {
 		metrics.ScaleEvents.WithLabelValues("down").Inc()
 	} else if desired > old {
 		metrics.ScaleEvents.WithLabelValues("up").Inc()
 	}
-	return nil
+	return held, nil
 }
 
 // templateHash is a stable fingerprint of the DESIRED pod template (recomputed identically each
@@ -409,6 +432,11 @@ func phaseFrom(desired, ready int32) string {
 // scalingRecheckInterval is how often a not-yet-ready daemon is re-reconciled so readiness (or a stuck
 // pod transitioning into Failed, then recovering) is observed even without a Pod watch.
 const scalingRecheckInterval = 30 * time.Second
+
+// drainRecheckInterval is how often a daemon whose pod-template roll is held back (it is serving
+// builds) is re-checked, so the pending template lands soon after the last build drains — including
+// when the last entry leaves by expiring, which produces no watch event of its own.
+const drainRecheckInterval = 30 * time.Second
 
 // daemonFailure returns a short reason when the project's daemon pod is wedged (so the phase can go
 // Failed instead of an indefinite Scaling), or "" when it's merely still starting. It inspects the
