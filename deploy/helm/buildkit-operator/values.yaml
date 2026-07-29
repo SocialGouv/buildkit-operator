@@ -212,6 +212,12 @@ daemonScheduling:
 # CI burst does not serialize Cinder attaches into minutes).
 maxColdStarts: 8
 
+# Safety net for a build whose /complete never arrives (a cancelled CI job kills the runner before its
+# cleanup): an inflight entry older than this stops pinning its daemon warm and is swept from the
+# project status. Entries expire INDIVIDUALLY, so this is the longest a single leaked build can hold a
+# daemon — set it above the longest build you expect, not below.
+maxBuildSeconds: 7200
+
 # Prometheus metrics endpoint (M4). Scrape buildkit_operator_* + controller-runtime metrics here.
 metrics:
   port: 8081
