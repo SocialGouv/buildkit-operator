@@ -348,6 +348,10 @@ certManager:
 # Create a Secret with key `token`, set its name here; buildd reads it as $BUILDKIT_OPERATOR_AUTH_TOKEN
 # and CI passes the same value (build --token / BUILDKIT_OPERATOR_TOKEN). Empty = no auth (in-cluster only).
 auth:
+  # LEGACY shared bearer for /route. It authenticates the CALLER but not the project: on this path the
+  # client declares its own repo, so any holder can build as — and poison the cache of — any project.
+  # oidc.providers is the replacement (the repo comes from a forge-signed claim). Keep this set only
+  # while migrating callers, then clear it: it is a bypass of every repo-scoped check while present.
   tokenSecret: "" # k8s Secret name holding key `token`
 
 # OIDC identity verification for the /route API — the strong way to expose buildd off-cluster. When
