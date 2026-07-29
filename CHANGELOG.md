@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.16.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.15.2...v0.16.0) (2026-07-29)
+
+### Features
+
+* make cloud defaults configurable (generic k8s, still OVH) ([#3](https://github.com/SocialGouv/buildkit-operator/issues/3)) ([e154e86](https://github.com/SocialGouv/buildkit-operator/commit/e154e8632009c683f81a7b5a25b360053c13ca7a))
+* opt-in per-arch nodeSelector pinning for daemons (daemonScheduling.pinArch) ([#2](https://github.com/SocialGouv/buildkit-operator/issues/2)) ([a6656a2](https://github.com/SocialGouv/buildkit-operator/commit/a6656a2c52bb9ac244e87ea19d03fdf8f5ed55b2))
+
+### Bug Fixes
+
+* **builder:** the build's arch wins over the operator-wide nodeSelector ([89af0e6](https://github.com/SocialGouv/buildkit-operator/commit/89af0e6379bf898948c9190fdc09383d1277cd2d))
+
 ## [0.15.2](https://github.com/SocialGouv/buildkit-operator/compare/v0.15.1...v0.15.2) (2026-07-27)
 
 ## [0.15.1](https://github.com/SocialGouv/buildkit-operator/compare/v0.15.0...v0.15.1) (2026-07-27)
