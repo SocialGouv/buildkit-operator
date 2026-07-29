@@ -142,7 +142,7 @@ func TestStatefulSet_DaemonScheduling(t *testing.T) {
 		t.Errorf("tolerations = %v, want one workload:NoSchedule", spec.Tolerations)
 	}
 
-	// Empty/unset -> no-op, daemons schedule anywhere.
+	// Empty/unset -> no-op, daemons schedule anywhere (arch pinning is opt-in and off here).
 	if err := (&Config{}).SchedulingFromJSON(""); err != nil {
 		t.Fatalf(`SchedulingFromJSON(""): %v`, err)
 	}
@@ -237,5 +237,50 @@ func TestService_ForkSelectorTargetsForkOnly(t *testing.T) {
 	want := Labels(bp)
 	if len(svc.Spec.Selector) != len(want) {
 		t.Errorf("fork Service selector = %v, want plain daemon labels %v", svc.Spec.Selector, want)
+	}
+}
+
+// Each daemon is pinned to its build architecture via a kubernetes.io/arch nodeSelector, so amd64
+// builds land on amd64 nodes and arm64 builds on Graviton nodes — native, no QEMU.
+func TestStatefulSet_PinsArchNodeSelector(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "k-" + arch, Arch: arch}}
+		sts := StatefulSet(bp, Config{Namespace: "ns", Port: 1234, PinArchToNode: true})
+		if got := sts.Spec.Template.Spec.NodeSelector["kubernetes.io/arch"]; got != arch {
+			t.Errorf("arch %q: NodeSelector[kubernetes.io/arch] = %q, want %q", arch, got, arch)
+		}
+	}
+}
+
+// The arch nodeSelector MERGES with (does not clobber) the operator-wide DaemonNodeSelector used to
+// pin daemons onto a dedicated build nodepool.
+func TestStatefulSet_ArchNodeSelectorMergesGlobal(t *testing.T) {
+	cfg := Config{Namespace: "ns", Port: 1234, PinArchToNode: true, DaemonNodeSelector: map[string]string{"nodepool": "buildkit"}}
+	bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "k", Arch: "arm64"}}
+	ns := StatefulSet(bp, cfg).Spec.Template.Spec.NodeSelector
+	if ns["kubernetes.io/arch"] != "arm64" || ns["nodepool"] != "buildkit" {
+		t.Errorf("NodeSelector = %v, want merged {kubernetes.io/arch:arm64, nodepool:buildkit}", ns)
+	}
+}
+
+// Arch pinning is OPT-IN: with PinArchToNode off (the default), the daemon carries NO arch nodeSelector,
+// preserving the pre-feature behavior (and leaving the QEMU-on-any-node fallback available).
+func TestStatefulSet_ArchPinningOptInDefaultsOff(t *testing.T) {
+	bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "k", Arch: "arm64"}}
+	ns := StatefulSet(bp, Config{Namespace: "ns", Port: 1234}).Spec.Template.Spec.NodeSelector
+	if ns != nil {
+		t.Errorf("pinning off (default): NodeSelector = %v, want nil (no arch pin)", ns)
+	}
+}
+
+// The opt-in rides the existing daemonScheduling config (no standalone CLI flag): pinArch in the JSON
+// the chart renders sets PinArchToNode.
+func TestSchedulingFromJSON_PinArch(t *testing.T) {
+	var c Config
+	if err := c.SchedulingFromJSON(`{"pinArch":true}`); err != nil {
+		t.Fatalf("SchedulingFromJSON: %v", err)
+	}
+	if !c.PinArchToNode {
+		t.Error("pinArch:true did not set PinArchToNode")
 	}
 }
