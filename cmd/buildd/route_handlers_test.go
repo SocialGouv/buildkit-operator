@@ -320,3 +320,33 @@ func TestAuth_RejectsBadToken(t *testing.T) {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
+
+// With requireBuildId on, a release that names only the project key is refused: that id is what ties
+// a release to the build that started it, and without it any authenticated caller could drain ANOTHER
+// project's in-flight set and let its daemon scale down under a running build.
+func TestHandleComplete_RequiresBuildIDWhenConfigured(t *testing.T) {
+	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
+	post := func(t *testing.T, require bool, body map[string]string) int {
+		t.Helper()
+		bp := &bkov1.BuildProject{}
+		bp.Name, bp.Namespace = key, "buildkit-operator"
+		bp.Status.SetInflight([]bkov1.InflightBuild{{ID: "b1", Since: metav1.Now()}})
+		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+		srv := newTestServer(t, c)
+		srv.requireBuildID = require
+		raw, _ := json.Marshal(body)
+		rec := httptest.NewRecorder()
+		srv.handleComplete(rec, httptest.NewRequest(http.MethodPost, "/complete", bytes.NewReader(raw)))
+		return rec.Code
+	}
+	if got := post(t, true, map[string]string{"key": key}); got != http.StatusBadRequest {
+		t.Errorf("release with no buildId = %d, want 400 when requireBuildId is on", got)
+	}
+	if got := post(t, true, map[string]string{"key": key, "buildId": "b1"}); got != http.StatusNoContent {
+		t.Errorf("named release = %d, want 204 even with requireBuildId on", got)
+	}
+	// Off by default, so clients that predate the id keep working through the migration.
+	if got := post(t, false, map[string]string{"key": key}); got != http.StatusNoContent {
+		t.Errorf("release with no buildId = %d, want 204 with requireBuildId off", got)
+	}
+}

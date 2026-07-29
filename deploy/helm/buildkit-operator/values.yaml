@@ -252,6 +252,11 @@ gateway:
   # (buildkit.port, 1234). Set to 443 to front the gateway on 443 — e.g. so runners behind an
   # egress proxy can CONNECT-tunnel to it. The gateway still dials the daemons on buildkit.port internally.
   externalPort: ""
+  # On a rollout the gateway stops accepting and keeps proxying the builds already streaming through
+  # it, for at most this long — every open connection IS a build, so cutting one loses the build. The
+  # pod's terminationGracePeriodSeconds is set 60s above this. Lower it only if you would rather end a
+  # gateway rollout quickly than let long builds finish.
+  drainSeconds: 3600
   image:
     repository: ghcr.io/socialgouv/buildkit-operator-gateway
     # Empty = pin to the chart appVersion (immutable). The gateway is the public-facing LB front; never
@@ -385,6 +390,12 @@ oidc:
 api:
   rateLimit: 50
   rateBurst: 100
+  # Require /complete to carry the buildId that /route minted. That id is the only thing tying a
+  # release to the build that started it: without it a release names a project by key alone, which any
+  # authenticated caller can do for ANY project — draining its in-flight set and letting its daemon
+  # scale down under a running build. Clients have sent the id since v0.17.0; turn this on once every
+  # consumer is past it (older clients then get a 400 on release and leak an entry until it expires).
+  requireBuildId: false
 
 # Optional node scheduling controls for the buildd pod.
 nodeSelector: {}

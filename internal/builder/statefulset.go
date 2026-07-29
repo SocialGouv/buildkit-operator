@@ -13,6 +13,7 @@ import (
 	"github.com/socialgouv/buildkit-operator/internal/router"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -127,6 +128,34 @@ func Service(bp *bkov1.BuildProject, cfg Config) *corev1.Service {
 				Protocol:   corev1.ProtocolTCP,
 				TargetPort: intstr.FromInt32(cfg.Port),
 			}},
+		},
+	}
+}
+
+// PodDisruptionBudget protects a daemon against VOLUNTARY disruption — a node drain during a cluster
+// upgrade, a descheduler, a spot reclaim. Those evict the pod outright, which severs every build on it
+// with no warning the operator can act on; nothing else in this control plane can prevent that.
+//
+// minAvailable 1 on a StatefulSet-of-1 means "do not evict this daemon at all", which would block a
+// node drain forever if the daemon never went away. It does go away: a warm project scales to zero
+// once idle (and the PDB is then vacuous), so a drain waits for the current builds and proceeds. The
+// HOT tier is the exception — it is pinned up by definition — so it gets no PDB rather than wedging
+// cluster maintenance.
+func PodDisruptionBudget(bp *bkov1.BuildProject, cfg Config) *policyv1.PodDisruptionBudget {
+	if bp.Spec.Tier == bkov1.TierHot {
+		return nil
+	}
+	l := Labels(bp)
+	minAvailable := intstr.FromInt32(1)
+	return &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      router.DaemonName(bp.Spec.Key),
+			Namespace: cfg.Namespace,
+			Labels:    l,
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MinAvailable: &minAvailable,
+			Selector:     &metav1.LabelSelector{MatchLabels: l},
 		},
 	}
 }
