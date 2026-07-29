@@ -317,9 +317,11 @@ func TestPodDisruptionBudget(t *testing.T) {
 		if busy == nil || busy.Spec.MinAvailable.IntValue() != 1 {
 			t.Errorf("%s serving: minAvailable = %v, want 1 (an eviction would sever its builds)", tier, busy.Spec.MinAvailable)
 		}
-		idle := PodDisruptionBudget(bp, cfg, false)
-		if idle == nil || idle.Spec.MinAvailable.IntValue() != 0 {
-			t.Errorf("%s idle: minAvailable = %v, want 0 (nothing to protect, do not stall drains)", tier, idle.Spec.MinAvailable)
+		// No budget at all when idle — NOT minAvailable 0, which the disruption controller refuses to
+		// act on for an unhealthy pod (desiredHealthy 0 fails its own > 0 guard), permanently blocking
+		// drains on a crash-looping daemon that is serving nothing.
+		if idle := PodDisruptionBudget(bp, cfg, false); idle != nil {
+			t.Errorf("%s idle: got a budget (%v), want none — a zero budget is not a no-op", tier, idle.Spec.MinAvailable)
 		}
 		if busy.Name != "buildkitd-p"+tier || busy.Namespace != "ns" {
 			t.Errorf("PDB = %s/%s, want ns/buildkitd-p%s", busy.Namespace, busy.Name, tier)

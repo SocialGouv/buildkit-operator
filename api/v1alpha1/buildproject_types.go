@@ -44,8 +44,9 @@ type BuildProjectSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Key string `json:"key"`
 
-	// Repo is the normalized source repository (lowercased, scheme/.git stripped).
-	// Informational; the Key is what routes.
+	// Repo is the normalized source repository (lowercased, scheme/.git stripped). The Key is what
+	// routes, but this is what /complete authorizes against — a verified caller may only release builds
+	// of its own repo — so a project created with it empty cannot be authorized (the check is skipped).
 	Repo string `json:"repo,omitempty"`
 
 	// Name is the optional monorepo component (image/path) within the repo. Informational; it

@@ -770,8 +770,12 @@ func TestReconcileFanout_KeepsBusyClone(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(parent, busy, idle).WithStatusSubresource(&bkov1.BuildProject{}).Build()
 	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234}}
 
-	if err := r.reconcileFanout(t.Context(), parent); err != nil {
+	deferred, err := r.reconcileFanout(t.Context(), parent)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !deferred {
+		t.Error("keeping a busy clone must report a deferred prune, else nothing comes back to it")
 	}
 	var got bkov1.BuildProject
 	if err := c.Get(t.Context(), types.NamespacedName{Name: busy.Name, Namespace: ns}, &got); err != nil {
@@ -795,20 +799,20 @@ func TestReconcile_PDBTracksInflight(t *testing.T) {
 	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}
 	pdbName := types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}
-	minAvailable := func(t *testing.T) int {
+	budget := func(t *testing.T) *policyv1.PodDisruptionBudget {
 		t.Helper()
 		var pdb policyv1.PodDisruptionBudget
 		if err := c.Get(t.Context(), pdbName, &pdb); err != nil {
-			t.Fatalf("no PDB for the daemon: %v", err)
+			return nil
 		}
-		return pdb.Spec.MinAvailable.IntValue()
+		return &pdb
 	}
 
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	if got := minAvailable(t); got != 0 {
-		t.Errorf("idle daemon: minAvailable = %d, want 0 — a drain must not wait on it", got)
+	if got := budget(t); got != nil {
+		t.Errorf("idle daemon carries a budget (%v) — a drain must not wait on it, and a zero budget is not a no-op", got.Spec.MinAvailable)
 	}
 
 	var cur bkov1.BuildProject
@@ -820,7 +824,24 @@ func TestReconcile_PDBTracksInflight(t *testing.T) {
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	if got := minAvailable(t); got != 1 {
-		t.Errorf("daemon serving a build: minAvailable = %d, want 1 — eviction would sever it", got)
+	pdb := budget(t)
+	if pdb == nil || pdb.Spec.MinAvailable.IntValue() != 1 {
+		t.Fatalf("daemon serving a build: budget = %v, want minAvailable 1 — eviction would sever it", pdb)
+	}
+	if len(pdb.OwnerReferences) == 0 {
+		t.Error("the budget must be owned by the BuildProject, else it outlives it")
+	}
+
+	// Released: the budget goes away rather than lingering at zero.
+	_ = c.Get(t.Context(), req.NamespacedName, &cur)
+	cur.Status.SetInflight(nil)
+	if err := c.Status().Update(t.Context(), &cur); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := budget(t); got != nil {
+		t.Errorf("daemon back to idle still carries a budget (%v), want it removed", got.Spec.MinAvailable)
 	}
 }

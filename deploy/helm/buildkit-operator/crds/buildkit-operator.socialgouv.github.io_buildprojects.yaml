@@ -107,8 +107,9 @@ spec:
                 type: string
               repo:
                 description: |-
-                  Repo is the normalized source repository (lowercased, scheme/.git stripped).
-                  Informational; the Key is what routes.
+                  Repo is the normalized source repository (lowercased, scheme/.git stripped). The Key is what
+                  routes, but this is what /complete authorizes against — a verified caller may only release builds
+                  of its own repo — so a project created with it empty cannot be authorized (the check is skipped).
                 type: string
               resources:
                 description: Resources for the buildkitd container (CPU/RAM of the

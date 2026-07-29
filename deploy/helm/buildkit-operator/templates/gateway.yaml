@@ -11,6 +11,15 @@ metadata:
     app.kubernetes.io/component: gateway
 spec:
   replicas: 2
+  # A rollout waits for the old pod to finish draining its builds (up to gateway.drainSeconds), which
+  # is far longer than the 10-minute default progress deadline — without this the Deployment reports
+  # ProgressDeadlineExceeded, and GitOps reads that as Degraded, for a rollout that is behaving.
+  progressDeadlineSeconds: {{ add .Values.gateway.drainSeconds 300 }}
+  # Surge both replicas so the new pair serves while the old one drains; with the default maxSurge 1
+  # the second replica could not start until the first finished draining, serializing an hour per pod.
+  strategy:
+    rollingUpdate: { maxSurge: 2, maxUnavailable: 0 }
+    type: RollingUpdate
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}

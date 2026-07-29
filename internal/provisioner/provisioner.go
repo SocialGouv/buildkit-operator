@@ -41,9 +41,11 @@ type Provisioner interface {
 	// Touch stamps the project's last-build time without registering a build — the /prewarm path,
 	// which must keep a warm-tier project from scaling to zero without counting as a build.
 	Touch(ctx context.Context, key string)
-	// ProjectRepo returns the normalized repo a key belongs to, and false when the key is unknown.
-	// /complete uses it to check that a verified caller is releasing ITS OWN project's build.
-	ProjectRepo(ctx context.Context, key string) (string, bool)
+	// ProjectRepo returns the normalized repo a key belongs to, and found=false when the key does not
+	// exist. /complete uses it to check that a verified caller is releasing ITS OWN project's build, so
+	// a lookup that FAILS must surface as an error and not as "no project" — that would read as
+	// "skip the check" and turn a transient API blip into an authorization bypass.
+	ProjectRepo(ctx context.Context, key string) (repo string, found bool, err error)
 	// S3CacheDecision resolves the project's s3CachePolicy into (import, export) for one routed build.
 	// Under the cadence policy an export is granted at most once per exportInterval (grantExport stamps
 	// the cadence clock; pass false for non-build probes like /prewarm). exportInterval <= 0 means

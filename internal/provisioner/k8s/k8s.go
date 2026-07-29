@@ -209,12 +209,15 @@ func (p *Provisioner) EndInflight(ctx context.Context, key, id string) {
 }
 
 // ProjectRepo reads the repo recorded on the BuildProject (normalized at creation by the router).
-func (p *Provisioner) ProjectRepo(ctx context.Context, key string) (string, bool) {
+func (p *Provisioner) ProjectRepo(ctx context.Context, key string) (string, bool, error) {
 	var bp bkov1.BuildProject
 	if err := p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &bp); err != nil {
-		return "", false
+		if apierrors.IsNotFound(err) {
+			return "", false, nil // the project is gone — nothing to authorize against
+		}
+		return "", false, err
 	}
-	return bp.Spec.Repo, true
+	return bp.Spec.Repo, true, nil
 }
 
 // live is the project's inflight set with the entries past --max-build-seconds already shed, and any
