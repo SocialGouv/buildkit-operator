@@ -223,11 +223,22 @@ The other ways a daemon can go away under a build are guarded too:
 - **Gateway rollouts** stop accepting and keep proxying open builds for `gateway.drainSeconds`
   (default 1h; the pod's grace period sits 60s above it).
 
-A `/complete` from an OIDC-verified caller is refused (403) unless the key belongs to that caller's own
-repo — releasing a build lets the daemon scale down, so a bare key must not be a lever anyone can pull
-on anyone's project. Callers still on the legacy bearer carry no repo to check; `api.requireBuildId`
-covers them by requiring the unguessable id `/route` minted. Every client has sent that id since
-v0.17.0, so it can be turned on once no consumer predates that.
+`/complete` authorizes in two ways, because a forge's OIDC token is minted when the job starts and
+lives minutes (GitHub's, about two) while a build runs for as long as a build runs:
+
+- a caller with a **live verified identity** may only release builds of its own repo (403 otherwise);
+- a caller naming a **live buildId** is authorized by that alone — the server minted those 8 random
+  bytes and handed them to exactly one caller, and the id can only release the one build it names.
+
+That second path is what keeps a release from being rejected simply because the build outlasted its own
+token, which used to leak an inflight entry on every build longer than ~2 minutes — pinning the daemon
+warm, holding its roll, and keeping a disruption budget that blocks node drains. An id that matches no
+live build proves nothing and is refused (401), and nothing is written. The Action re-mints its token
+before releasing when the forge allows it, so releases stay attributable where possible.
+
+`api.requireBuildId` refuses a release that carries no id at all (it would otherwise retire the
+project's oldest build). Every client has sent the id since v0.17.0, so it can be turned on once no
+consumer predates that.
 
 A project that stays warm with no build running: read `.status.inflight`. Each routed build holds one
 timestamped entry, released by the client's `/complete`. An entry left behind by a build whose client

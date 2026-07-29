@@ -35,9 +35,11 @@ type Provisioner interface {
 	// StartInflight registers a routed build under id and stamps the project's last-build time,
 	// keeping the daemon pinned warm for the build's duration. Best-effort: failures are logged.
 	StartInflight(ctx context.Context, key, id string)
-	// EndInflight releases the build registered under id (empty id releases the oldest entry, for a
-	// client that predates build IDs) and stamps the last-build time. Best-effort.
-	EndInflight(ctx context.Context, key, id string)
+	// EndInflight releases the build registered under id (an empty id releases the oldest entry, for a
+	// client that predates build IDs) and reports whether an entry actually went away. Naming a live
+	// id is itself proof that the caller started that build, which is how /complete authorizes a caller
+	// whose short-lived identity token expired mid-build. Nothing is written when nothing matched.
+	EndInflight(ctx context.Context, key, id string) (released bool)
 	// Touch stamps the project's last-build time without registering a build — the /prewarm path,
 	// which must keep a warm-tier project from scaling to zero without counting as a build.
 	Touch(ctx context.Context, key string)

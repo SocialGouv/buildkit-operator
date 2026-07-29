@@ -377,3 +377,36 @@ func TestReady_FalseWhileRolling(t *testing.T) {
 		})
 	}
 }
+
+// EndInflight reports whether it actually released something — that answer is what /complete accepts
+// in place of a live identity token — and a release that matches nothing must leave the object alone.
+// Writing anyway would stamp LastBuildTime, handing an unauthenticated caller a way to keep someone
+// else's daemon warm.
+func TestEndInflight_ReportsAndDoesNotTouchOnMiss(t *testing.T) {
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "prel", Namespace: "buildkit-operator"},
+		Spec:       bkov1.BuildProjectSpec{Key: "prel", Repo: "github.com/o/r", Arch: "amd64"},
+	}
+	bp.Status.SetInflight([]bkov1.InflightBuild{{ID: "a", Since: metav1.Now()}})
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+	p := newProv(c, 0, "", 0)
+	read := func() bkov1.BuildProject {
+		var got bkov1.BuildProject
+		_ = c.Get(t.Context(), types.NamespacedName{Name: "prel", Namespace: "buildkit-operator"}, &got)
+		return got
+	}
+
+	if released := p.EndInflight(t.Context(), "prel", "nope"); released {
+		t.Error("releasing an unknown id reported success")
+	}
+	if got := read(); got.Status.LastBuildTime != nil || got.Status.InflightCount() != 1 {
+		t.Errorf("a miss must not write: lastBuild=%v inflight=%v", got.Status.LastBuildTime, got.Status.Inflight)
+	}
+	if released := p.EndInflight(t.Context(), "prel", "a"); !released {
+		t.Error("releasing a live id reported failure")
+	}
+	if got := read(); got.Status.InflightCount() != 0 || got.Status.LastBuildTime == nil {
+		t.Errorf("a hit must release and stamp: lastBuild=%v inflight=%v", got.Status.LastBuildTime, got.Status.Inflight)
+	}
+}

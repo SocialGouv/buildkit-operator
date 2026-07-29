@@ -390,3 +390,71 @@ func TestHandleComplete_VerifiedCallerCannotReleaseAnotherRepo(t *testing.T) {
 		t.Errorf("releasing ANOTHER repo's project = %d, want 403", got)
 	}
 }
+
+// A forge's OIDC token is minted when the job starts and lives about two minutes; a real build outlives
+// it, so the release at the end arrives with a dead token. Requiring a live one rejected the release of
+// every build longer than its own token — the ordinary case — and leaked an inflight entry each time.
+// Naming a LIVE build id is proof enough on its own: the server minted those 8 random bytes and handed
+// them to exactly one caller. A stale or absent id proves nothing, and is still refused.
+func TestHandleComplete_ExpiredIdentityAuthorizedByBuildID(t *testing.T) {
+	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
+	// A verifier configured against an issuer nothing can satisfy: identify() always fails, exactly as
+	// it does for a token that has expired mid-build.
+	deadVerifier := func(t *testing.T) *identity.Verifier {
+		t.Helper()
+		f := newOIDCForge(t)
+		v, err := identity.NewVerifier(identity.Config{Providers: []identity.Provider{{Type: "github", Issuer: f.srv.URL, Audience: "bko"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	post := func(t *testing.T, body map[string]string) (int, []bkov1.InflightBuild) {
+		t.Helper()
+		bp := &bkov1.BuildProject{}
+		bp.Name, bp.Namespace = key, "buildkit-operator"
+		bp.Spec = bkov1.BuildProjectSpec{Key: key, Repo: "github.com/org/repo", Arch: "amd64"}
+		bp.Status.SetInflight([]bkov1.InflightBuild{
+			{ID: "mine", Since: metav1.NewTime(time.Now().Add(-time.Minute))},
+			{ID: "other", Since: metav1.Now()},
+		})
+		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+		srv := newTestServer(t, c)
+		srv.verifier, srv.log = deadVerifier(t), logr.Discard()
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/complete", bytes.NewReader(raw))
+		req.Header.Set("Authorization", "Bearer a-token-that-will-not-verify")
+		rec := httptest.NewRecorder()
+		srv.handleComplete(rec, req)
+		var got bkov1.BuildProject
+		_ = c.Get(t.Context(), types.NamespacedName{Name: key, Namespace: "buildkit-operator"}, &got)
+		return rec.Code, got.Status.Inflight
+	}
+
+	code, left := post(t, map[string]string{"key": key, "buildId": "mine"})
+	if code != http.StatusNoContent {
+		t.Errorf("release naming a live build id = %d, want 204 — the id is the proof", code)
+	}
+	if len(left) != 1 || left[0].ID != "other" {
+		t.Errorf("inflight = %v, want only the OTHER build left", left)
+	}
+
+	// An id that names nothing proves nothing.
+	code, left = post(t, map[string]string{"key": key, "buildId": "guessed"})
+	if code != http.StatusUnauthorized {
+		t.Errorf("release naming an unknown id = %d, want 401", code)
+	}
+	if len(left) != 2 {
+		t.Errorf("inflight = %v, want both entries untouched by an unauthorized release", left)
+	}
+
+	// No id at all would fall back to "retire the oldest build" — the one lever an unauthenticated
+	// caller must never have.
+	code, left = post(t, map[string]string{"key": key})
+	if code != http.StatusUnauthorized {
+		t.Errorf("release with no id and no identity = %d, want 401", code)
+	}
+	if len(left) != 2 {
+		t.Errorf("inflight = %v, want both entries untouched", left)
+	}
+}

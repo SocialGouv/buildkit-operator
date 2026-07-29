@@ -147,6 +147,14 @@ fi
 cleanup() {
   rm -rf "$certs"
   if [ -n "${key:-}" ] && [ "$key" != null ]; then
+    # A forge's OIDC token is minted when the job starts and lives minutes (GitHub's, about two), so by
+    # the time a real build ends it has usually expired. buildd accepts the buildId as proof on its own,
+    # but re-minting when the forge lets us keeps the release attributable to a verified identity.
+    if [ -n "${BKO_OIDC_AUDIENCE:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+      fresh="$(curl -sS --max-time 10 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+        "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${BKO_OIDC_AUDIENCE}" 2>/dev/null | jq -r '.value // empty' 2>/dev/null || true)"
+      [ -n "$fresh" ] && BUILDKIT_OPERATOR_TOKEN="$fresh"
+    fi
     # buildId is OMITTED when empty: an empty id means the server that routed us predates the field,
     # and that server rejects unknown fields with 400 — which would drop the release entirely.
     if [ -n "${build_id:-}" ]; then

@@ -308,13 +308,19 @@ func (p *Provisioner) StartInflight(_ context.Context, key, id string) {
 	st.lastBuild = time.Now()
 }
 
-// EndInflight releases the build registered under id (empty id releases the oldest entry).
-func (p *Provisioner) EndInflight(_ context.Context, key, id string) {
+// EndInflight releases the build registered under id (an empty id releases the oldest entry) and
+// reports whether an entry went away — the proof /complete accepts in place of a live token.
+func (p *Provisioner) EndInflight(_ context.Context, key, id string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	st := p.stateFor(key)
-	st.inflight, _ = bkov1.EndInflight(st.inflight, id)
+	entries, found := bkov1.EndInflight(st.inflight, id)
+	if !found {
+		return false // nothing matched: leave the state (and last-build) untouched
+	}
+	st.inflight = entries
 	st.lastBuild = time.Now()
+	return true
 }
 
 // Touch stamps last-build without registering a build (the /prewarm path).

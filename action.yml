@@ -120,6 +120,9 @@ runs:
         BUILDKIT_OPERATOR_KEY: ${{ inputs.key }}
         # BUILDKIT_OPERATOR_TOKEN is set by the auth step above (OIDC JWT or the token input).
         BUILDKIT_OPERATOR_ADMIN_TOKEN: ${{ inputs.admin-token }}
+        # The OIDC token minted above expires in about two minutes, so the release at the end of a real
+        # build would go out with a dead one. The script re-mints from this audience just before it.
+        BKO_OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
         REPO: ${{ inputs.repo }}
         NAME: ${{ inputs.name }}
         ARCH: ${{ inputs.arch }}
