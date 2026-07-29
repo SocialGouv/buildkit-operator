@@ -44,7 +44,7 @@ func newTestServer(t *testing.T, c client.Client) *routeServer {
 	// wait=0: with no Ready StatefulSet, WaitReady times out on the first poll (matches the prior
 	// zero-value behaviour); the cold-start success test flips readiness via a Get interceptor.
 	return &routeServer{
-		prov:         k8sprov.New(c, cfg, 0, "", 0, logr.Discard()),
+		prov:         k8sprov.New(c, cfg, 0, "", 0, 2*time.Hour, logr.Discard()),
 		cfg:          cfg,
 		coldStartSem: make(chan struct{}, 1),
 	}

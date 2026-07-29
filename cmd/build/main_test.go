@@ -250,6 +250,32 @@ func TestCompleteBuild_PostsKeyAndBuildID(t *testing.T) {
 	}
 }
 
+// A buildd that predates build IDs returns no buildId and REJECTS unknown fields (400), so the
+// release must omit the field entirely rather than send it blank — otherwise every build against a
+// not-yet-upgraded server leaks its inflight entry.
+func TestCompleteBuild_OmitsEmptyBuildID(t *testing.T) {
+	got := make(chan map[string]any, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got <- body
+	}))
+	defer srv.Close()
+
+	completeBuild(&config{builddURL: srv.URL, token: "tok"}, "p1", "", quietLogger())
+	select {
+	case b := <-got:
+		if _, present := b["buildId"]; present {
+			t.Errorf("posted %v, want no buildId key at all", b)
+		}
+		if b["key"] != "p1" {
+			t.Errorf("posted %v, want key=p1", b)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("completeBuild did not POST /complete")
+	}
+}
+
 // completeBuild swallows transport errors (unreachable buildd) — it must not panic.
 func TestCompleteBuild_UnreachableIsSilent(t *testing.T) {
 	cfg := &config{builddURL: "http://127.0.0.1:1"}

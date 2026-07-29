@@ -326,8 +326,14 @@ func routeBuild(ctx context.Context, cfg *config, req router.RouteRequest) (rout
 // scale to zero once idle. Failures are logged and ignored — buildd's --max-build-seconds safety net
 // bounds a missed release.
 func completeBuild(cfg *config, key, buildID string, logger *slog.Logger) {
-	// buildId targets THIS build's entry; an older buildd leaves it empty and releases the oldest one.
-	body, _ := json.Marshal(map[string]string{"key": key, "buildId": buildID})
+	// buildId targets THIS build's entry. OMITTED when empty rather than sent blank: an empty id is
+	// exactly the "routed by a buildd that predates build IDs" signal, and that server rejects unknown
+	// fields outright (400), which would drop the release entirely.
+	payload := map[string]string{"key": key}
+	if buildID != "" {
+		payload["buildId"] = buildID
+	}
+	body, _ := json.Marshal(payload)
 	url := strings.TrimRight(cfg.builddURL, "/") + "/complete"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

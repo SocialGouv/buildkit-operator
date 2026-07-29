@@ -86,6 +86,9 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	bp.ApplyDefaults()
 
+	// A status carrying only the pre-entries count is adopted into entries first, so an upgrade that
+	// lands mid-build does not read as "nothing is running" and scale the daemon out from under it.
+	adopted := bkov1.AdoptLegacyInflight(&bp.Status)
 	// The live inflight builds — the ones whose /complete has not arrived and that have not yet
 	// outlived --max-build-seconds — decide BOTH whether the daemon stays up and what the status
 	// records, so they are computed once here rather than derived twice from the same entries.
@@ -108,6 +111,18 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	if err := r.ensureService(ctx, &bp); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure service: %w", err)
+	}
+	// Scaling a daemon to zero is the one irreversible thing a reconcile does to a running build, and
+	// `desired` was computed from the informer cache — which can lag a build routed a beat ago. Confirm
+	// against the API server before pulling the daemon down (same guard the auto-grow bounce uses).
+	if desired == 0 {
+		fresh, err := r.freshInflight(ctx, &bp)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("re-read inflight before scale-down: %w", err)
+		}
+		if fresh > 0 {
+			desired = 1
+		}
 	}
 	if err := r.ensureStatefulSet(ctx, &bp, desired); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure statefulset: %w", err)
@@ -146,10 +161,12 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if expired > 0 {
 		log.FromContext(ctx).Info("expired inflight builds past --max-build-seconds", "key", bp.Spec.Key, "dropped", expired, "remaining", len(liveInflight))
 	}
-	// The count also gets rewritten when it disagrees with the entries — which is how a status
-	// carrying only the pre-entries counter heals: no entry pins the daemon any more, so the number
-	// must stop claiming builds are running.
-	if expired > 0 || int(bp.Status.InflightBuilds) != len(liveInflight) {
+	if adopted {
+		log.FromContext(ctx).Info("adopted a pre-entries inflight count into dated entries", "key", bp.Spec.Key, "entries", len(liveInflight))
+	}
+	// The count is also rewritten whenever it disagrees with the entries, so the projection can never
+	// be left claiming builds the set does not hold.
+	if expired > 0 || adopted || int(bp.Status.InflightBuilds) != len(liveInflight) {
 		bp.Status.SetInflight(liveInflight)
 		changed = true
 	}

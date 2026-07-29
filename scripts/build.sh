@@ -147,7 +147,13 @@ fi
 cleanup() {
   rm -rf "$certs"
   if [ -n "${key:-}" ] && [ "$key" != null ]; then
-    complete_payload="$(jq -nc --arg key "$key" --arg id "${build_id:-}" '{key:$key, buildId:$id}')" || return 0
+    # buildId is OMITTED when empty: an empty id means the server that routed us predates the field,
+    # and that server rejects unknown fields with 400 — which would drop the release entirely.
+    if [ -n "${build_id:-}" ]; then
+      complete_payload="$(jq -nc --arg key "$key" --arg id "$build_id" '{key:$key, buildId:$id}')" || return 0
+    else
+      complete_payload="$(jq -nc --arg key "$key" '{key:$key}')" || return 0
+    fi
     api /complete "$complete_payload" >/dev/null 2>&1 || true
   fi
 }

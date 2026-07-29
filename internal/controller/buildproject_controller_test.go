@@ -232,27 +232,45 @@ func TestReconcile_ExpiresLeakedInflightWhileProjectIsActive(t *testing.T) {
 	}
 }
 
-// A status written before inflight became a set carries only the counter — no entry pins the daemon,
-// so the reconciler zeroes the number instead of leaving it claiming builds that are not tracked.
-func TestReconcile_HealsCounterWithoutEntries(t *testing.T) {
+// A status written before inflight became a set carries only the counter. It is ADOPTED into dated
+// entries rather than zeroed: an upgrade landing mid-build must not read as "nothing is running" and
+// scale the daemon out from under it. The adopted entries then expire on the normal clock, so a
+// counter whose last build is older than the window clears on the same reconcile.
+func TestReconcile_AdoptsLegacyCounter(t *testing.T) {
 	s := testScheme(t)
-	ns, key := "buildkit-operator", "plegacy"
-	now := metav1.Now()
-	bp := &bkov1.BuildProject{
-		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
-		Spec:       bkov1.BuildProjectSpec{Key: key, Repo: "github.com/o/r", Arch: "amd64"},
-		Status:     bkov1.BuildProjectStatus{InflightBuilds: 3, LastBuildTime: &now},
+	ns := "buildkit-operator"
+	reconcileWith := func(t *testing.T, key string, last metav1.Time) bkov1.BuildProject {
+		t.Helper()
+		bp := &bkov1.BuildProject{
+			ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+			Spec:       bkov1.BuildProjectSpec{Key: key, Repo: "github.com/o/r", Arch: "amd64", Tier: bkov1.TierWarm},
+			Status:     bkov1.BuildProjectStatus{InflightBuilds: 3, LastBuildTime: &last},
+		}
+		c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+		r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns}}
+		if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}); err != nil {
+			t.Fatal(err)
+		}
+		var got bkov1.BuildProject
+		_ = c.Get(t.Context(), types.NamespacedName{Name: key, Namespace: ns}, &got)
+		return got
 	}
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
-	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns}}
 
-	if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}); err != nil {
-		t.Fatal(err)
+	// Mid-build upgrade: the count becomes entries and the daemon stays up.
+	live := reconcileWith(t, "plive", metav1.Now())
+	if live.Status.InflightCount() != 3 || live.Status.InflightBuilds != 3 {
+		t.Errorf("fresh legacy counter: entries = %v, projection = %d, want 3 adopted", live.Status.Inflight, live.Status.InflightBuilds)
 	}
-	var got bkov1.BuildProject
-	_ = c.Get(t.Context(), types.NamespacedName{Name: key, Namespace: ns}, &got)
-	if got.Status.InflightBuilds != 0 || got.Status.InflightCount() != 0 {
-		t.Errorf("InflightBuilds = %d, entries = %v, want both empty", got.Status.InflightBuilds, got.Status.Inflight)
+	var sts appsv1.StatefulSet
+	// The adopted entries must actually hold the daemon at 1 replica.
+	if live.Status.Phase == "Idle" {
+		t.Errorf("phase = Idle with adopted inflight entries, want the daemon held up (sts=%v)", sts.Spec.Replicas)
+	}
+
+	// A count whose last build predates the safety-net window is adopted and expired in one pass.
+	old := reconcileWith(t, "pstaleold", metav1.NewTime(time.Now().Add(-3*time.Hour)))
+	if old.Status.InflightCount() != 0 || old.Status.InflightBuilds != 0 {
+		t.Errorf("stale legacy counter: entries = %v, projection = %d, want both empty", old.Status.Inflight, old.Status.InflightBuilds)
 	}
 }
 
