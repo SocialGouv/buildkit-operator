@@ -60,11 +60,15 @@ mint_oidc() {
     | jq -r '.value // empty' 2>/dev/null || true
 }
 
-# No identity token yet (a caller invoking this script directly, rather than through the Action)?
-# Mint one, so the OIDC path is taken wherever the runner supports it.
-if [ -z "${BUILDKIT_OPERATOR_TOKEN:-}" ]; then
-  BUILDKIT_OPERATOR_TOKEN="$(mint_oidc || true)"
-  [ -n "${BUILDKIT_OPERATOR_TOKEN:-}" ] && echo "buildkit-operator: using a forge OIDC identity token (audience=${BKO_OIDC_AUDIENCE})"
+# A forge-signed identity PREVAILS over any token we were handed. buildd binds the verified repo claim
+# server-side, whereas a shared bearer lets the client declare its own repo — so preferring the bearer
+# would quietly reopen cross-repo cache poisoning for every caller that still passes one.
+minted="$(mint_oidc || true)"
+if [ -n "$minted" ]; then
+  BUILDKIT_OPERATOR_TOKEN="$minted"
+  # Register it with the runner, so an accidental echo (set -x, curl -v) cannot print a live credential.
+  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::add-mask::$minted"
+  echo "buildkit-operator: using a forge OIDC identity token (audience=${BKO_OIDC_AUDIENCE})"
 fi
 
 api() {
@@ -169,7 +173,10 @@ cleanup() {
     # (GitHub's live about two minutes). buildd accepts the build token on its own, but a fresh identity
     # keeps the release subject to the repo check rather than to the build token alone.
     fresh="$(mint_oidc || true)"
-    [ -n "$fresh" ] && BUILDKIT_OPERATOR_TOKEN="$fresh"
+    if [ -n "$fresh" ]; then
+      BUILDKIT_OPERATOR_TOKEN="$fresh"
+      [ -n "${GITHUB_ACTIONS:-}" ] && echo "::add-mask::$fresh"
+    fi
     # buildId is OMITTED when empty: an empty id means the server that routed us predates the field,
     # and that server rejects unknown fields with 400 — which would drop the release entirely.
     if [ -n "${build_id:-}" ]; then

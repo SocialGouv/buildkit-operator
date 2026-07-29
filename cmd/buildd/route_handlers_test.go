@@ -458,3 +458,38 @@ func TestHandleComplete_ExpiredIdentityAuthorizedByBuildID(t *testing.T) {
 		t.Errorf("inflight = %v, want both entries untouched", left)
 	}
 }
+
+// A request carrying NO credential at all is refused before it can spend a rate-limit token. The
+// bucket is shared with /route, so letting unauthenticated traffic through would hand anyone on the
+// internet a way to 429 the whole fleet's builds.
+func TestHandleComplete_NoCredentialRejectedBeforeRateLimit(t *testing.T) {
+	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
+	bp := &bkov1.BuildProject{}
+	bp.Name, bp.Namespace = key, "buildkit-operator"
+	bp.Status.SetInflight(bkov1.StartInflight(nil, "b1b1b1b1b1b1b1b1", metav1.Now()))
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(bp).Build()
+	srv := newTestServer(t, c)
+	srv.authToken, srv.log = "the-shared-bearer", logr.Discard()
+	// A limiter that allows exactly one request: if the unauthenticated call consumed it, the
+	// legitimate one behind it would be throttled.
+	srv.limiter = rate.NewLimiter(rate.Every(time.Hour), 1)
+
+	raw, _ := json.Marshal(map[string]string{"key": key, "buildId": "b1b1b1b1b1b1b1b1"})
+	anon := httptest.NewRequest(http.MethodPost, "/complete", bytes.NewReader(raw))
+	rec := httptest.NewRecorder()
+	srv.handleComplete(rec, anon)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("credential-less release = %d, want 401", rec.Code)
+	}
+
+	authed := httptest.NewRequest(http.MethodPost, "/complete", bytes.NewReader(raw))
+	authed.Header.Set("Authorization", "Bearer the-shared-bearer")
+	rec = httptest.NewRecorder()
+	srv.handleComplete(rec, authed)
+	if rec.Code == http.StatusTooManyRequests {
+		t.Error("the anonymous request spent the rate-limit token — a flood would 429 real builds")
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("authenticated release = %d, want 204", rec.Code)
+	}
+}

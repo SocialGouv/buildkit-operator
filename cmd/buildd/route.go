@@ -249,6 +249,15 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 // it can only ever release the one build it names. /route keeps its full identity requirement.
 func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 	id, authStatus, authErr := s.identify(r)
+	// A caller with no identity has one thing left that can speak for it — a build token, which lives
+	// in the body. Requests carrying NO credential whatsoever are refused before the rate limiter: the
+	// bucket is shared with /route, so letting unauthenticated traffic spend it hands anyone on the
+	// internet a way to 429 the whole fleet's builds.
+	if authErr != nil && bearerToken(r) == "" && r.Header.Get(adminTokenHeader) == "" {
+		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "err", authErr.Error())
+		http.Error(w, http.StatusText(authStatus), authStatus)
+		return
+	}
 	if !s.allow(w) {
 		return
 	}

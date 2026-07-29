@@ -182,7 +182,7 @@ func (p *Provisioner) WaitReady(ctx context.Context, key string) error {
 
 // StartInflight registers a routed build under id (see touchStatus).
 func (p *Provisioner) StartInflight(ctx context.Context, key, id string) {
-	p.touchStatus(ctx, key, "start", func(st *bkov1.BuildProjectStatus, now metav1.Time) bool {
+	p.touchStatus(ctx, key, "start", waitForCache, func(st *bkov1.BuildProjectStatus, now metav1.Time) bool {
 		st.SetInflight(bkov1.StartInflight(p.live(st, now.Time), id, now))
 		// A routed build (not a prewarm touch or a /complete release) feeds the cadence ring that
 		// drives the adaptive idle window. Forks are excluded from adaptivity, so their one-shot
@@ -198,7 +198,10 @@ func (p *Provisioner) StartInflight(ctx context.Context, key, id string) {
 // reports whether an entry actually went away. That answer is what /complete uses to authorize a
 // caller whose token has expired: naming a live build id proves it started that build.
 func (p *Provisioner) EndInflight(ctx context.Context, key, id string) bool {
-	return p.touchStatus(ctx, key, "end", func(st *bkov1.BuildProjectStatus, now metav1.Time) bool {
+	// noWaitForCache: unlike a route, a release never races a just-created project — the project has
+	// existed since /route. Retrying a missing one would only turn a bogus key into seconds of held
+	// request, which is both a rate-limit amplifier and an oracle for which projects exist.
+	return p.touchStatus(ctx, key, "end", noWaitForCache, func(st *bkov1.BuildProjectStatus, now metav1.Time) bool {
 		entries, found := bkov1.EndInflightBefore(p.live(st, now.Time), id, now.Time.Add(-p.maxBuild))
 		if !found {
 			// Nothing to release: a duplicate /complete, an entry the safety net already expired, or a
@@ -238,7 +241,7 @@ func (p *Provisioner) live(st *bkov1.BuildProjectStatus, now time.Time) []bkov1.
 
 // Touch stamps LastBuildTime without registering a build (the /prewarm path).
 func (p *Provisioner) Touch(ctx context.Context, key string) {
-	p.touchStatus(ctx, key, "touch", func(*bkov1.BuildProjectStatus, metav1.Time) bool { return true })
+	p.touchStatus(ctx, key, "touch", waitForCache, func(*bkov1.BuildProjectStatus, metav1.Time) bool { return true })
 }
 
 // retriableStatusErr and statusBackoff are the shared retry envelope for the status writes on the
@@ -261,9 +264,21 @@ func statusBackoff() wait.Backoff {
 // warm-tier project stuck Idle). A terminal failure (all retries exhausted) is logged.
 // mutate reports whether it changed anything; false skips the write entirely, so an operation with
 // nothing to do leaves no trace on the object.
-func (p *Provisioner) touchStatus(ctx context.Context, key, op string, mutate func(*bkov1.BuildProjectStatus, metav1.Time) bool) bool {
+// waitForCache / noWaitForCache select whether a missing project is worth retrying: right after
+// /route creates one the informer cache can still miss it, but a release names a project that has
+// existed since its own route.
+const (
+	waitForCache   = true
+	noWaitForCache = false
+)
+
+func (p *Provisioner) touchStatus(ctx context.Context, key, op string, retryMissing bool, mutate func(*bkov1.BuildProjectStatus, metav1.Time) bool) bool {
 	applied := false
-	err := retry.OnError(statusBackoff(), retriableStatusErr, func() error {
+	retriable := retriableStatusErr
+	if !retryMissing {
+		retriable = apierrors.IsConflict
+	}
+	err := retry.OnError(statusBackoff(), retriable, func() error {
 		var bp bkov1.BuildProject
 		if err := p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &bp); err != nil {
 			return err
