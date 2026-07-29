@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.19.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.18.0...v0.19.0) (2026-07-29)
+
+### Features
+
+* close the remaining ways a daemon disappears under a build ([42e1c11](https://github.com/SocialGouv/buildkit-operator/commit/42e1c112dcbde9175f277e4b81495d3decd439bc))
+
+### Bug Fixes
+
+* an idle daemon gets no disruption budget, and the gateway rollout can drain ([e2626ec](https://github.com/SocialGouv/buildkit-operator/commit/e2626ec358e6ddc3894cfdb1c216a5075c80985b))
+* wire the gateway drain flag, and guard chart/binary drift in CI ([40c5dc5](https://github.com/SocialGouv/buildkit-operator/commit/40c5dc5114c0731dfc5d26b9cb5329ec5b8fdffc))
+
 ## [0.18.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.17.0...v0.18.0) (2026-07-29)
 
 ### Features
