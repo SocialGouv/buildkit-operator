@@ -143,6 +143,116 @@ func TestReconcile_RollsTemplateOnChange(t *testing.T) {
 	}
 }
 
+// Rolling a daemon replaces its pod, which severs the mTLS stream of every build running on it — the
+// client sees "failed to write client preface: EOF" mid-build. So a template change waits for the
+// daemon to drain. It must NOT wait on a daemon that is down (the roll may be the very fix), and it
+// must land as soon as the last build is released.
+func TestReconcile_HoldsRollWhileBuildsAreInFlight(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildkit-operator", "drain"
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, BuildkitImage: "buildkit:v1", Port: 1234, HealthPort: 8080}}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}
+	stsName := types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}
+	daemonImage := func(t *testing.T) string {
+		t.Helper()
+		var sts appsv1.StatefulSet
+		if err := c.Get(t.Context(), stsName, &sts); err != nil {
+			t.Fatal(err)
+		}
+		return sts.Spec.Template.Spec.Containers[0].Image
+	}
+	setReady := func(t *testing.T, ready int32) {
+		t.Helper()
+		var sts appsv1.StatefulSet
+		if err := c.Get(t.Context(), stsName, &sts); err != nil {
+			t.Fatal(err)
+		}
+		sts.Status.ReadyReplicas = ready
+		if err := c.Status().Update(t.Context(), &sts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	routeBuild := func(t *testing.T, entries []bkov1.InflightBuild) {
+		t.Helper()
+		var cur bkov1.BuildProject
+		if err := c.Get(t.Context(), req.NamespacedName, &cur); err != nil {
+			t.Fatal(err)
+		}
+		cur.Status.SetInflight(entries)
+		if err := c.Status().Update(t.Context(), &cur); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	setReady(t, 1)
+
+	// A build is running on the ready daemon: the image bump must NOT land yet.
+	routeBuild(t, []bkov1.InflightBuild{{ID: "b1", Since: metav1.Now()}})
+	r.Cfg.BuildkitImage = "buildkit:v2"
+	res, err := r.Reconcile(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := daemonImage(t); got != "buildkit:v1" {
+		t.Errorf("daemon image = %q while a build is in flight, want the roll held at buildkit:v1", got)
+	}
+	if res.RequeueAfter == 0 {
+		t.Error("a held roll must requeue — an entry can leave by expiring, which writes nothing")
+	}
+
+	// The build is released: the pending template lands on the next reconcile.
+	routeBuild(t, nil)
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := daemonImage(t); got != "buildkit:v2" {
+		t.Errorf("daemon image = %q after the daemon drained, want buildkit:v2", got)
+	}
+}
+
+// A daemon that is NOT ready cannot be serving anything, so a leftover entry must not keep a broken
+// pod from being repaired by the pending template.
+func TestReconcile_RollsUnreadyDaemonDespiteInflight(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildkit-operator", "drainbroken"
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, BuildkitImage: "broken:v1", Port: 1234, HealthPort: 8080}}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}
+
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	var cur bkov1.BuildProject
+	_ = c.Get(t.Context(), req.NamespacedName, &cur)
+	cur.Status.SetInflight([]bkov1.InflightBuild{{ID: "b1", Since: metav1.Now()}})
+	if err := c.Status().Update(t.Context(), &cur); err != nil {
+		t.Fatal(err)
+	}
+	r.Cfg.BuildkitImage = "fixed:v2" // the roll IS the repair — ReadyReplicas stays 0
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	var sts appsv1.StatefulSet
+	if err := c.Get(t.Context(), types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}, &sts); err != nil {
+		t.Fatal(err)
+	}
+	if got := sts.Spec.Template.Spec.Containers[0].Image; got != "fixed:v2" {
+		t.Errorf("daemon image = %q, want fixed:v2 — a down daemon has no build to protect", got)
+	}
+}
+
 // M2 elasticity: the scale decision must honor tier + idle window + in-flight.
 func TestDesiredReplicas(t *testing.T) {
 	now := time.Now()

@@ -191,6 +191,12 @@ warm-pool/idle-timeout tuning); `buildkit_operator_coldstart_seconds` isolates t
 (provision + Cinder attach) from warm route latency — the bench B/C signal — while
 `route_duration_seconds` covers all routes.
 
+Upgrading the chart changes the rendered daemon template (a new companion tag is enough), which
+REPLACES every daemon pod. The reconciler holds each daemon's roll until its `.status.inflight` is
+empty, so a build in progress is not severed mid-stream; the roll lands as soon as the last build is
+released, or at the latest once its entries pass `maxBuildSeconds`. `holding the daemon roll until
+its builds finish` in the buildd log is that wait, not a stall.
+
 A project that stays warm with no build running: read `.status.inflight`. Each routed build holds one
 timestamped entry, released by the client's `/complete`. An entry left behind by a build whose client
 never released it (a cancelled CI job kills the runner before its cleanup) expires on its OWN clock
