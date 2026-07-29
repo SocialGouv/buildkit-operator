@@ -198,10 +198,11 @@ REPLACES every daemon pod. Two things keep that from killing builds:
   OUTGOING pod), so a build routed during an upgrade waits for the new pod instead of being handed an
   endpoint that disappears seconds later.
 - The reconciler holds a daemon's pending template while `.status.inflight` is non-empty, so a build
-  already running is not severed. The roll lands as soon as the last build is released — and at the
-  latest after **30 minutes** (`maxRollHold`), because a project that builds continuously would
-  otherwise never take a new image. Past that the roll goes through and its builds do die; CI retries,
-  an abandoned image does not fix itself.
+  already running is not severed. **Every build gets at least an hour** before a forced roll can cut
+  it; the roll lands as soon as the last build is released, or once even the youngest build on that
+  daemon has had its hour. A project building back-to-back keeps its youngest build young forever, so
+  an absolute cap of `maxBuildSeconds` applies on top — past that a build has already outlived what
+  the operator promises it, and an image nobody can update is the worse failure.
 
 `buildkit_operator_daemon_rolls_held` counts the daemons currently withholding a template, and the
 StatefulSet carries `buildkit-operator.socialgouv.github.io/roll-held-since`. A daemon wedged in

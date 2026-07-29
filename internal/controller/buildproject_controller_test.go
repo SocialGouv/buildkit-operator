@@ -270,10 +270,59 @@ func TestReconcile_RollsWedgedDaemonDespiteInflight(t *testing.T) {
 	}
 }
 
-// The hold is BOUNDED: a project that always has a build in flight would otherwise never take a new
-// image, and the busiest project is the one a security fix most needs to reach. Past maxRollHold the
-// roll goes through.
-func TestReconcile_RollsThroughAfterMaxHold(t *testing.T) {
+// The drain guarantees every build at least minBuildGrace before a forced roll can sever it — a
+// 45-minute build must survive — but it is still bounded: once even the YOUNGEST build has had its
+// hour, the pending template goes through.
+func TestReconcile_RollGuaranteesBuildGrace(t *testing.T) {
+	s := testScheme(t)
+	ns := "buildkit-operator"
+	// rollWith drives one project whose single in-flight build started `buildAge` ago, and reports the
+	// image the daemon ends up on.
+	rollWith := func(t *testing.T, key string, buildAge time.Duration) string {
+		t.Helper()
+		bp := &bkov1.BuildProject{
+			ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+			Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot},
+		}
+		c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+		r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, BuildkitImage: "buildkit:v1", Port: 1234, HealthPort: 8080}}
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}
+		stsName := types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}
+
+		if _, err := r.Reconcile(t.Context(), req); err != nil {
+			t.Fatal(err)
+		}
+		var sts appsv1.StatefulSet
+		_ = c.Get(t.Context(), stsName, &sts)
+		sts.Status.ReadyReplicas = 1
+		if err := c.Status().Update(t.Context(), &sts); err != nil {
+			t.Fatal(err)
+		}
+		var cur bkov1.BuildProject
+		_ = c.Get(t.Context(), req.NamespacedName, &cur)
+		cur.Status.SetInflight([]bkov1.InflightBuild{{ID: "b1", Since: metav1.NewTime(time.Now().Add(-buildAge))}})
+		if err := c.Status().Update(t.Context(), &cur); err != nil {
+			t.Fatal(err)
+		}
+		r.Cfg.BuildkitImage = "buildkit:v2"
+		if _, err := r.Reconcile(t.Context(), req); err != nil {
+			t.Fatal(err)
+		}
+		_ = c.Get(t.Context(), stsName, &sts)
+		return sts.Spec.Template.Spec.Containers[0].Image
+	}
+
+	if got := rollWith(t, "grace45", 45*time.Minute); got != "buildkit:v1" {
+		t.Errorf("a 45-minute build was severed (image = %q), want the roll held — every build gets %v", got, minBuildGrace)
+	}
+	if got := rollWith(t, "grace90", 90*time.Minute); got != "buildkit:v2" {
+		t.Errorf("image = %q with a build past its grace period, want the roll to go through", got)
+	}
+}
+
+// The absolute cap: a project building back-to-back keeps its youngest build young forever, so the
+// hold would never end on the grace rule alone. Past --max-build-seconds the roll goes anyway.
+func TestReconcile_RollsThroughAfterAbsoluteCap(t *testing.T) {
 	s := testScheme(t)
 	ns, key := "buildkit-operator", "drainbound"
 	bp := &bkov1.BuildProject{
@@ -294,14 +343,17 @@ func TestReconcile_RollsThroughAfterMaxHold(t *testing.T) {
 	if err := c.Status().Update(t.Context(), &sts); err != nil {
 		t.Fatal(err)
 	}
-	var cur bkov1.BuildProject
-	_ = c.Get(t.Context(), req.NamespacedName, &cur)
-	cur.Status.SetInflight([]bkov1.InflightBuild{{ID: "b1", Since: metav1.Now()}})
-	if err := c.Status().Update(t.Context(), &cur); err != nil {
-		t.Fatal(err)
+	freshBuild := func(t *testing.T) {
+		t.Helper()
+		var cur bkov1.BuildProject
+		_ = c.Get(t.Context(), req.NamespacedName, &cur)
+		cur.Status.SetInflight([]bkov1.InflightBuild{{ID: "b", Since: metav1.Now()}})
+		if err := c.Status().Update(t.Context(), &cur); err != nil {
+			t.Fatal(err)
+		}
 	}
+	freshBuild(t)
 
-	// First reconcile after the change holds, and stamps when the hold started.
 	r.Cfg.BuildkitImage = "buildkit:v2"
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
 		t.Fatal(err)
@@ -314,17 +366,18 @@ func TestReconcile_RollsThroughAfterMaxHold(t *testing.T) {
 		t.Fatalf("daemon image = %q, want the roll held at buildkit:v1", got)
 	}
 
-	// Backdate the stamp past the bound: the build is STILL in flight, and the roll goes anyway.
-	sts.Annotations[rollHeldSinceAnnotation] = time.Now().Add(-maxRollHold - time.Minute).UTC().Format(time.RFC3339)
+	// Backdate the hold past the cap; a brand-new build keeps arriving, as on a busy project.
+	sts.Annotations[rollHeldSinceAnnotation] = time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	if err := c.Update(t.Context(), &sts); err != nil {
 		t.Fatal(err)
 	}
+	freshBuild(t)
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
 	_ = c.Get(t.Context(), stsName, &sts)
 	if got := sts.Spec.Template.Spec.Containers[0].Image; got != "buildkit:v2" {
-		t.Errorf("daemon image = %q past maxRollHold, want buildkit:v2 (bounded hold)", got)
+		t.Errorf("daemon image = %q past the absolute cap, want buildkit:v2", got)
 	}
 	if sts.Annotations[rollHeldSinceAnnotation] != "" {
 		t.Errorf("the hold stamp must be cleared once the roll lands, got %q", sts.Annotations[rollHeldSinceAnnotation])
