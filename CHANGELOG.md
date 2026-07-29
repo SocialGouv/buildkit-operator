@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.18.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.17.0...v0.18.0) (2026-07-29)
+
+### Features
+
+* **controller:** drain a daemon before rolling its pod template ([e593b39](https://github.com/SocialGouv/buildkit-operator/commit/e593b39b7b3228a7c30e738123d64ed3d9d9bede))
+
+### Bug Fixes
+
+* **buildd:** stop advertising a daemon that is being replaced ([42e0330](https://github.com/SocialGouv/buildkit-operator/commit/42e03301ad81b44d271e3b0fba153d5185727e90))
+* **controller:** guarantee every build an hour before a forced roll ([077f50b](https://github.com/SocialGouv/buildkit-operator/commit/077f50b18637d138eebbe4f53f1763c15557ec00))
+
 ## [0.17.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.16.0...v0.17.0) (2026-07-29)
 
 ### Features
