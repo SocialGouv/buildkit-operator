@@ -81,6 +81,10 @@ jobs:
         with:
           context: .
           file: cmd/${{ matrix.component }}/Dockerfile
+          # arm64 as well as amd64: daemonScheduling.pinArch puts an arm64 project's daemon (and its
+          # companion sidecar) on arm64/Graviton nodes, which needs an arm64 image to run at all. The
+          # Dockerfiles cross-compile from the native builder, so this needs no QEMU emulation.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
