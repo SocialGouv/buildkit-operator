@@ -362,7 +362,7 @@ func TestStartEndInflight(t *testing.T) {
 	p.mu.Lock()
 	left := append([]bkov1.InflightBuild{}, p.projects[key].inflight...)
 	p.mu.Unlock()
-	if len(left) != 1 || left[0].ID != "b" {
+	if len(left) != 1 || left[0].ID != bkov1.InflightID("b") {
 		t.Errorf("inflight = %v, want only b left", left)
 	}
 	// An unknown id (duplicate release, or one the safety net already expired) is a no-op.

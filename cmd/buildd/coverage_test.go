@@ -101,8 +101,8 @@ func TestHandleRoute_WarmReturnsEndpoint(t *testing.T) {
 	if err := c.Get(t.Context(), types.NamespacedName{Name: key, Namespace: "buildkit-operator"}, &bp); err != nil {
 		t.Fatalf("get buildproject: %v", err)
 	}
-	if bp.Status.InflightCount() != 1 || bp.Status.Inflight[0].ID != resp.BuildID {
-		t.Errorf("inflight = %v, want exactly the returned buildId %q", bp.Status.Inflight, resp.BuildID)
+	if bp.Status.InflightCount() != 1 || bp.Status.Inflight[0].ID != bkov1.InflightID(resp.BuildID) {
+		t.Errorf("inflight = %v, want the hash of the returned buildId %q", bp.Status.Inflight, resp.BuildID)
 	}
 }
 

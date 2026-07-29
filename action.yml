@@ -94,19 +94,17 @@ runs:
     # Mint a GitHub OIDC identity token for buildd /route auth — buildd verifies its signature and binds
     # the build to ${{ github.repository }} server-side, so a leaked token can't impersonate another repo.
     # Needs the caller job's permissions.id-token: write; degrades to the `token` input when absent.
+    # The minting itself lives in scripts/build.sh (see BKO_OIDC_AUDIENCE on the build step).
     - id: auth
       shell: bash
       env:
         BKO_OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
         BKO_TOKEN_INPUT: ${{ inputs.token }}
       run: |
-        token=""
-        if [ -n "${BKO_OIDC_AUDIENCE:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-          token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${BKO_OIDC_AUDIENCE}" | jq -r '.value // empty')
-          [ -n "$token" ] && echo "buildkit-operator: using GitHub OIDC identity token (audience=${BKO_OIDC_AUDIENCE})"
-        fi
-        [ -z "$token" ] && token="${BKO_TOKEN_INPUT}"
+        # Only the explicit fallback is resolved here. The OIDC token is minted by scripts/build.sh,
+        # which needs to mint again at release time anyway (a build outlives the token minted at job
+        # start) — one implementation, one behaviour.
+        token="${BKO_TOKEN_INPUT}"
         if [ -n "$token" ]; then
           echo "::add-mask::$token"
           echo "BUILDKIT_OPERATOR_TOKEN=$token" >> "$GITHUB_ENV"
@@ -118,7 +116,8 @@ runs:
         BUILDKIT_OPERATOR_CA: ${{ inputs.ca }}
         BUILDKIT_OPERATOR_CERT: ${{ inputs.cert }}
         BUILDKIT_OPERATOR_KEY: ${{ inputs.key }}
-        # BUILDKIT_OPERATOR_TOKEN is set by the auth step above (OIDC JWT or the token input).
+        # BUILDKIT_OPERATOR_TOKEN is set by the auth step above when a `token` input was given;
+        # otherwise scripts/build.sh mints an OIDC one from BKO_OIDC_AUDIENCE below.
         BUILDKIT_OPERATOR_ADMIN_TOKEN: ${{ inputs.admin-token }}
         # The OIDC token minted above expires in about two minutes, so the release at the end of a real
         # build would go out with a dead one. The script re-mints from this audience just before it.

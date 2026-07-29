@@ -18,12 +18,31 @@ import (
 
 const maxRouteRequestBytes int64 = 8 << 10
 
+// buildIDBytes is the entropy behind a build token. It is a credential (see handleComplete), single
+// use, and lives at most --max-build-seconds; 64 bits of crypto/rand behind the API rate limit puts
+// guessing far out of reach.
+const buildIDBytes = 8
+
+// validBuildID accepts the shape newBuildID mints (16 hex chars) and the empty string, which means
+// "no token" — a legacy client. Anything else is a caller guessing, and is refused before it can cost
+// an API-server round-trip.
+func validBuildID(id string) bool {
+	if id == "" {
+		return true
+	}
+	if len(id) != 2*buildIDBytes {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil
+}
+
 // newBuildID mints the token that identifies ONE routed build across /route and /complete. Random
 // (not a counter) because buildd runs several replicas with no shared sequence; 8 bytes make a
 // collision within a project's inflight set irrelevant. crypto/rand.Read never fails on the
 // platforms we run (it panics on a broken entropy source rather than returning short reads).
 func newBuildID() string {
-	var b [8]byte
+	var b [buildIDBytes]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
 }
@@ -251,13 +270,15 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: need {\"key\":\"...\"}", http.StatusBadRequest)
 		return
 	}
-	if len(req.BuildID) > 64 {
-		http.Error(w, "bad request: buildId is too long", http.StatusBadRequest)
+	if !validBuildID(req.BuildID) {
+		http.Error(w, "bad request: malformed buildId", http.StatusBadRequest)
 		return
 	}
-	// No identity at all: the build id is the only thing that can speak for the caller, so it must be
-	// present AND match a live entry (checked below). An empty id would fall back to "retire the oldest
-	// build", which is exactly the lever an unauthenticated caller must not have.
+	// Authorization, decided in one place. Either the caller has a live identity — and is then held to
+	// its own repo — or it names a build token, whose liveness is checked when the release runs below.
+	// An unauthenticated caller with NO token has nothing to argue with: an empty token would fall back
+	// to "retire the oldest build", the one lever it must never have. Rejecting it here also keeps a
+	// caller with no credentials at all from reaching the API server.
 	if authErr != nil && req.BuildID == "" {
 		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "err", authErr.Error())
 		http.Error(w, http.StatusText(authStatus), authStatus)
@@ -266,7 +287,7 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 	// A caller whose repo was VERIFIED (OIDC) may only release builds of its own project. Releasing is
 	// destructive — it lets the daemon scale down — and the key alone is not a capability, so without
 	// this any authenticated caller could drain another project's in-flight set. Callers on the legacy
-	// bearer carry no repo to check; the build id covers them, since it is unguessable.
+	// bearer carry no repo to check; the build token covers them, since it is unguessable.
 	if authErr == nil && id.override && id.repo != "" {
 		repo, found, err := s.prov.ProjectRepo(r.Context(), req.Key)
 		if err != nil {
