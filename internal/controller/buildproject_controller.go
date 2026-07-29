@@ -151,7 +151,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.ensureService(ctx, &bp); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure service: %w", err)
 	}
-	if err := r.ensurePDB(ctx, &bp); err != nil {
+	if err := r.ensurePDB(ctx, &bp, len(liveInflight) > 0); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure poddisruptionbudget: %w", err)
 	}
 	rollHeld, err := r.ensureStatefulSet(ctx, &bp, desired, liveInflight)
@@ -278,19 +278,11 @@ func (r *BuildProjectReconciler) ensureService(ctx context.Context, bp *bkov1.Bu
 	return r.Update(ctx, &existing)
 }
 
-// ensurePDB keeps the daemon's PodDisruptionBudget in place, so a node drain waits for the builds
-// running on it instead of evicting them. The hot tier gets none (see builder.PodDisruptionBudget) —
-// and if a project is switched to hot, the one it had is removed rather than left to block drains.
-func (r *BuildProjectReconciler) ensurePDB(ctx context.Context, bp *bkov1.BuildProject) error {
+// ensurePDB keeps the daemon's PodDisruptionBudget in step with whether it is serving builds, so a
+// node drain waits for the builds running on it and passes straight through an idle one.
+func (r *BuildProjectReconciler) ensurePDB(ctx context.Context, bp *bkov1.BuildProject, serving bool) error {
 	name := types.NamespacedName{Name: router.DaemonName(bp.Spec.Key), Namespace: r.Cfg.Namespace}
-	want := builder.PodDisruptionBudget(bp, r.Cfg)
-	if want == nil {
-		var existing policyv1.PodDisruptionBudget
-		if err := r.Get(ctx, name, &existing); err != nil {
-			return client.IgnoreNotFound(err)
-		}
-		return client.IgnoreNotFound(r.Delete(ctx, &existing))
-	}
+	want := builder.PodDisruptionBudget(bp, r.Cfg, serving)
 	if err := ctrl.SetControllerReference(bp, want, r.Scheme); err != nil {
 		return err
 	}
@@ -700,10 +692,15 @@ func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.
 		if want[clone.Name] {
 			continue
 		}
-		// Deleting the clone cascades to its StatefulSet, which severs whatever is building on it.
-		// Lowering Fanout is not urgent — leave a busy clone for the next reconcile, by which time its
+		// Deleting the clone cascades to its StatefulSet, which severs whatever is building on it — so
+		// it goes through the same fresh read as every other destructive decision, not the cached List.
+		// Lowering Fanout is not urgent: leave a busy clone for the next reconcile, by which time its
 		// builds have been released or have aged out of the inflight set.
-		if live, _ := bkov1.ExpireInflight(clone.Status.Inflight, time.Now(), r.maxBuildAge()); len(live) > 0 {
+		live, err := r.freshInflightEntries(ctx, clone)
+		if err != nil {
+			return fmt.Errorf("re-read inflight before pruning clone %s: %w", clone.Name, err)
+		}
+		if len(live) > 0 {
 			log.FromContext(ctx).Info("keeping a fan-out clone that is still serving builds",
 				"clone", clone.Name, "of", bp.Spec.Key, "inflight", len(live))
 			continue

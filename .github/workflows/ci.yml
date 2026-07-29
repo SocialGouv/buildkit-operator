@@ -25,6 +25,11 @@ jobs:
         run: |
           unformatted="$(gofmt -l $(git ls-files '*.go'))"
           if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
+      # A flag the chart renders but the binary never defined does not fail subtly — Go exits 2 and the
+      # container CrashLoopBackOffs. Only a rendered-chart-against-real-binary check can see that.
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: chart flags match the binaries
+        run: bash hack/check-chart-flags.sh
       - name: unit tests (race) + coverage gate
         run: |
           go test -race ./... -count=1 -coverprofile=cover.out -covermode=atomic

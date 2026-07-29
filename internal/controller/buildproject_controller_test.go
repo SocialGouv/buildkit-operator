@@ -782,9 +782,9 @@ func TestReconcileFanout_KeepsBusyClone(t *testing.T) {
 	}
 }
 
-// Every daemon carries a PodDisruptionBudget so a node drain waits for its builds; switching a project
-// to the hot tier removes it, since a hot daemon never scales down and would block drains forever.
-func TestReconcile_ManagesDaemonPDB(t *testing.T) {
+// The daemon's PodDisruptionBudget follows its in-flight set: an eviction is refused while builds run
+// and permitted once the daemon is idle, so a node drain waits for the builds and no longer.
+func TestReconcile_PDBTracksInflight(t *testing.T) {
 	s := testScheme(t)
 	ns, key := "buildkit-operator", "ppdb"
 	bp := &bkov1.BuildProject{
@@ -795,25 +795,32 @@ func TestReconcile_ManagesDaemonPDB(t *testing.T) {
 	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, Port: 1234, HealthPort: 8080}}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}
 	pdbName := types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}
+	minAvailable := func(t *testing.T) int {
+		t.Helper()
+		var pdb policyv1.PodDisruptionBudget
+		if err := c.Get(t.Context(), pdbName, &pdb); err != nil {
+			t.Fatalf("no PDB for the daemon: %v", err)
+		}
+		return pdb.Spec.MinAvailable.IntValue()
+	}
 
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	var pdb policyv1.PodDisruptionBudget
-	if err := c.Get(t.Context(), pdbName, &pdb); err != nil {
-		t.Fatalf("no PDB for a warm daemon: %v", err)
+	if got := minAvailable(t); got != 0 {
+		t.Errorf("idle daemon: minAvailable = %d, want 0 — a drain must not wait on it", got)
 	}
 
 	var cur bkov1.BuildProject
 	_ = c.Get(t.Context(), req.NamespacedName, &cur)
-	cur.Spec.Tier = bkov1.TierHot
-	if err := c.Update(t.Context(), &cur); err != nil {
+	cur.Status.SetInflight([]bkov1.InflightBuild{{ID: "b1", Since: metav1.Now()}})
+	if err := c.Status().Update(t.Context(), &cur); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Get(t.Context(), pdbName, &pdb); err == nil {
-		t.Error("a hot daemon must not keep a PDB — it never scales down, so drains would block forever")
+	if got := minAvailable(t); got != 1 {
+		t.Errorf("daemon serving a build: minAvailable = %d, want 1 — eviction would sever it", got)
 	}
 }

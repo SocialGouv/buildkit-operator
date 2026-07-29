@@ -133,20 +133,21 @@ func Service(bp *bkov1.BuildProject, cfg Config) *corev1.Service {
 }
 
 // PodDisruptionBudget protects a daemon against VOLUNTARY disruption — a node drain during a cluster
-// upgrade, a descheduler, a spot reclaim. Those evict the pod outright, which severs every build on it
-// with no warning the operator can act on; nothing else in this control plane can prevent that.
+// upgrade, a descheduler, a spot reclaim. Those evict the pod outright, severing every build on it,
+// and unlike the operator's own actions there is nothing else in this control plane that can stop
+// them: a PDB is the only veto Kubernetes offers.
 //
-// minAvailable 1 on a StatefulSet-of-1 means "do not evict this daemon at all", which would block a
-// node drain forever if the daemon never went away. It does go away: a warm project scales to zero
-// once idle (and the PDB is then vacuous), so a drain waits for the current builds and proceeds. The
-// HOT tier is the exception — it is pinned up by definition — so it gets no PDB rather than wedging
-// cluster maintenance.
-func PodDisruptionBudget(bp *bkov1.BuildProject, cfg Config) *policyv1.PodDisruptionBudget {
-	if bp.Spec.Tier == bkov1.TierHot {
-		return nil
-	}
+// The budget tracks whether the daemon is BUSY rather than the tier. serving=true renders
+// minAvailable 1, which on a StatefulSet-of-1 means "do not evict at all"; idle renders 0, which
+// permits it. Blanket protection would be wrong in both directions — a warm daemon sitting idle would
+// stall a node drain for no reason, and a hot daemon (never scaled to zero, and therefore the one most
+// likely to be sitting on a node someone drains) would get none at all.
+func PodDisruptionBudget(bp *bkov1.BuildProject, cfg Config, serving bool) *policyv1.PodDisruptionBudget {
 	l := Labels(bp)
-	minAvailable := intstr.FromInt32(1)
+	min := int32(0)
+	if serving {
+		min = 1
+	}
 	return &policyv1.PodDisruptionBudget{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      router.DaemonName(bp.Spec.Key),
@@ -154,7 +155,7 @@ func PodDisruptionBudget(bp *bkov1.BuildProject, cfg Config) *policyv1.PodDisrup
 			Labels:    l,
 		},
 		Spec: policyv1.PodDisruptionBudgetSpec{
-			MinAvailable: &minAvailable,
+			MinAvailable: ptr(intstr.FromInt32(min)),
 			Selector:     &metav1.LabelSelector{MatchLabels: l},
 		},
 	}

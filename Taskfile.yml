@@ -70,6 +70,11 @@ tasks:
     cmds:
       - '{{.GOLANGCI_LINT}} run ./...'
 
+  lint-chart:
+    desc: every flag the chart renders must exist in the binary it is passed to
+    cmds:
+      - bash hack/check-chart-flags.sh
+
   fmt:
     desc: gofmt
     cmds:

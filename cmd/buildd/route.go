@@ -220,9 +220,8 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 // missed call is bounded by the reconciler's --max-build-seconds safety net, which expires that build's
 // entry on its own clock.
 func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
-	// /complete only releases one inflight entry by key; it needs an authenticated caller but not repo
-	// binding (the key was already returned by a verified /route), so the identity override is ignored.
-	if _, status, err := s.identify(r); err != nil {
+	id, status, err := s.identify(r)
+	if err != nil {
 		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "err", err.Error())
 		http.Error(w, http.StatusText(status), status)
 		return
@@ -251,6 +250,18 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 	if len(req.BuildID) > 64 {
 		http.Error(w, "bad request: buildId is too long", http.StatusBadRequest)
 		return
+	}
+	// A caller whose repo was VERIFIED (OIDC) may only release builds of its own project. Releasing is
+	// destructive — it lets the daemon scale down — and the key alone is not a capability, so without
+	// this any authenticated caller could drain another project's in-flight set. Callers on the legacy
+	// bearer carry no repo to check; requireBuildID is what covers them, since the id is unguessable.
+	if id.override && id.repo != "" {
+		if repo, found := s.prov.ProjectRepo(r.Context(), req.Key); found && router.NormalizeRepo(repo) != router.NormalizeRepo(id.repo) {
+			s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "key", req.Key,
+				"err", "key belongs to another repo")
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
 	}
 	if s.requireBuildID && req.BuildID == "" {
 		// Without an id the release would fall back to "retire this project's oldest build", which is
