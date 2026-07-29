@@ -72,7 +72,7 @@ func TestHandleRoute_WarmReturnsEndpoint(t *testing.T) {
 	key := canonicalSpec(router.RouteRequest{Repo: "github.com/o/r", Arch: "amd64"}).Key
 	readySTS := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: router.DaemonName(key), Namespace: "buildkit-operator"},
-		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1, UpdatedReplicas: 1, CurrentRevision: "r1", UpdateRevision: "r1"},
 	}
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
 		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(readySTS).Build()
@@ -128,7 +128,8 @@ func TestHandleRoute_ColdStartBecomesReady(t *testing.T) {
 				if s, ok := obj.(*appsv1.StatefulSet); ok {
 					gets++
 					if gets >= 2 { // 1st Get = the warm-path probe (cold); from the 2nd on, Ready
-						s.Status.ReadyReplicas = 1
+						s.Status.ReadyReplicas, s.Status.UpdatedReplicas = 1, 1
+						s.Status.CurrentRevision, s.Status.UpdateRevision = "r1", "r1"
 					}
 				}
 				return nil

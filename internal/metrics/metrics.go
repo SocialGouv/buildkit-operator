@@ -29,6 +29,15 @@ var (
 		Help: "Cold-start waits currently in flight (bounded by --max-cold-starts).",
 	})
 
+	// RollsHeld is how many daemons are currently withholding a pending pod template because they are
+	// serving builds. Persistently non-zero means a project builds continuously enough that a new image
+	// only reaches it via the maxRollHold bound — the signal that a daemon is running an image the
+	// operator has already moved on from.
+	RollsHeld = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "buildkit_operator_daemon_rolls_held",
+		Help: "Daemons whose pending pod-template roll is held back by in-flight builds.",
+	})
+
 	// ColdStartSeconds isolates the time a cold /route spent waiting for a fresh daemon to become
 	// Ready (provision + Cinder attach), separate from warm route latency — the bench B/C signal to
 	// watch: if cold starts are frequent and slow, the per-project-daemon bet is under pressure.
@@ -52,5 +61,5 @@ var (
 )
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(RoutesTotal, RouteDuration, ColdStartsInflight, ColdStartSeconds, ScaleEvents, SnapshotsTotal)
+	ctrlmetrics.Registry.MustRegister(RoutesTotal, RouteDuration, ColdStartsInflight, RollsHeld, ColdStartSeconds, ScaleEvents, SnapshotsTotal)
 }

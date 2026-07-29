@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"sync"
 	"time"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
@@ -52,6 +53,29 @@ type BuildProjectReconciler struct {
 	Direct       client.Reader
 	autoGrowGate probeGate
 	bounceGate   probeGate
+	rollsHeld    heldSet
+}
+
+// heldSet tracks which daemons are currently withholding a pending template, so the gauge reports the
+// fleet rather than the last project reconciled. In-memory: reconciles run on the single elected
+// leader, and a restart simply re-derives it from the next pass over each project.
+type heldSet struct {
+	mu   sync.Mutex
+	keys map[string]bool
+}
+
+func (h *heldSet) set(key string, held bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.keys == nil {
+		h.keys = map[string]bool{}
+	}
+	if held {
+		h.keys[key] = true
+	} else {
+		delete(h.keys, key)
+	}
+	metrics.RollsHeld.Set(float64(len(h.keys)))
 }
 
 // adaptiveIdleMax is AdaptiveIdleMaxSeconds as a duration (0 = adaptivity off).
@@ -128,6 +152,7 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure statefulset: %w", err)
 	}
+	r.rollsHeld.set(bp.Spec.Key, rollHeld)
 
 	var live appsv1.StatefulSet
 	_ = r.Get(ctx, types.NamespacedName{Name: router.DaemonName(bp.Spec.Key), Namespace: r.Cfg.Namespace}, &live)
@@ -282,24 +307,39 @@ func (r *BuildProjectReconciler) ensureStatefulSet(ctx context.Context, bp *bkov
 		return false, err
 	}
 
+	// Capture the patch base BEFORE anything below mutates `existing` — holdRoll stamps an annotation
+	// on it, and a base taken afterwards would diff to nothing and silently drop that stamp.
+	patch := client.MergeFrom(existing.DeepCopy())
 	old := int32(1)
 	if existing.Spec.Replicas != nil {
 		old = *existing.Spec.Replicas
 	}
 	templateChanged := existing.Annotations[templateHashAnnotation] != hash
-	// Only a READY daemon can be serving a build; holding the roll on a daemon that is down would
-	// keep a broken pod (bad image, bad config) from ever being repaired by the very change that
-	// fixes it.
-	held := templateChanged && len(liveInflight) > 0 && existing.Status.ReadyReplicas >= 1
-	if held {
-		log.FromContext(ctx).Info("holding the daemon roll until its builds finish",
-			"key", bp.Spec.Key, "inflight", len(liveInflight), "oldest", liveInflight[0].Since.Time)
-		templateChanged = false
+	heldSince := existing.Annotations[rollHeldSinceAnnotation]
+	held := false
+	if templateChanged {
+		// About to sever whatever runs on this daemon: confirm against the API server rather than the
+		// informer, which can miss a build another buildd replica routed moments ago.
+		if len(liveInflight) == 0 {
+			if fresh, err := r.freshInflightEntries(ctx, bp); err != nil {
+				return false, fmt.Errorf("re-read inflight before rolling %s: %w", bp.Spec.Key, err)
+			} else if len(fresh) > 0 {
+				liveInflight = fresh
+			}
+		}
+		if len(liveInflight) > 0 {
+			held = r.holdRoll(ctx, bp, &existing, liveInflight)
+			templateChanged = !held
+		}
 	}
-	if old == desired && !templateChanged {
+	if !held {
+		delete(existing.Annotations, rollHeldSinceAnnotation)
+	}
+	// The hold stamp has to reach the API server even when nothing else changed, or the hold restarts
+	// its clock on every reconcile and is never bounded.
+	if old == desired && !templateChanged && existing.Annotations[rollHeldSinceAnnotation] == heldSince {
 		return held, nil
 	}
-	patch := client.MergeFrom(existing.DeepCopy())
 	existing.Spec.Replicas = &desired
 	if templateChanged {
 		existing.Spec.Template = want.Spec.Template
@@ -432,6 +472,48 @@ func phaseFrom(desired, ready int32) string {
 // scalingRecheckInterval is how often a not-yet-ready daemon is re-reconciled so readiness (or a stuck
 // pod transitioning into Failed, then recovering) is observed even without a Pod watch.
 const scalingRecheckInterval = 30 * time.Second
+
+// maxRollHold bounds how long a pending pod template can be withheld from a daemon. Draining is
+// per-build, but a project that always has a build in flight would otherwise never take a new image —
+// and the busiest project is exactly the one a security fix most needs to reach. Past this the roll
+// goes through, severing whatever is running: an image the operator has abandoned is the worse of the
+// two failures, and CI retries a build.
+const maxRollHold = 30 * time.Minute
+
+// rollHeldSinceAnnotation stamps when a daemon's pending template was first withheld, so the hold is
+// bounded across reconciles (and across an operator restart) and is visible on the object rather than
+// only in a log line.
+const rollHeldSinceAnnotation = "buildkit-operator.socialgouv.github.io/roll-held-since"
+
+// holdRoll decides whether to withhold a changed pod template from a daemon that is serving builds,
+// and stamps how long it has been withheld. It refuses to hold when the daemon is WEDGED (the same
+// signal that drives the Failed phase) rather than merely not-ready: a saturated buildkitd can miss
+// its readiness probes mid-build, and rolling it then would sever the very build the hold exists to
+// protect — while a genuinely broken pod must never block the change that repairs it.
+func (r *BuildProjectReconciler) holdRoll(ctx context.Context, bp *bkov1.BuildProject, sts *appsv1.StatefulSet, liveInflight []bkov1.InflightBuild) bool {
+	l := log.FromContext(ctx)
+	if reason := r.daemonFailure(ctx, bp.Spec.Key); reason != "" {
+		l.Info("rolling a wedged daemon despite inflight builds", "key", bp.Spec.Key, "reason", reason)
+		return false
+	}
+	if sts.Annotations == nil {
+		sts.Annotations = map[string]string{}
+	}
+	since, err := time.Parse(time.RFC3339, sts.Annotations[rollHeldSinceAnnotation])
+	if err != nil {
+		since = time.Now()
+		sts.Annotations[rollHeldSinceAnnotation] = since.UTC().Format(time.RFC3339)
+	}
+	if held := time.Since(since); held > maxRollHold {
+		l.Info("roll held too long, rolling through the builds still in flight",
+			"key", bp.Spec.Key, "heldFor", held.Round(time.Second), "inflight", len(liveInflight))
+		delete(sts.Annotations, rollHeldSinceAnnotation)
+		return false
+	}
+	l.Info("holding the daemon roll until its builds finish",
+		"key", bp.Spec.Key, "inflight", len(liveInflight), "oldest", liveInflight[0].Since.Time)
+	return true
+}
 
 // drainRecheckInterval is how often a daemon whose pod-template roll is held back (it is serving
 // builds) is re-checked, so the pending template lands soon after the last build drains — including

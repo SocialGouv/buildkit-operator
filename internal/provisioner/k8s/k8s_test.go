@@ -152,7 +152,7 @@ func TestWaitReady_Success(t *testing.T) {
 	key := "pwarm"
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: router.DaemonName(key), Namespace: "buildkit-operator"},
-		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1, UpdatedReplicas: 1, CurrentRevision: "r1", UpdateRevision: "r1"},
 	}
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(sts).Build()
 	p := newProv(c, time.Second, "", 0)
@@ -175,7 +175,7 @@ func TestReady(t *testing.T) {
 	key := "pwarm"
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: router.DaemonName(key), Namespace: "buildkit-operator"},
-		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1, UpdatedReplicas: 1, CurrentRevision: "r1", UpdateRevision: "r1"},
 	}
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(sts).Build()
 	p := newProv(c, 0, "", 0)
@@ -334,5 +334,46 @@ func TestEnsure_ForkInheritsLiveCanonicalSpec(t *testing.T) {
 	}
 	if fork.Spec.RestoreFromSnapshot != "snap-1" {
 		t.Errorf("fork RestoreFromSnapshot = %q, want snap-1", fork.Spec.RestoreFromSnapshot)
+	}
+}
+
+// A daemon in the middle of a pod-template roll must NOT be advertised as ready. Its outgoing pod is
+// still counted in ReadyReplicas for the first stretch of the roll, so /route would hand a client an
+// endpoint Kubernetes is about to delete — which is what killed a production build during an upgrade:
+// the route answered ready, the pod went away 8s later, and buildx died on "client preface: EOF".
+func TestReady_FalseWhileRolling(t *testing.T) {
+	key := "prolling"
+	mk := func(st appsv1.StatefulSetStatus, gen int64) client.WithWatch {
+		sts := &appsv1.StatefulSet{
+			ObjectMeta: metav1.ObjectMeta{Name: router.DaemonName(key), Namespace: "buildkit-operator", Generation: gen},
+			Status:     st,
+		}
+		return fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(sts).Build()
+	}
+	cases := []struct {
+		name string
+		st   appsv1.StatefulSetStatus
+		gen  int64
+		want bool
+	}{
+		{"serving", appsv1.StatefulSetStatus{ObservedGeneration: 3, ReadyReplicas: 1, UpdatedReplicas: 1, CurrentRevision: "r2", UpdateRevision: "r2"}, 3, true},
+		// The roll has started: the ready replica is the OUTGOING pod (revisions differ).
+		{"rolling, old pod still counted ready", appsv1.StatefulSetStatus{ObservedGeneration: 4, ReadyReplicas: 1, UpdatedReplicas: 0, CurrentRevision: "r2", UpdateRevision: "r3"}, 4, false},
+		// The template was just patched; the controller has not observed it yet.
+		{"template patched, status stale", appsv1.StatefulSetStatus{ObservedGeneration: 3, ReadyReplicas: 1, UpdatedReplicas: 1, CurrentRevision: "r2", UpdateRevision: "r2"}, 4, false},
+		{"scaled to zero", appsv1.StatefulSetStatus{ObservedGeneration: 3, ReadyReplicas: 0, CurrentRevision: "r2", UpdateRevision: "r2"}, 3, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := newProv(mk(c.st, c.gen), 0, "", 0)
+			if got := p.Ready(t.Context(), key); got != c.want {
+				t.Errorf("Ready = %v, want %v", got, c.want)
+			}
+			// WaitReady must agree — otherwise the cold path would return the dying endpoint anyway.
+			err := p.WaitReady(t.Context(), key)
+			if (err == nil) != c.want {
+				t.Errorf("WaitReady err = %v, want ready=%v", err, c.want)
+			}
+		})
 	}
 }
