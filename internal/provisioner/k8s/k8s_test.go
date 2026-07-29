@@ -31,19 +31,19 @@ func testScheme(t *testing.T) *runtime.Scheme {
 }
 
 func newProv(c client.Client, wait time.Duration, gatewayHost string, gatewayPort int32) *Provisioner {
-	return New(c, builder.Config{Namespace: "buildkit-operator", Port: 1234}, wait, gatewayHost, gatewayPort, logr.Discard())
+	return New(c, builder.Config{Namespace: "buildkit-operator", Port: 1234}, wait, gatewayHost, gatewayPort, 2*time.Hour, logr.Discard())
 }
 
 // TestEndpoint covers both endpoint shapes: gateway SNI host (off-cluster) vs in-cluster Service DNS.
 func TestEndpoint(t *testing.T) {
 	// In-cluster: no gateway host configured.
-	in := New(nil, builder.Config{Namespace: "ns", Port: 1234}, 0, "", 0, logr.Discard())
+	in := New(nil, builder.Config{Namespace: "ns", Port: 1234}, 0, "", 0, 2*time.Hour, logr.Discard())
 	if got, want := in.Endpoint("p1"), router.Endpoint("p1", "ns", 1234); got != want {
 		t.Errorf("in-cluster Endpoint = %q, want %q", got, want)
 	}
 
 	// Gateway: SNI hostname <daemon>.<gatewayHost>, with the gateway port overriding cfg.Port.
-	gw := New(nil, builder.Config{Namespace: "ns", Port: 1234}, 0, "gw.example.com", 443, logr.Discard())
+	gw := New(nil, builder.Config{Namespace: "ns", Port: 1234}, 0, "gw.example.com", 443, 2*time.Hour, logr.Discard())
 	got := gw.Endpoint("p1")
 	want := router.EndpointHost(router.DaemonName("p1")+".gw.example.com", 443)
 	if got != want {
@@ -51,7 +51,7 @@ func TestEndpoint(t *testing.T) {
 	}
 
 	// Gateway host but no explicit gateway port => falls back to cfg.Port.
-	gw2 := New(nil, builder.Config{Namespace: "ns", Port: 1234}, 0, "gw.example.com", 0, logr.Discard())
+	gw2 := New(nil, builder.Config{Namespace: "ns", Port: 1234}, 0, "gw.example.com", 0, 2*time.Hour, logr.Discard())
 	if !strings.HasSuffix(gw2.Endpoint("p1"), ":1234") {
 		t.Errorf("gateway w/o port should use cfg.Port: %q", gw2.Endpoint("p1"))
 	}
@@ -64,7 +64,7 @@ func TestEnsure_StampsDefaultStorageClass(t *testing.T) {
 	get := func(t *testing.T, defaultSC, specSC string) string {
 		t.Helper()
 		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&bkov1.BuildProject{}).Build()
-		p := New(c, builder.Config{Namespace: "buildkit-operator", Port: 1234, DefaultStorageClass: defaultSC}, 0, "", 0, logr.Discard())
+		p := New(c, builder.Config{Namespace: "buildkit-operator", Port: 1234, DefaultStorageClass: defaultSC}, 0, "", 0, 2*time.Hour, logr.Discard())
 		spec := bkov1.BuildProjectSpec{Key: "psc", Arch: "amd64", StorageClass: specSC}
 		if err := p.Ensure(t.Context(), spec, false); err != nil {
 			t.Fatalf("Ensure: %v", err)

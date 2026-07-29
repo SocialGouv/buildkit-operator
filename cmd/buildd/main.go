@@ -253,7 +253,8 @@ func main() {
 	if *apiRateLimit > 0 {
 		limiter = rate.NewLimiter(rate.Limit(*apiRateLimit), *apiRateBurst)
 	}
-	prov := k8sprov.New(mgr.GetClient(), cfg, routeWait, gatewayHost, int32(*gatewayPort), ctrl.Log.WithName("provisioner"))
+	prov := k8sprov.New(mgr.GetClient(), cfg, routeWait, gatewayHost, int32(*gatewayPort),
+		time.Duration(*maxBuildSec)*time.Second, ctrl.Log.WithName("provisioner"))
 	if err := mgr.Add(&routeServer{
 		prov: prov, cfg: cfg, addr: apiListen, wait: routeWait,
 		coldStartSem: make(chan struct{}, *maxCold),

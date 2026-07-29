@@ -99,3 +99,66 @@ func TestSetInflightKeepsProjectionInSync(t *testing.T) {
 		t.Errorf("count = %d, projection = %d, want 0 and 0", st.InflightCount(), st.InflightBuilds)
 	}
 }
+
+// AdoptLegacyInflight turns a pre-entries count into dated entries so an upgrade landing mid-build
+// keeps pinning the daemon; it is inert once entries exist, and on a status that never built.
+func TestAdoptLegacyInflight(t *testing.T) {
+	last := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+
+	var legacy BuildProjectStatus
+	legacy.InflightBuilds = 3
+	legacy.LastBuildTime = &last
+	if !AdoptLegacyInflight(&legacy) {
+		t.Fatal("a bare count with a last-build time must be adopted")
+	}
+	if legacy.InflightCount() != 3 || legacy.InflightBuilds != 3 {
+		t.Errorf("adopted = %v (projection %d), want 3 entries", legacy.Inflight, legacy.InflightBuilds)
+	}
+	for _, e := range legacy.Inflight {
+		if !e.Since.Equal(&last) {
+			t.Errorf("entry %q dated %v, want the last build time %v", e.ID, e.Since, last)
+		}
+	}
+	// Adopted entries age on the last-build clock, so a count left over from a build older than the
+	// window clears immediately instead of pinning the daemon for another full window.
+	if live, dropped := ExpireInflight(legacy.Inflight, time.Now(), time.Minute); dropped != 3 || len(live) != 0 {
+		t.Errorf("expiry of adopted entries = %v dropped=%d, want all gone", live, dropped)
+	}
+
+	// Inert once the set is authoritative, and inert with nothing to date entries from.
+	current := BuildProjectStatus{Inflight: []InflightBuild{{ID: "a", Since: last}}, InflightBuilds: 1}
+	if AdoptLegacyInflight(&current) {
+		t.Error("a status that already holds entries must not be adopted")
+	}
+	never := BuildProjectStatus{InflightBuilds: 2}
+	if AdoptLegacyInflight(&never) {
+		t.Error("a count with no LastBuildTime has no clock to date entries from")
+	}
+}
+
+// An unnamed release (a client that predates build IDs) retires an ALREADY-EXPIRED entry when there
+// is one — retiring a live entry on its behalf is what would scale a running build's daemon down.
+func TestEndInflightBefore(t *testing.T) {
+	now := time.Now()
+	cutoff := now.Add(-2 * time.Hour)
+	entries := []InflightBuild{
+		{ID: "livest", Since: metav1.NewTime(now.Add(-3 * time.Hour))}, // expired
+		{ID: "running", Since: metav1.NewTime(now.Add(-time.Minute))},
+	}
+	got, ok := EndInflightBefore(entries, "", cutoff)
+	if !ok || !eq(ids(got), []string{"running"}) {
+		t.Errorf("unnamed release = %v ok=%v, want the expired entry gone", ids(got), ok)
+	}
+	// With nothing expired it falls back to the oldest, as before.
+	live := []InflightBuild{
+		{ID: "older", Since: metav1.NewTime(now.Add(-10 * time.Minute))},
+		{ID: "newer", Since: metav1.NewTime(now.Add(-time.Minute))},
+	}
+	if got, ok := EndInflightBefore(live, "", cutoff); !ok || !eq(ids(got), []string{"newer"}) {
+		t.Errorf("unnamed release with nothing expired = %v ok=%v, want the oldest gone", ids(got), ok)
+	}
+	// A named release is unaffected by the cutoff.
+	if got, ok := EndInflightBefore(live, "newer", cutoff); !ok || !eq(ids(got), []string{"older"}) {
+		t.Errorf("named release = %v ok=%v, want exactly the named entry gone", ids(got), ok)
+	}
+}

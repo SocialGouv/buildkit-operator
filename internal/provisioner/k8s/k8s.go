@@ -38,14 +38,18 @@ type Provisioner struct {
 	// defaultStorageClass is stamped onto BuildProjects created with no StorageClass (cloud-portable:
 	// empty leaves it unset so the daemon PVC uses the cluster's DEFAULT StorageClass).
 	defaultStorageClass string
-	log                 logr.Logger
+	// maxBuild is the --max-build-seconds window. The routing API applies it on every status write, so
+	// a leaked entry is shed at the next /route or /complete on that project instead of waiting for a
+	// reconcile — which keeps the bounded inflight set from filling up with entries nobody will release.
+	maxBuild time.Duration
+	log      logr.Logger
 }
 
 // compile-time check that the k8s backend satisfies the contract.
 var _ provisioner.Provisioner = (*Provisioner)(nil)
 
 // New builds the Kubernetes provisioner from the shared builder.Config plus the routing-API knobs.
-func New(c client.Client, cfg builder.Config, wait time.Duration, gatewayHost string, gatewayPort int32, log logr.Logger) *Provisioner {
+func New(c client.Client, cfg builder.Config, wait time.Duration, gatewayHost string, gatewayPort int32, maxBuild time.Duration, log logr.Logger) *Provisioner {
 	return &Provisioner{
 		c:                   c,
 		namespace:           cfg.Namespace,
@@ -54,6 +58,7 @@ func New(c client.Client, cfg builder.Config, wait time.Duration, gatewayHost st
 		gatewayHost:         gatewayHost,
 		gatewayPort:         gatewayPort,
 		defaultStorageClass: cfg.DefaultStorageClass,
+		maxBuild:            maxBuild,
 		log:                 log,
 	}
 }
@@ -163,7 +168,7 @@ func (p *Provisioner) WaitReady(ctx context.Context, key string) error {
 // StartInflight registers a routed build under id (see touchStatus).
 func (p *Provisioner) StartInflight(ctx context.Context, key, id string) {
 	p.touchStatus(ctx, key, "start", func(st *bkov1.BuildProjectStatus, now metav1.Time) {
-		st.SetInflight(bkov1.StartInflight(st.Inflight, id, now))
+		st.SetInflight(bkov1.StartInflight(p.live(st, now.Time), id, now))
 		// A routed build (not a prewarm touch or a /complete release) feeds the cadence ring that
 		// drives the adaptive idle window. Forks are excluded from adaptivity, so their one-shot
 		// CRs skip the ring.
@@ -175,8 +180,8 @@ func (p *Provisioner) StartInflight(ctx context.Context, key, id string) {
 
 // EndInflight releases the build registered under id; an empty id releases the oldest entry.
 func (p *Provisioner) EndInflight(ctx context.Context, key, id string) {
-	p.touchStatus(ctx, key, "end", func(st *bkov1.BuildProjectStatus, _ metav1.Time) {
-		entries, found := bkov1.EndInflight(st.Inflight, id)
+	p.touchStatus(ctx, key, "end", func(st *bkov1.BuildProjectStatus, now metav1.Time) {
+		entries, found := bkov1.EndInflightBefore(p.live(st, now.Time), id, now.Time.Add(-p.maxBuild))
 		if !found {
 			// Nothing to release: a duplicate /complete, or an entry the safety net already expired.
 			// Logged at debug rather than dropped silently, because a burst of these means clients
@@ -186,6 +191,18 @@ func (p *Provisioner) EndInflight(ctx context.Context, key, id string) {
 		}
 		st.SetInflight(entries)
 	})
+}
+
+// live is the project's inflight set with the entries past --max-build-seconds already shed, and any
+// pre-entries count adopted first. Every status write goes through it, so the routing API and the
+// reconciler agree on what "still running" means.
+func (p *Provisioner) live(st *bkov1.BuildProjectStatus, now time.Time) []bkov1.InflightBuild {
+	bkov1.AdoptLegacyInflight(st)
+	if p.maxBuild <= 0 {
+		return st.Inflight
+	}
+	entries, _ := bkov1.ExpireInflight(st.Inflight, now, p.maxBuild)
+	return entries
 }
 
 // Touch stamps LastBuildTime without registering a build (the /prewarm path).

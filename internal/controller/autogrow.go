@@ -258,9 +258,10 @@ func (r *BuildProjectReconciler) recordSpecGi(ctx context.Context, bp *bkov1.Bui
 	return nil
 }
 
-// freshInflight counts the unreleased builds bypassing the informer cache (Direct when
-// wired, else the cached client) — the pre-bounce check must not act on a
-// snapshot that predates a just-routed build.
+// freshInflight counts the LIVE unreleased builds bypassing the informer cache (Direct when
+// wired, else the cached client) — a decision that can kill a running build (the auto-grow bounce,
+// the scale-to-zero) must not act on a snapshot that predates a just-routed build. Expired entries
+// are excluded, so a leak that the reconciler has not swept yet cannot block those decisions forever.
 func (r *BuildProjectReconciler) freshInflight(ctx context.Context, bp *bkov1.BuildProject) (int, error) {
 	reader := r.Direct
 	if reader == nil {
@@ -270,7 +271,9 @@ func (r *BuildProjectReconciler) freshInflight(ctx context.Context, bp *bkov1.Bu
 	if err := reader.Get(ctx, types.NamespacedName{Name: bp.Name, Namespace: bp.Namespace}, &cur); err != nil {
 		return 0, client.IgnoreNotFound(err)
 	}
-	return cur.Status.InflightCount(), nil
+	bkov1.AdoptLegacyInflight(&cur.Status)
+	live, _ := bkov1.ExpireInflight(cur.Status.Inflight, time.Now(), r.maxBuildAge())
+	return len(live), nil
 }
 
 // giOf converts a storage quantity to whole Gi (floor; zero-quantity => 0).
