@@ -125,7 +125,7 @@ func TestHandlePrewarm_ReadyWhenDaemonReady(t *testing.T) {
 	key := router.ProjectKey("github.com/org/repo", "", "", "amd64")
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: router.DaemonName(key), Namespace: "buildkit-operator"},
-		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1, UpdatedReplicas: 1, CurrentRevision: "r1", UpdateRevision: "r1"},
 	}
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
 		WithStatusSubresource(&bkov1.BuildProject{}).WithObjects(sts).Build()

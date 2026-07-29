@@ -263,17 +263,25 @@ func (r *BuildProjectReconciler) recordSpecGi(ctx context.Context, bp *bkov1.Bui
 // the scale-to-zero) must not act on a snapshot that predates a just-routed build. Expired entries
 // are excluded, so a leak that the reconciler has not swept yet cannot block those decisions forever.
 func (r *BuildProjectReconciler) freshInflight(ctx context.Context, bp *bkov1.BuildProject) (int, error) {
+	live, err := r.freshInflightEntries(ctx, bp)
+	return len(live), err
+}
+
+// freshInflightEntries is freshInflight's underlying read: the live entries straight from the API
+// server. The routing API writes them from any buildd replica while the reconciler runs on the
+// leader, so this lag is cross-process — a cached read can miss a build routed moments ago.
+func (r *BuildProjectReconciler) freshInflightEntries(ctx context.Context, bp *bkov1.BuildProject) ([]bkov1.InflightBuild, error) {
 	reader := r.Direct
 	if reader == nil {
 		reader = r.Client
 	}
 	var cur bkov1.BuildProject
 	if err := reader.Get(ctx, types.NamespacedName{Name: bp.Name, Namespace: bp.Namespace}, &cur); err != nil {
-		return 0, client.IgnoreNotFound(err)
+		return nil, client.IgnoreNotFound(err)
 	}
 	bkov1.AdoptLegacyInflight(&cur.Status)
 	live, _ := bkov1.ExpireInflight(cur.Status.Inflight, time.Now(), r.maxBuildAge())
-	return len(live), nil
+	return live, nil
 }
 
 // giOf converts a storage quantity to whole Gi (floor; zero-quantity => 0).

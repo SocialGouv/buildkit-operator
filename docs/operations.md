@@ -192,10 +192,20 @@ warm-pool/idle-timeout tuning); `buildkit_operator_coldstart_seconds` isolates t
 `route_duration_seconds` covers all routes.
 
 Upgrading the chart changes the rendered daemon template (a new companion tag is enough), which
-REPLACES every daemon pod. The reconciler holds each daemon's roll until its `.status.inflight` is
-empty, so a build in progress is not severed mid-stream; the roll lands as soon as the last build is
-released, or at the latest once its entries pass `maxBuildSeconds`. `holding the daemon roll until
-its builds finish` in the buildd log is that wait, not a stall.
+REPLACES every daemon pod. Two things keep that from killing builds:
+
+- `/route` stops advertising a daemon whose StatefulSet is mid-roll (its ready replica is still the
+  OUTGOING pod), so a build routed during an upgrade waits for the new pod instead of being handed an
+  endpoint that disappears seconds later.
+- The reconciler holds a daemon's pending template while `.status.inflight` is non-empty, so a build
+  already running is not severed. The roll lands as soon as the last build is released — and at the
+  latest after **30 minutes** (`maxRollHold`), because a project that builds continuously would
+  otherwise never take a new image. Past that the roll goes through and its builds do die; CI retries,
+  an abandoned image does not fix itself.
+
+`buildkit_operator_daemon_rolls_held` counts the daemons currently withholding a template, and the
+StatefulSet carries `buildkit-operator.socialgouv.github.io/roll-held-since`. A daemon wedged in
+CrashLoopBackOff is rolled regardless — the roll is usually the repair.
 
 A project that stays warm with no build running: read `.status.inflight`. Each routed build holds one
 timestamped entry, released by the client's `/complete`. An entry left behind by a build whose client

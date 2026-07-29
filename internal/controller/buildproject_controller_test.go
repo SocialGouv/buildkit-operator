@@ -218,20 +218,39 @@ func TestReconcile_HoldsRollWhileBuildsAreInFlight(t *testing.T) {
 	}
 }
 
-// A daemon that is NOT ready cannot be serving anything, so a leftover entry must not keep a broken
-// pod from being repaired by the pending template.
-func TestReconcile_RollsUnreadyDaemonDespiteInflight(t *testing.T) {
+// A WEDGED daemon (CrashLoopBackOff, bad image…) must not keep a leftover entry from blocking the
+// change that repairs it. Merely "not ready" is NOT the signal — a saturated buildkitd can miss its
+// readiness probes mid-build, and rolling then would sever the very build the hold protects.
+func TestReconcile_RollsWedgedDaemonDespiteInflight(t *testing.T) {
 	s := testScheme(t)
 	ns, key := "buildkit-operator", "drainbroken"
 	bp := &bkov1.BuildProject{
 		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
 		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot},
 	}
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	wedged := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: router.DaemonName(key) + "-0", Namespace: ns,
+			Labels: map[string]string{projectKeyLabel: key},
+		},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name:  "buildkitd",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}},
+		}}},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp, wedged).WithStatusSubresource(bp).Build()
 	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, BuildkitImage: "broken:v1", Port: 1234, HealthPort: 8080}}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}
+	stsName := types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}
 
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	// The daemon is up as far as replica counting goes, and a build is registered on it.
+	var sts appsv1.StatefulSet
+	_ = c.Get(t.Context(), stsName, &sts)
+	sts.Status.ReadyReplicas = 1
+	if err := c.Status().Update(t.Context(), &sts); err != nil {
 		t.Fatal(err)
 	}
 	var cur bkov1.BuildProject
@@ -240,16 +259,75 @@ func TestReconcile_RollsUnreadyDaemonDespiteInflight(t *testing.T) {
 	if err := c.Status().Update(t.Context(), &cur); err != nil {
 		t.Fatal(err)
 	}
-	r.Cfg.BuildkitImage = "fixed:v2" // the roll IS the repair — ReadyReplicas stays 0
+
+	r.Cfg.BuildkitImage = "fixed:v2" // the roll IS the repair
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Get(t.Context(), stsName, &sts)
+	if got := sts.Spec.Template.Spec.Containers[0].Image; got != "fixed:v2" {
+		t.Errorf("daemon image = %q, want fixed:v2 — a wedged daemon must not block its own repair", got)
+	}
+}
+
+// The hold is BOUNDED: a project that always has a build in flight would otherwise never take a new
+// image, and the busiest project is the one a security fix most needs to reach. Past maxRollHold the
+// roll goes through.
+func TestReconcile_RollsThroughAfterMaxHold(t *testing.T) {
+	s := testScheme(t)
+	ns, key := "buildkit-operator", "drainbound"
+	bp := &bkov1.BuildProject{
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: ns},
+		Spec:       bkov1.BuildProjectSpec{Key: key, Arch: "amd64", Tier: bkov1.TierHot},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp).WithStatusSubresource(bp).Build()
+	r := &BuildProjectReconciler{Client: c, Scheme: s, Cfg: builder.Config{Namespace: ns, BuildkitImage: "buildkit:v1", Port: 1234, HealthPort: 8080}}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: key, Namespace: ns}}
+	stsName := types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}
+
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
 	var sts appsv1.StatefulSet
-	if err := c.Get(t.Context(), types.NamespacedName{Name: router.DaemonName(key), Namespace: ns}, &sts); err != nil {
+	_ = c.Get(t.Context(), stsName, &sts)
+	sts.Status.ReadyReplicas = 1
+	if err := c.Status().Update(t.Context(), &sts); err != nil {
 		t.Fatal(err)
 	}
-	if got := sts.Spec.Template.Spec.Containers[0].Image; got != "fixed:v2" {
-		t.Errorf("daemon image = %q, want fixed:v2 — a down daemon has no build to protect", got)
+	var cur bkov1.BuildProject
+	_ = c.Get(t.Context(), req.NamespacedName, &cur)
+	cur.Status.SetInflight([]bkov1.InflightBuild{{ID: "b1", Since: metav1.Now()}})
+	if err := c.Status().Update(t.Context(), &cur); err != nil {
+		t.Fatal(err)
+	}
+
+	// First reconcile after the change holds, and stamps when the hold started.
+	r.Cfg.BuildkitImage = "buildkit:v2"
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Get(t.Context(), stsName, &sts)
+	if sts.Annotations[rollHeldSinceAnnotation] == "" {
+		t.Fatal("the hold must be stamped on the StatefulSet, else its clock restarts every reconcile")
+	}
+	if got := sts.Spec.Template.Spec.Containers[0].Image; got != "buildkit:v1" {
+		t.Fatalf("daemon image = %q, want the roll held at buildkit:v1", got)
+	}
+
+	// Backdate the stamp past the bound: the build is STILL in flight, and the roll goes anyway.
+	sts.Annotations[rollHeldSinceAnnotation] = time.Now().Add(-maxRollHold - time.Minute).UTC().Format(time.RFC3339)
+	if err := c.Update(t.Context(), &sts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Get(t.Context(), stsName, &sts)
+	if got := sts.Spec.Template.Spec.Containers[0].Image; got != "buildkit:v2" {
+		t.Errorf("daemon image = %q past maxRollHold, want buildkit:v2 (bounded hold)", got)
+	}
+	if sts.Annotations[rollHeldSinceAnnotation] != "" {
+		t.Errorf("the hold stamp must be cleared once the roll lands, got %q", sts.Annotations[rollHeldSinceAnnotation])
 	}
 }
 

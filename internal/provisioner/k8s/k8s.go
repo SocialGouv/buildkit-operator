@@ -122,13 +122,27 @@ func (p *Provisioner) ensureBuildProject(ctx context.Context, spec bkov1.BuildPr
 	return nil
 }
 
-// Ready reports whether the project's daemon already has a ready replica (warm fast path).
+// Ready reports whether the project's daemon is serving RIGHT NOW (warm fast path).
 func (p *Provisioner) Ready(ctx context.Context, key string) bool {
 	var sts appsv1.StatefulSet
 	if err := p.c.Get(ctx, types.NamespacedName{Name: router.DaemonName(key), Namespace: p.namespace}, &sts); err != nil {
 		return false
 	}
-	return sts.Status.ReadyReplicas >= 1
+	return daemonServing(&sts)
+}
+
+// daemonServing reports whether the daemon StatefulSet has a ready replica that is ALSO the pod we
+// currently want. ReadyReplicas alone is not enough: for the whole first stretch of a pod-template
+// roll it still counts the OUTGOING pod, so /route would hand a client the endpoint of a daemon
+// Kubernetes is about to delete — the client then dials through the gateway and gets a connection
+// refused mid-handshake ("failed to write client preface: EOF"). Requiring the observed generation to
+// be current and the ready replica to be on the update revision makes a roll look like a cold start
+// instead: /route waits for the new pod rather than advertising the dying one.
+func daemonServing(sts *appsv1.StatefulSet) bool {
+	return sts.Status.ObservedGeneration >= sts.Generation &&
+		sts.Status.ReadyReplicas >= 1 &&
+		sts.Status.UpdatedReplicas >= 1 &&
+		sts.Status.CurrentRevision == sts.Status.UpdateRevision
 }
 
 // Endpoint returns the address clients dial: a DETERMINISTIC gateway SNI hostname when a gateway domain
@@ -145,13 +159,14 @@ func (p *Provisioner) Endpoint(key string) string {
 	return router.Endpoint(key, p.namespace, p.port)
 }
 
-// WaitReady polls the daemon StatefulSet until it has a ready replica or the wait budget elapses.
+// WaitReady polls the daemon StatefulSet until it is serving (see daemonServing) or the wait budget
+// elapses — which covers a daemon being rolled, not just one starting from zero.
 func (p *Provisioner) WaitReady(ctx context.Context, key string) error {
 	deadline := time.Now().Add(p.wait)
 	for {
 		var sts appsv1.StatefulSet
 		err := p.c.Get(ctx, types.NamespacedName{Name: router.DaemonName(key), Namespace: p.namespace}, &sts)
-		if err == nil && sts.Status.ReadyReplicas >= 1 {
+		if err == nil && daemonServing(&sts) {
 			return nil
 		}
 		if time.Now().After(deadline) {
