@@ -219,13 +219,17 @@ func (s *routeServer) handlePrewarm(w http.ResponseWriter, r *http.Request) {
 // success or fail), keyed by the resolved key and the buildId /route returned. It is best-effort: a
 // missed call is bounded by the reconciler's --max-build-seconds safety net, which expires that build's
 // entry on its own clock.
+//
+// The buildId is ALSO what authorizes the release. A forge's OIDC token is minted once, when the job
+// starts, and lives minutes — GitHub's expire in about two — while a build runs for as long as a build
+// runs. Requiring a live token here therefore rejected the release of every build longer than its own
+// token, which is the ordinary case, and leaked an inflight entry each time: the daemon then stayed
+// pinned warm, held its pod-template roll, and kept a disruption budget that blocks node drains, all
+// for a build that finished. So a caller that names a LIVE build id is authorized by that alone — the
+// id is 8 random bytes the server minted and handed to exactly one caller, which is a capability, and
+// it can only ever release the one build it names. /route keeps its full identity requirement.
 func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
-	id, status, err := s.identify(r)
-	if err != nil {
-		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "err", err.Error())
-		http.Error(w, http.StatusText(status), status)
-		return
-	}
+	id, authStatus, authErr := s.identify(r)
 	if !s.allow(w) {
 		return
 	}
@@ -251,11 +255,19 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: buildId is too long", http.StatusBadRequest)
 		return
 	}
+	// No identity at all: the build id is the only thing that can speak for the caller, so it must be
+	// present AND match a live entry (checked below). An empty id would fall back to "retire the oldest
+	// build", which is exactly the lever an unauthenticated caller must not have.
+	if authErr != nil && req.BuildID == "" {
+		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "err", authErr.Error())
+		http.Error(w, http.StatusText(authStatus), authStatus)
+		return
+	}
 	// A caller whose repo was VERIFIED (OIDC) may only release builds of its own project. Releasing is
 	// destructive — it lets the daemon scale down — and the key alone is not a capability, so without
 	// this any authenticated caller could drain another project's in-flight set. Callers on the legacy
-	// bearer carry no repo to check; requireBuildID is what covers them, since the id is unguessable.
-	if id.override && id.repo != "" {
+	// bearer carry no repo to check; the build id covers them, since it is unguessable.
+	if authErr == nil && id.override && id.repo != "" {
 		repo, found, err := s.prov.ProjectRepo(r.Context(), req.Key)
 		if err != nil {
 			// Fail closed: proceeding would let a transient API error stand in for "authorized".
@@ -279,6 +291,17 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: buildId is required", http.StatusBadRequest)
 		return
 	}
-	s.prov.EndInflight(r.Context(), req.Key, req.BuildID)
+	released := s.prov.EndInflight(r.Context(), req.Key, req.BuildID)
+	if authErr != nil && !released {
+		// The id named no live build, so it proves nothing — and the caller has no identity either.
+		// Nothing was written (EndInflight leaves the object alone when it matches nothing).
+		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "key", req.Key,
+			"err", "expired identity and no live build id: "+authErr.Error())
+		http.Error(w, http.StatusText(authStatus), authStatus)
+		return
+	}
+	if authErr != nil {
+		s.log.V(1).Info("release authorized by build id (identity expired)", "key", req.Key, "remote", clientIP(r))
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -182,7 +182,7 @@ func (p *Provisioner) WaitReady(ctx context.Context, key string) error {
 
 // StartInflight registers a routed build under id (see touchStatus).
 func (p *Provisioner) StartInflight(ctx context.Context, key, id string) {
-	p.touchStatus(ctx, key, "start", func(st *bkov1.BuildProjectStatus, now metav1.Time) {
+	p.touchStatus(ctx, key, "start", func(st *bkov1.BuildProjectStatus, now metav1.Time) bool {
 		st.SetInflight(bkov1.StartInflight(p.live(st, now.Time), id, now))
 		// A routed build (not a prewarm touch or a /complete release) feeds the cadence ring that
 		// drives the adaptive idle window. Forks are excluded from adaptivity, so their one-shot
@@ -190,21 +190,25 @@ func (p *Provisioner) StartInflight(ctx context.Context, key, id string) {
 		if !router.IsForkKey(key) {
 			st.RecentBuildTimes = bkov1.RecordBuildTime(st.RecentBuildTimes, now)
 		}
+		return true
 	})
 }
 
-// EndInflight releases the build registered under id; an empty id releases the oldest entry.
-func (p *Provisioner) EndInflight(ctx context.Context, key, id string) {
-	p.touchStatus(ctx, key, "end", func(st *bkov1.BuildProjectStatus, now metav1.Time) {
+// EndInflight releases the build registered under id (an empty id releases the oldest entry) and
+// reports whether an entry actually went away. That answer is what /complete uses to authorize a
+// caller whose token has expired: naming a live build id proves it started that build.
+func (p *Provisioner) EndInflight(ctx context.Context, key, id string) bool {
+	return p.touchStatus(ctx, key, "end", func(st *bkov1.BuildProjectStatus, now metav1.Time) bool {
 		entries, found := bkov1.EndInflightBefore(p.live(st, now.Time), id, now.Time.Add(-p.maxBuild))
 		if !found {
-			// Nothing to release: a duplicate /complete, or an entry the safety net already expired.
-			// Logged at debug rather than dropped silently, because a burst of these means clients
-			// are releasing builds the server no longer tracks.
+			// Nothing to release: a duplicate /complete, an entry the safety net already expired, or a
+			// caller naming a build that was never ours. Writing anyway would stamp LastBuildTime and
+			// hand an unauthenticated caller a way to keep someone else's daemon warm.
 			p.log.V(1).Info("release for an unknown inflight build", "key", key, "buildID", id)
-			return
+			return false
 		}
 		st.SetInflight(entries)
+		return true
 	})
 }
 
@@ -234,7 +238,7 @@ func (p *Provisioner) live(st *bkov1.BuildProjectStatus, now time.Time) []bkov1.
 
 // Touch stamps LastBuildTime without registering a build (the /prewarm path).
 func (p *Provisioner) Touch(ctx context.Context, key string) {
-	p.touchStatus(ctx, key, "touch", func(*bkov1.BuildProjectStatus, metav1.Time) {})
+	p.touchStatus(ctx, key, "touch", func(*bkov1.BuildProjectStatus, metav1.Time) bool { return true })
 }
 
 // retriableStatusErr and statusBackoff are the shared retry envelope for the status writes on the
@@ -255,20 +259,28 @@ func statusBackoff() wait.Backoff {
 // after /route|/prewarm creates the project the informer cache can still miss it, so a plain Get returns
 // NotFound — retrying lets the cache catch up instead of dropping the touch (which would leave a
 // warm-tier project stuck Idle). A terminal failure (all retries exhausted) is logged.
-func (p *Provisioner) touchStatus(ctx context.Context, key, op string, mutate func(*bkov1.BuildProjectStatus, metav1.Time)) {
+// mutate reports whether it changed anything; false skips the write entirely, so an operation with
+// nothing to do leaves no trace on the object.
+func (p *Provisioner) touchStatus(ctx context.Context, key, op string, mutate func(*bkov1.BuildProjectStatus, metav1.Time) bool) bool {
+	applied := false
 	err := retry.OnError(statusBackoff(), retriableStatusErr, func() error {
 		var bp bkov1.BuildProject
 		if err := p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &bp); err != nil {
 			return err
 		}
 		now := metav1.Now()
-		mutate(&bp.Status, now)
+		applied = mutate(&bp.Status, now)
+		if !applied {
+			return nil
+		}
 		bp.Status.LastBuildTime = &now
 		return p.c.Status().Update(ctx, &bp)
 	})
 	if err != nil {
 		p.log.Error(err, "inflight status update failed; the count may be skewed until the max-build-seconds safety net", "key", key, "op", op)
+		return false
 	}
+	return applied
 }
 
 // S3CacheDecision resolves the project's s3CachePolicy for one routed build. The retained PVC covers
