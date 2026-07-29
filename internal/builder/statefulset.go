@@ -43,8 +43,9 @@ type Config struct {
 	DaemonAffinity     *corev1.Affinity
 
 	// PinArchToNode, when true, adds a kubernetes.io/arch nodeSelector derived from each BuildProject's
-	// Arch so per-arch daemons land on native nodes (no QEMU). Opt-in: off (default) leaves scheduling to
-	// DaemonNodeSelector only, preserving the pre-feature behavior (and the QEMU-on-any-node fallback).
+	// Arch so per-arch daemons land on native nodes (no QEMU); it takes precedence over a
+	// kubernetes.io/arch entry in DaemonNodeSelector. Opt-in: off (default) leaves scheduling to
+	// DaemonNodeSelector only (and keeps the QEMU-on-any-node fallback).
 	PinArchToNode bool
 }
 
@@ -301,17 +302,19 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 
 // archNodeSelector OPTIONALLY pins the daemon to its build architecture via kubernetes.io/arch (amd64
 // builds on amd64 nodes, arm64 on Graviton — native, no QEMU), merged with any operator-wide
-// DaemonNodeSelector. Opt-in via PinArchToNode: when off (the default) the result is unchanged from
-// before this feature — daemons schedule per DaemonNodeSelector only, so an arm64 build can still fall
-// back to QEMU on a binfmt-enabled node. Operator-wide entries win on a key conflict.
+// DaemonNodeSelector. Opt-in via PinArchToNode: when off (the default) daemons schedule per
+// DaemonNodeSelector only, so an arm64 build can still fall back to QEMU on a binfmt-enabled node.
+// The arch comes from the build request, so it WINS over an operator-wide kubernetes.io/arch entry —
+// a global pin that silently overrode it would schedule the wrong architecture instead of failing.
 func archNodeSelector(bp *bkov1.BuildProject, cfg Config) map[string]string {
 	if !cfg.PinArchToNode {
 		return cfg.DaemonNodeSelector
 	}
-	sel := map[string]string{"kubernetes.io/arch": router.NormalizeArch(bp.Spec.Arch)}
+	sel := make(map[string]string, len(cfg.DaemonNodeSelector)+1)
 	for k, v := range cfg.DaemonNodeSelector {
 		sel[k] = v
 	}
+	sel["kubernetes.io/arch"] = router.NormalizeArch(bp.Spec.Arch)
 	return sel
 }
 

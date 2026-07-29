@@ -253,13 +253,18 @@ func TestStatefulSet_PinsArchNodeSelector(t *testing.T) {
 }
 
 // The arch nodeSelector MERGES with (does not clobber) the operator-wide DaemonNodeSelector used to
-// pin daemons onto a dedicated build nodepool.
+// pin daemons onto a dedicated build nodepool — and the build's own arch wins on the arch key, so an
+// operator-wide pin can never schedule a daemon on the wrong architecture.
 func TestStatefulSet_ArchNodeSelectorMergesGlobal(t *testing.T) {
-	cfg := Config{Namespace: "ns", Port: 1234, PinArchToNode: true, DaemonNodeSelector: map[string]string{"nodepool": "buildkit"}}
+	global := map[string]string{"nodepool": "buildkit", "kubernetes.io/arch": "amd64"}
+	cfg := Config{Namespace: "ns", Port: 1234, PinArchToNode: true, DaemonNodeSelector: global}
 	bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "k", Arch: "arm64"}}
 	ns := StatefulSet(bp, cfg).Spec.Template.Spec.NodeSelector
 	if ns["kubernetes.io/arch"] != "arm64" || ns["nodepool"] != "buildkit" {
-		t.Errorf("NodeSelector = %v, want merged {kubernetes.io/arch:arm64, nodepool:buildkit}", ns)
+		t.Errorf("NodeSelector = %v, want {kubernetes.io/arch:arm64, nodepool:buildkit} (build arch wins)", ns)
+	}
+	if global["kubernetes.io/arch"] != "amd64" {
+		t.Errorf("the operator-wide nodeSelector must not be mutated, got %v", global)
 	}
 }
 
