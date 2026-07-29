@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.19.0...v0.20.0) (2026-07-29)
+
+### Bug Fixes
+
+* **buildd:** the buildId authorizes /complete when the identity has expired ([0003b24](https://github.com/SocialGouv/buildkit-operator/commit/0003b243339f658aea3da102ffdea0e1beccacbf))
+* keep OIDC ahead of the shared bearer, and unauthenticated callers off the limiter ([7802037](https://github.com/SocialGouv/buildkit-operator/commit/78020372070b42f94ca97dc17e018893ec8aa925))
+
 ## [0.19.0](https://github.com/SocialGouv/buildkit-operator/compare/v0.18.0...v0.19.0) (2026-07-29)
 
 ### Features
