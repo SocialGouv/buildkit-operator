@@ -212,8 +212,9 @@ Prometheus on `--metrics-addr` (`:8081`).
 
 ## Install
 
-Prerequisites: a Kubernetes cluster with a CSI that supports snapshots (OVH MKS gen2 +
-`csi-cinder-snapclass-in-use-v1`), `kubectl`, `helm`, and the VolumeSnapshot CRDs.
+Prerequisites: a Kubernetes cluster with a dynamic-provisioning StorageClass, `kubectl` and `helm`.
+Durability snapshots are opt-in (`snapshotClassName`) and only then need a snapshot-capable CSI plus the
+VolumeSnapshot CRDs — on OVH MKS, gen2 + `csi-cinder-snapclass-in-use-v1`.
 
 ```bash
 # 1. CRDs
@@ -254,7 +255,7 @@ spec:
   tier: warm                    # hot (never scale-to-zero) | warm | cold
   idleTimeoutSec: 900           # wake window before scale-to-zero
   cacheVolumeGi: 60             # gen2: throughput scales with size
-  storageClass: csi-cinder-high-speed-gen2
+  storageClass: ""                # "" => the operator default (--default-storage-class), else the cluster's
   snapshotEverySec: 0           # durability snapshot cadence (0 = off)
   restoreFromSnapshot: ""       # seed the cache PVC from a VolumeSnapshot (DR / new cluster)
   fanout: 0                     # extra CoW clone daemons for a saturated project (0 = none)
