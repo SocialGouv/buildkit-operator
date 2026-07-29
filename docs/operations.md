@@ -43,8 +43,10 @@ kubectl apply -f deploy/warm-pool.yaml
 Default Helm values worth knowing: `replicaCount: 2`, `leaderElection: true`, `service.type:
 ClusterIP` (daemons are always ClusterIP; off-cluster CI uses the SNI gateway — see below),
 `defaultStorageClass: ""` (cache PVCs on the cluster's default StorageClass), `snapshotClassName: ""`
-(durability snapshots off), `maxColdStarts: 8`, `s3.bucket: ""` (cold cache off), `gateway.host: ""`
-(gateway off). The cloud-specific values — storage/snapshot classes and the LoadBalancer annotations
+(durability snapshots off), `maxColdStarts: 8`, `maxBuildSeconds: 7200` (how long a build may hold its
+daemon before the safety net reclaims it), `gateway.drainSeconds: 3600` (how long a gateway rollout
+keeps proxying builds already streaming), `api.requireBuildId: false`, `s3.bucket: ""` (cold cache off),
+`gateway.host: ""` (gateway off). The cloud-specific values — storage/snapshot classes and the LoadBalancer annotations
 under `service` / `gateway.service` — have no default: declare the ones your cloud honours (OVH/OpenStack
 presets are documented inline in `values.yaml`). Image tags default to the chart **appVersion** (an immutable release
 tag) — override `image.tag` / `companion.image.tag` / `gateway.image.tag` only for local dev (e.g.
