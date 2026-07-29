@@ -25,11 +25,18 @@ type InflightBuild struct {
 // SetInflight is the ONLY way to record inflight builds on the status: it writes the entries and
 // the derived count in one step, so the projection can never drift from the source of truth.
 func (s *BuildProjectStatus) SetInflight(entries []InflightBuild) {
-	if len(entries) > InflightCap {
-		entries = entries[len(entries)-InflightCap:]
-	}
+	entries = capInflight(entries)
 	s.Inflight = entries
-	s.InflightBuilds = int32(len(entries)) // bounded by InflightCap above
+	s.InflightBuilds = int32(len(entries)) // bounded by InflightCap
+}
+
+// capInflight keeps the newest InflightCap entries. The set is chronological (StartInflight appends,
+// the removals preserve order), so dropping from the front sheds the oldest.
+func capInflight(entries []InflightBuild) []InflightBuild {
+	if len(entries) > InflightCap {
+		return entries[len(entries)-InflightCap:]
+	}
+	return entries
 }
 
 // InflightCount reports how many routed builds have not been released yet.
@@ -37,11 +44,9 @@ func (s *BuildProjectStatus) InflightCount() int { return len(s.Inflight) }
 
 // StartInflight registers a routed build and returns the updated status entries.
 func StartInflight(inflight []InflightBuild, id string, now metav1.Time) []InflightBuild {
-	out := append(append([]InflightBuild{}, inflight...), InflightBuild{ID: id, Since: now})
-	if len(out) > InflightCap {
-		out = out[len(out)-InflightCap:]
-	}
-	return out
+	out := make([]InflightBuild, len(inflight), len(inflight)+1)
+	copy(out, inflight)
+	return capInflight(append(out, InflightBuild{ID: id, Since: now}))
 }
 
 // EndInflight releases the entry matching id and reports whether one was found. An EMPTY id (a
@@ -75,11 +80,20 @@ func EndInflight(inflight []InflightBuild, id string) ([]InflightBuild, bool) {
 // safety net for a /complete that never arrives: it is per-entry, so a build that has legitimately
 // been running for hours is never released by a sibling's leak.
 func ExpireInflight(inflight []InflightBuild, now time.Time, maxAge time.Duration) ([]InflightBuild, int) {
-	out := make([]InflightBuild, 0, len(inflight))
+	expired := 0
+	for _, b := range inflight {
+		if now.Sub(b.Since.Time) > maxAge {
+			expired++
+		}
+	}
+	if expired == 0 { // the common case: hand back the same slice, no copy
+		return inflight, 0
+	}
+	out := make([]InflightBuild, 0, len(inflight)-expired)
 	for _, b := range inflight {
 		if now.Sub(b.Since.Time) <= maxAge {
 			out = append(out, b)
 		}
 	}
-	return out, len(inflight) - len(out)
+	return out, expired
 }

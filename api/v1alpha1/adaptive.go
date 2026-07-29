@@ -9,7 +9,7 @@ import (
 // Adaptive keep-warm: the effective idle window of a warm project scales with
 // its observed build cadence (spec idle × builds in the trailing window, capped
 // by the operator's --adaptive-idle-max-seconds). The shared helpers below keep
-// the writer (the routing API's AddInflight) and the reader (the reconciler's
+// the writer (the routing API's StartInflight) and the reader (the reconciler's
 // desiredReplicas) on one definition of the cadence record.
 const (
 	// AdaptiveWindow is the trailing window over which build cadence is counted.

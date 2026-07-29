@@ -147,7 +147,9 @@ type BuildProjectStatus struct {
 	Inflight []InflightBuild `json:"inflight,omitempty"`
 
 	// InflightBuilds is len(Inflight), maintained in the same write for `kubectl get` and dashboards.
-	// It is a PROJECTION, never a decision input — read Inflight (or InflightCount) instead.
+	// It is a PROJECTION: never decide anything about a daemon from it — read Inflight (or
+	// InflightCount). The reconciler reads it for one purpose only, to notice that it disagrees with
+	// the entries and rewrite it.
 	InflightBuilds int32 `json:"inflightBuilds"`
 
 	// LastCacheExportGrant is when buildd last granted an S3 cache export to a

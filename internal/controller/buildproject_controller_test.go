@@ -189,7 +189,8 @@ func TestDesiredReplicas(t *testing.T) {
 		{"adaptive single build keeps base idle -> zero", cadence(mk(bkov1.TierWarm, 900, time.Hour, true, 0), 1), 6 * time.Hour, 0},
 	}
 	for _, c := range cases {
-		if got := desiredReplicas(c.bp, now, maxBuild, c.adaptiveMax); got != c.want {
+		live, _ := bkov1.ExpireInflight(c.bp.Status.Inflight, now, maxBuild)
+		if got := desiredReplicas(c.bp, live, now, c.adaptiveMax); got != c.want {
 			t.Errorf("%s: desiredReplicas = %d, want %d", c.name, got, c.want)
 		}
 	}
