@@ -137,17 +137,21 @@ func Service(bp *bkov1.BuildProject, cfg Config) *corev1.Service {
 // and unlike the operator's own actions there is nothing else in this control plane that can stop
 // them: a PDB is the only veto Kubernetes offers.
 //
-// The budget tracks whether the daemon is BUSY rather than the tier. serving=true renders
-// minAvailable 1, which on a StatefulSet-of-1 means "do not evict at all"; idle renders 0, which
-// permits it. Blanket protection would be wrong in both directions — a warm daemon sitting idle would
-// stall a node drain for no reason, and a hot daemon (never scaled to zero, and therefore the one most
+// The budget exists only while the daemon is BUSY, and is removed once it is idle — the tier is not
+// the right question. Blanket protection would be wrong in both directions: a warm daemon sitting idle
+// would stall a node drain for no reason, and a hot daemon (never scaled to zero, and so the one most
 // likely to be sitting on a node someone drains) would get none at all.
+//
+// nil means "no budget", and that is deliberately NOT the same as minAvailable 0. A zero budget looks
+// permissive but is not: for an unhealthy pod the disruption controller computes currentHealthy 0 /
+// desiredHealthy 0, and its unhealthy-pod fast path requires desiredHealthy > 0 — so the eviction is
+// REFUSED. A crash-looping hot daemon would then block node drains and cluster autoscaling forever,
+// while serving nothing. Deleting the object is the only true no-op.
 func PodDisruptionBudget(bp *bkov1.BuildProject, cfg Config, serving bool) *policyv1.PodDisruptionBudget {
-	l := Labels(bp)
-	min := int32(0)
-	if serving {
-		min = 1
+	if !serving {
+		return nil
 	}
+	l := Labels(bp)
 	return &policyv1.PodDisruptionBudget{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      router.DaemonName(bp.Spec.Key),
@@ -155,7 +159,7 @@ func PodDisruptionBudget(bp *bkov1.BuildProject, cfg Config, serving bool) *poli
 			Labels:    l,
 		},
 		Spec: policyv1.PodDisruptionBudgetSpec{
-			MinAvailable: ptr(intstr.FromInt32(min)),
+			MinAvailable: ptr(intstr.FromInt32(1)),
 			Selector:     &metav1.LabelSelector{MatchLabels: l},
 		},
 	}

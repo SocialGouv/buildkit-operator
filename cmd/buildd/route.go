@@ -256,7 +256,14 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 	// this any authenticated caller could drain another project's in-flight set. Callers on the legacy
 	// bearer carry no repo to check; requireBuildID is what covers them, since the id is unguessable.
 	if id.override && id.repo != "" {
-		if repo, found := s.prov.ProjectRepo(r.Context(), req.Key); found && router.NormalizeRepo(repo) != router.NormalizeRepo(id.repo) {
+		repo, found, err := s.prov.ProjectRepo(r.Context(), req.Key)
+		if err != nil {
+			// Fail closed: proceeding would let a transient API error stand in for "authorized".
+			s.log.Error(err, "cannot authorize release", "key", req.Key, "remote", clientIP(r))
+			http.Error(w, "cannot verify project ownership", http.StatusServiceUnavailable)
+			return
+		}
+		if found && router.NormalizeRepo(repo) != router.NormalizeRepo(id.repo) {
 			s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "key", req.Key,
 				"err", "key belongs to another repo")
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
@@ -266,7 +273,9 @@ func (s *routeServer) handleComplete(w http.ResponseWriter, r *http.Request) {
 	if s.requireBuildID && req.BuildID == "" {
 		// Without an id the release would fall back to "retire this project's oldest build", which is
 		// a capability any authenticated caller could aim at any project. Refused once the fleet is
-		// new enough to echo the id back.
+		// new enough to echo the id back. Logged: turning this on against a stale consumer otherwise
+		// shows up only as builds mysteriously holding their daemons warm.
+		s.log.Info("denied", "path", r.URL.Path, "remote", clientIP(r), "key", req.Key, "err", "buildId is required")
 		http.Error(w, "bad request: buildId is required", http.StatusBadRequest)
 		return
 	}

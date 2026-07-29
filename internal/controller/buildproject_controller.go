@@ -125,12 +125,14 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// beat ago by another buildd replica. Confirm against the API server first (the same guard the
 	// auto-grow bounce and the template roll use).
 	if desired == 0 {
-		fresh, err := r.freshInflight(ctx, &bp)
+		fresh, err := r.freshInflightEntries(ctx, &bp)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("re-read inflight before taking the daemon down: %w", err)
 		}
-		if fresh > 0 {
-			desired = 1
+		if len(fresh) > 0 {
+			// Everything downstream — the disruption budget, the roll hold — must decide on the same
+			// entries, not on the cached read that was already proven stale.
+			liveInflight, desired = fresh, 1
 		}
 	}
 	// Reap an idle ephemeral fork daemon: delete its cache PVC + the fork BuildProject (the owner-ref
@@ -151,8 +153,11 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.ensureService(ctx, &bp); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure service: %w", err)
 	}
+	// Best-effort, like every other guard here: a PDB that cannot be written (RBAC not yet applied by
+	// the chart upgrade, a quota, an admission webhook) must not stop the daemon itself from being
+	// converged — that would turn a protection into an outage.
 	if err := r.ensurePDB(ctx, &bp, len(liveInflight) > 0); err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure poddisruptionbudget: %w", err)
+		l.V(1).Info("daemon PodDisruptionBudget deferred", "key", bp.Spec.Key, "err", err.Error())
 	}
 	rollHeld, err := r.ensureStatefulSet(ctx, &bp, desired, liveInflight)
 	if err != nil {
@@ -220,7 +225,8 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if serr != nil {
 		l.V(1).Info("snapshot deferred", "err", serr.Error())
 	}
-	if ferr := r.reconcileFanout(ctx, &bp); ferr != nil {
+	prunePending, ferr := r.reconcileFanout(ctx, &bp)
+	if ferr != nil {
 		l.V(1).Info("fanout deferred", "err", ferr.Error())
 	}
 	if gerr := r.maybeAutoGrow(ctx, &bp, ready); gerr != nil {
@@ -242,6 +248,19 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	if snapAfter > 0 && (requeue == 0 || snapAfter < requeue) {
 		requeue = snapAfter
+	}
+	// While builds are in flight the daemon carries a disruption budget and may be holding a roll, and
+	// the last entry can leave by simply EXPIRING — which writes nothing and wakes nobody. Without this
+	// a hot-tier project (no idle re-check) would keep both until the next build or the cache resync.
+	if len(liveInflight) > 0 {
+		if d := time.Until(liveInflight[0].Since.Time.Add(r.maxBuildAge())); d > 0 && (requeue == 0 || d < requeue) {
+			requeue = d
+		}
+	}
+	// A clone left in place because it was busy needs someone to come back to it: a clone's own status
+	// writes enqueue the CLONE, never its parent, and only the parent prunes.
+	if prunePending && (requeue == 0 || drainRecheckInterval < requeue) {
+		requeue = drainRecheckInterval
 	}
 	// A held roll has no watch to wake it: a client's /complete does write the status (which retriggers
 	// us), but the LAST thing keeping a roll back can also be an entry that simply expires — nothing
@@ -278,27 +297,38 @@ func (r *BuildProjectReconciler) ensureService(ctx context.Context, bp *bkov1.Bu
 	return r.Update(ctx, &existing)
 }
 
-// ensurePDB keeps the daemon's PodDisruptionBudget in step with whether it is serving builds, so a
-// node drain waits for the builds running on it and passes straight through an idle one.
+// ensurePDB gives a daemon a PodDisruptionBudget exactly while it is serving builds, and removes it
+// once idle — so a node drain waits for the builds running on it and passes straight through a daemon
+// with nothing to lose.
 func (r *BuildProjectReconciler) ensurePDB(ctx context.Context, bp *bkov1.BuildProject, serving bool) error {
 	name := types.NamespacedName{Name: router.DaemonName(bp.Spec.Key), Namespace: r.Cfg.Namespace}
 	want := builder.PodDisruptionBudget(bp, r.Cfg, serving)
+	var existing policyv1.PodDisruptionBudget
+	err := r.Get(ctx, name, &existing)
+	if want == nil {
+		if err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		return client.IgnoreNotFound(r.Delete(ctx, &existing))
+	}
 	if err := ctrl.SetControllerReference(bp, want, r.Scheme); err != nil {
 		return err
 	}
-	var existing policyv1.PodDisruptionBudget
-	err := r.Get(ctx, name, &existing)
 	if apierrors.IsNotFound(err) {
 		return r.Create(ctx, want)
 	} else if err != nil {
 		return err
 	}
+	// Re-assert ownership on update too: a budget that ever appeared without the controller ref would
+	// otherwise never get one, and would outlive the BuildProject it guards.
 	if reflect.DeepEqual(existing.Spec.MinAvailable, want.Spec.MinAvailable) &&
-		reflect.DeepEqual(existing.Spec.Selector, want.Spec.Selector) {
+		reflect.DeepEqual(existing.Spec.Selector, want.Spec.Selector) &&
+		len(existing.OwnerReferences) > 0 {
 		return nil // already converged — skip the write and the watch event it would cause
 	}
 	existing.Spec.MinAvailable = want.Spec.MinAvailable
 	existing.Spec.Selector = want.Spec.Selector
+	existing.OwnerReferences = want.OwnerReferences
 	return r.Update(ctx, &existing)
 }
 
@@ -676,7 +706,10 @@ func (r *BuildProjectReconciler) pruneSnapshots(ctx context.Context, items []vol
 // proved Cinder clones are CoW (fast boot). Clones run hot, are owned by the canonical (cascade
 // GC), and don't fan out themselves; layers converge via shared S3, cache mounts stay per-daemon.
 // Vertical scaling (Resources / CacheVolumeGi) remains the first resort.
-func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.BuildProject) error {
+// Returns deferred=true when a clone was left in place because it is still serving builds, so the
+// caller can come back to it — nothing enqueues the parent when a clone's own status changes.
+func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.BuildProject) (bool, error) {
+	deferred := false
 	// Prune clones beyond the desired Fanout FIRST, so lowering or disabling Fanout removes orphan hot
 	// clones instead of leaking them. This runs even when Fanout==0 (full teardown of fan-out).
 	want := map[string]bool{}
@@ -685,7 +718,7 @@ func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.
 	}
 	var clones bkov1.BuildProjectList
 	if err := r.List(ctx, &clones, client.InNamespace(r.Cfg.Namespace), client.MatchingLabels{cloneOfLabel: bp.Spec.Key}); err != nil {
-		return err
+		return deferred, err
 	}
 	for i := range clones.Items {
 		clone := &clones.Items[i]
@@ -698,20 +731,21 @@ func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.
 		// builds have been released or have aged out of the inflight set.
 		live, err := r.freshInflightEntries(ctx, clone)
 		if err != nil {
-			return fmt.Errorf("re-read inflight before pruning clone %s: %w", clone.Name, err)
+			return deferred, fmt.Errorf("re-read inflight before pruning clone %s: %w", clone.Name, err)
 		}
 		if len(live) > 0 {
 			log.FromContext(ctx).Info("keeping a fan-out clone that is still serving builds",
 				"clone", clone.Name, "of", bp.Spec.Key, "inflight", len(live))
+			deferred = true
 			continue
 		}
 		if err := r.Delete(ctx, clone); err != nil && !apierrors.IsNotFound(err) {
-			return err
+			return deferred, err
 		}
 	}
 
 	if bp.Spec.Fanout <= 0 || bp.Status.LastSnapshot == "" {
-		return nil // disabled, or no snapshot to clone from yet
+		return deferred, nil // disabled, or no snapshot to clone from yet
 	}
 	for i := int32(1); i <= bp.Spec.Fanout; i++ {
 		ckey := router.CloneKey(bp.Spec.Key, int(i))
@@ -719,7 +753,7 @@ func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.
 		if err := r.Get(ctx, types.NamespacedName{Name: ckey, Namespace: r.Cfg.Namespace}, &clone); err == nil {
 			continue
 		} else if !apierrors.IsNotFound(err) {
-			return err
+			return deferred, err
 		}
 		clone = bkov1.BuildProject{
 			ObjectMeta: metav1.ObjectMeta{
@@ -729,13 +763,13 @@ func (r *BuildProjectReconciler) reconcileFanout(ctx context.Context, bp *bkov1.
 			Spec: bkov1.DeriveChild(bp.Spec, bp.Status.LastSnapshot, bkov1.CloneChild, ckey),
 		}
 		if err := ctrl.SetControllerReference(bp, &clone, r.Scheme); err != nil {
-			return err
+			return deferred, err
 		}
 		if err := r.Create(ctx, &clone); err != nil {
-			return err
+			return deferred, err
 		}
 	}
-	return nil
+	return deferred, nil
 }
 
 func ptr[T any](v T) *T { return &v }

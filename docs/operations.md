@@ -210,11 +210,13 @@ CrashLoopBackOff is rolled regardless — the roll is usually the repair.
 
 The other ways a daemon can go away under a build are guarded too:
 
-- **Node drains** — every daemon carries a PodDisruptionBudget whose `minAvailable` follows its
-  in-flight set: `1` while builds run (the eviction is refused), `0` when idle (the drain passes
-  straight through). A drain therefore waits exactly as long as the builds on that node, on every
-  tier — including `hot`, which never scales to zero and is the most likely to be sitting on a node
-  someone drains.
+- **Node drains** — a daemon carries a PodDisruptionBudget (`minAvailable: 1`) exactly while it is
+  serving builds; once idle the budget is deleted, not set to zero. A drain therefore waits for the
+  builds on that node and no longer, on every tier — including `hot`, which never scales to zero and is
+  the most likely to be sitting on a node someone drains. (A `minAvailable: 0` budget would look
+  permissive and is not: for an *unhealthy* pod the disruption controller refuses the eviction, so a
+  crash-looping daemon would block drains forever.) A leaked in-flight entry holds the budget until it
+  expires at `maxBuildSeconds`, so a stuck drain is worth checking `.status.inflight` for.
 - **Scale-to-zero and fork reaping** re-read the in-flight set from the API server before acting, not
   from the informer cache.
 - **Lowering `fanout`** leaves a clone that is still serving builds for a later reconcile.
