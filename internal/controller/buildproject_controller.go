@@ -86,7 +86,11 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	bp.ApplyDefaults()
 
-	desired := desiredReplicas(&bp, time.Now(), r.maxBuildAge(), r.adaptiveIdleMax())
+	// The live inflight builds — the ones whose /complete has not arrived and that have not yet
+	// outlived --max-build-seconds — decide BOTH whether the daemon stays up and what the status
+	// records, so they are computed once here rather than derived twice from the same entries.
+	liveInflight, expired := bkov1.ExpireInflight(bp.Status.Inflight, time.Now(), r.maxBuildAge())
+	desired := desiredReplicas(&bp, liveInflight, time.Now(), r.adaptiveIdleMax())
 	// Reap an idle ephemeral fork daemon: delete its cache PVC + the fork BuildProject (the owner-ref
 	// cascade removes the STS/Service). Forks are one-shot — nothing warm to keep — so this stops their
 	// retained PVCs and CRs from accumulating.
@@ -139,15 +143,14 @@ func (r *BuildProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// the leak WITHOUT releasing a sibling that has legitimately been building for hours — and it
 	// works on an actively-building project, which a window keyed on the project's last activity
 	// could never do (that clock is pushed forward by every new route).
-	entries, dropped := bkov1.ExpireInflight(bp.Status.Inflight, time.Now(), r.maxBuildAge())
-	if dropped > 0 {
-		log.FromContext(ctx).Info("expired inflight builds past --max-build-seconds", "key", bp.Spec.Key, "dropped", dropped, "remaining", len(entries))
+	if expired > 0 {
+		log.FromContext(ctx).Info("expired inflight builds past --max-build-seconds", "key", bp.Spec.Key, "dropped", expired, "remaining", len(liveInflight))
 	}
 	// The count also gets rewritten when it disagrees with the entries — which is how a status
 	// carrying only the pre-entries counter heals: no entry pins the daemon any more, so the number
 	// must stop claiming builds are running.
-	if dropped > 0 || int(bp.Status.InflightBuilds) != len(entries) {
-		bp.Status.SetInflight(entries)
+	if expired > 0 || int(bp.Status.InflightBuilds) != len(liveInflight) {
+		bp.Status.SetInflight(liveInflight)
 		changed = true
 	}
 	bp.Status.Replicas = ready
@@ -292,15 +295,15 @@ const forkReapGrace = 90 * time.Second
 
 // 1 while a build is in flight or the project was active within its effective idle window, else 0
 // (scale-to-zero — the PVC is retained via volumeClaimTemplates, so the next build just
-// reattaches the warm cache; no restore). Idle timeout default seeded from bench B; adaptiveMax > 0
+// reattaches the warm cache; no restore). liveInflight is the caller's already-expired view of
+// Status.Inflight — an entry whose /complete never came stops pinning the daemon on its own, without
+// waiting for the project to go quiet. Idle timeout default seeded from bench B; adaptiveMax > 0
 // lets a frequently-building project earn a longer window (see effectiveIdle).
-func desiredReplicas(bp *bkov1.BuildProject, now time.Time, maxBuild, adaptiveMax time.Duration) int32 {
+func desiredReplicas(bp *bkov1.BuildProject, liveInflight []bkov1.InflightBuild, now time.Time, adaptiveMax time.Duration) int32 {
 	if bp.Spec.Tier == bkov1.TierHot {
 		return 1
 	}
-	// Only builds still within the safety-net window pin the daemon; an entry whose /complete never
-	// came stops counting on its own, without waiting for the project to go quiet.
-	if live, _ := bkov1.ExpireInflight(bp.Status.Inflight, now, maxBuild); len(live) > 0 {
+	if len(liveInflight) > 0 {
 		return 1
 	}
 	if idle := effectiveIdle(bp, now, adaptiveMax); bp.Status.LastBuildTime != nil && idle > 0 {

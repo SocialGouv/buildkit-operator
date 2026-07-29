@@ -3,7 +3,7 @@
 // PVC by internal/controller) and addresses it via Service DNS or the shared SNI gateway.
 //
 // The logic here is moved verbatim from cmd/buildd (ensureBuildProject/ready/waitReady/endpointFor/
-// addInflight + the fork derivation) behind the provisioner.Provisioner contract — no behaviour change.
+// the inflight status writes + the fork derivation) behind the provisioner.Provisioner contract.
 // The background reconcile/scale/snapshot loop stays wired as controller-runtime manager Runnables in
 // cmd/buildd's k8s setup; this type is only the imperative surface the routing handlers call.
 package k8s
@@ -107,12 +107,12 @@ func (p *Provisioner) ensureBuildProject(ctx context.Context, spec bkov1.BuildPr
 	// Warm from birth: desiredReplicas only holds a warm-tier replica once LastBuildTime is set, so stamp
 	// it now on the JUST-CREATED object (it already carries its ResourceVersion) — not via a fresh Get,
 	// whose informer cache can still miss the new object and leave the daemon stuck Idle. That cache race
-	// is the cold-start flake: AddInflight's Get returned NotFound right after Create, so the touch was
+	// is the cold-start flake: the status write's Get returned NotFound right after Create, so the touch was
 	// dropped and the warm-tier project never scaled up.
 	now := metav1.Now()
 	created.Status.LastBuildTime = &now
 	if err := p.c.Status().Update(ctx, created); err != nil {
-		p.log.Error(err, "stamp LastBuildTime at create failed; relying on the AddInflight touch", "key", spec.Key)
+		p.log.Error(err, "stamp LastBuildTime at create failed; relying on the /route status write", "key", spec.Key)
 	}
 	return nil
 }
@@ -193,6 +193,18 @@ func (p *Provisioner) Touch(ctx context.Context, key string) {
 	p.touchStatus(ctx, key, "touch", func(*bkov1.BuildProjectStatus, metav1.Time) {})
 }
 
+// retriableStatusErr and statusBackoff are the shared retry envelope for the status writes on the
+// /route path. ~6.4s of retries (vs DefaultBackoff's ~40ms): the informer cache can lag etcd by a beat
+// right after the project is created, so a too-short budget drops the write exactly when it matters —
+// and for an ephemeral fork that write is what keeps it from being reaped before its build registers.
+func retriableStatusErr(err error) bool {
+	return apierrors.IsConflict(err) || apierrors.IsNotFound(err)
+}
+
+func statusBackoff() wait.Backoff {
+	return wait.Backoff{Steps: 8, Duration: 100 * time.Millisecond, Factor: 1.6, Jitter: 0.1}
+}
+
 // touchStatus applies mutate to the project's status and stamps LastBuildTime now. It re-Gets and
 // retries on conflict AND not-found: a Status().Update that lost a 409 race with the reconciler would
 // leave the inflight set wrong (the project could scale down mid-build, or never scale down), and right
@@ -200,12 +212,7 @@ func (p *Provisioner) Touch(ctx context.Context, key string) {
 // NotFound — retrying lets the cache catch up instead of dropping the touch (which would leave a
 // warm-tier project stuck Idle). A terminal failure (all retries exhausted) is logged.
 func (p *Provisioner) touchStatus(ctx context.Context, key, op string, mutate func(*bkov1.BuildProjectStatus, metav1.Time)) {
-	retriable := func(err error) bool { return apierrors.IsConflict(err) || apierrors.IsNotFound(err) }
-	// ~6.4s of retries (vs DefaultBackoff's ~40ms): the informer cache can lag etcd by a beat right after
-	// the project is created, so a too-short backoff drops the touch — and for an ephemeral fork that
-	// touch is what keeps it from being reaped before its build registers.
-	backoff := wait.Backoff{Steps: 8, Duration: 100 * time.Millisecond, Factor: 1.6, Jitter: 0.1}
-	err := retry.OnError(backoff, retriable, func() error {
+	err := retry.OnError(statusBackoff(), retriableStatusErr, func() error {
 		var bp bkov1.BuildProject
 		if err := p.c.Get(ctx, types.NamespacedName{Name: key, Namespace: p.namespace}, &bp); err != nil {
 			return err
@@ -227,12 +234,9 @@ func (p *Provisioner) touchStatus(ctx context.Context, key, op string, mutate fu
 // (import+export) behaviour on a transient read error: a spurious export is cheap, a lost import
 // never is.
 func (p *Provisioner) S3CacheDecision(ctx context.Context, key string, exportInterval time.Duration, grantExport bool) (bool, bool) {
-	// Same retry envelope as AddInflight, for the same reason (k8s.go above): the informer
-	// cache lags etcd right after a create/status write — the default ~40ms budget drops the
-	// operation exactly when it matters. AddInflight ALWAYS writes just before this runs on
-	// the /route path, so the first CAS attempt conflicting is the common case, not the edge.
-	retriable := func(err error) bool { return apierrors.IsConflict(err) || apierrors.IsNotFound(err) }
-	backoff := wait.Backoff{Steps: 8, Duration: 100 * time.Millisecond, Factor: 1.6, Jitter: 0.1}
+	// StartInflight ALWAYS writes just before this runs on the /route path, so the first CAS attempt
+	// conflicting is the common case here, not the edge — hence the same envelope as touchStatus.
+	retriable, backoff := retriableStatusErr, statusBackoff()
 
 	var bp bkov1.BuildProject
 	if err := retry.OnError(backoff, apierrors.IsNotFound, func() error {
