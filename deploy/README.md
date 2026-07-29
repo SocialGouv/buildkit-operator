@@ -21,15 +21,16 @@ deploy/
 
 ## Prerequisites
 
-- An OVH Managed Kubernetes cluster (the target) with:
-  - StorageClass **`csi-cinder-high-speed-gen2`** (gen2 high-speed Cinder).
-  - VolumeSnapshotClass **`csi-cinder-snapclass-v1`**.
-  Both ship with OVH MKS; this chart only **references** them, it does not create
-  them. Verify:
+- A Kubernetes cluster with a dynamic-provisioning StorageClass. The chart only
+  **references** storage classes, it never creates them. On OVH MKS use the gen2
+  high-speed Cinder class and its snapshot classes (both ship with MKS):
   ```bash
   kubectl get storageclass csi-cinder-high-speed-gen2
   kubectl get volumesnapshotclass csi-cinder-snapclass-v1
   ```
+  Leaving `defaultStorageClass` empty falls back to the cluster's default class.
+  Durability snapshots are opt-in (`snapshotClassName`); without them the cluster
+  needs no VolumeSnapshot CRDs at all.
 - `helm` 3.x, `kubectl`, and either `mkcert` or `openssl` on the box you run the
   cert script from.
 
@@ -97,20 +98,25 @@ kubectl -n buildkit-builds get buildprojects -w
 kubectl -n buildkit-builds get statefulset,svc,pvc -l app.kubernetes.io/name=buildkit-operator
 ```
 
-### (d) OVH gen2 storage / snapshot classes
+### (d) Storage / snapshot classes
 
-`csi-cinder-high-speed-gen2` (StorageClass) and `csi-cinder-snapclass-in-use-v1` (VolumeSnapshotClass)
-are expected to **already exist** on the OVH cluster. The **snapshot** class is a chart value
-(`snapshotClassName`); the **storage** class is a per-project field (`BuildProject.spec.storageClass`,
-CRD-defaulted to `csi-cinder-high-speed-gen2`) — not a chart-wide value. If your cluster names them
-differently:
+Both are chart values with **no cloud-specific default**, so name the ones your cluster ships:
 
 ```bash
-# snapshot class (chart-wide):
 helm install buildkit-operator deploy/helm/buildkit-operator -n buildkit-operator --create-namespace \
+  --set defaultStorageClass=<your-sc> \
   --set snapshotClassName=<your-vsc>
-# storage class is set per BuildProject (or change the CRD default).
 ```
+
+- `defaultStorageClass` is stamped onto every BuildProject buildd creates; empty leaves the cache PVC
+  without a class, i.e. on the **cluster's default StorageClass**. A project can always override it
+  (`BuildProject.spec.storageClass`).
+- `snapshotClassName` empty **disables** durability snapshots — and with them the need for the
+  external-snapshotter CRDs.
+
+On OVH MKS the classes to use are `csi-cinder-high-speed-gen2` (throughput scales with volume size)
+and `csi-cinder-snapclass-in-use-v1` (in-use snapshots, no scale-to-zero); on EKS, e.g. `ebs-gp3` and
+an EBS-CSI VolumeSnapshotClass. They must already exist — the chart references them, never creates them.
 
 ## Security profile & the Kyverno caveat
 
