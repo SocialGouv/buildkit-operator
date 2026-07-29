@@ -7,9 +7,12 @@ name: renovate
 # pour ce dépôt, sans dépendre du service hébergé. La configuration reste .github/renovate.json5
 # (inchangée, et validée : un dry-run résout le preset org et détecte les mises à jour réelles).
 #
-# ⚠ Les PR ouvertes avec GITHUB_TOKEN ne déclenchent PAS les autres workflows (anti-récursion
-# GitHub) : leur CI ne partira pas toute seule. Pour l'obtenir, remplacer le token par celui d'une
-# GitHub App (ou un PAT) via un secret dédié — le reste du workflow est identique.
+# Renovate s'authentifie avec l'App dédiée « SocialGouv Renovate » et NON avec GITHUB_TOKEN : les
+# PR ouvertes par GITHUB_TOKEN ne déclenchent pas les autres workflows, donc leur CI ne partait
+# jamais. Sous l'App, l'auteur des PR est socialgouv-renovate[bot], la CI se déclenche normalement,
+# et cette identité dédiée est ce qui permet en aval de distinguer une PR de dépendances d'une PR
+# humaine. L'App a besoin de `workflows: write` : helpers:pinGitHubActionDigests réécrit
+# .github/workflows/**, et un push d'App sans cette permission est refusé par GitHub.
 on:
   schedule:
     - cron: "0 3 * * 1" # lundi 03:00 UTC
@@ -37,9 +40,14 @@ jobs:
   renovate:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
       - uses: renovatebot/github-action@1a96852b0384df1837619d04c60b2d10d1f9ff08 # v46.1.21
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
         env:
           RENOVATE_PLATFORM: github
           RENOVATE_REPOSITORIES: ${{ github.repository }}
