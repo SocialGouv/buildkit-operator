@@ -14,11 +14,11 @@
   minimumReleaseAge: "14 days",
   internalChecksFilter: "strict",
   // A known CVE is the one case where waiting is the greater risk: security updates bypass the
-  // cooldown entirely. Two independent sources feed that branch, and only one of them works
-  // today: osv.dev needs nothing beyond this flag (direct dependencies), while GitHub's own
-  // Dependabot alerts require the Renovate App to hold `Dependabot alerts: read`, which the
-  // `socialgouv-renovate` installation does NOT currently have — without it a GitHub-only
-  // advisory would sit out the full 14 days with no error anywhere.
+  // cooldown entirely. Two independent sources feed that branch: osv.dev (direct dependencies,
+  // needs nothing beyond this flag) and GitHub's own Dependabot alerts, which require the
+  // Renovate App to hold `Dependabot alerts: read` — granted on the `socialgouv-renovate`
+  // installation. Revoking that permission would silently narrow the exemption to osv.dev
+  // rather than fail, so it is worth re-checking if a GitHub-only advisory ever waits.
   osvVulnerabilityAlerts: true,
   vulnerabilityAlerts: {
     minimumReleaseAge: null,
