@@ -6,7 +6,7 @@
 ARG BUILDKIT_VERSION=v0.31.1
 # Build on the NATIVE builder arch and cross-compile to $TARGETARCH (pure Go, CGO off): a multi-arch
 # build then costs one compile per arch instead of an emulated toolchain.
-FROM --platform=$BUILDPLATFORM golang:1.26@sha256:32c0e6e5c4f6707717051091b4d0b077464a679eaab563e11474efc5328e2aa5 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647 AS build
 ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
