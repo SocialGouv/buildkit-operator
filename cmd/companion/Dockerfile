@@ -3,7 +3,7 @@
 # Keep BUILDKIT_VERSION aligned with the daemon image (buildd --buildkit-image) to avoid
 # buildctl/buildkitd version skew.
 # renovate: datasource=docker depName=moby/buildkit
-ARG BUILDKIT_VERSION=v0.31.1
+ARG BUILDKIT_VERSION=v0.31.2
 # Build on the NATIVE builder arch and cross-compile to $TARGETARCH (pure Go, CGO off): a multi-arch
 # build then costs one compile per arch instead of an emulated toolchain.
 FROM --platform=$BUILDPLATFORM golang:1.26@sha256:32c0e6e5c4f6707717051091b4d0b077464a679eaab563e11474efc5328e2aa5 AS build
