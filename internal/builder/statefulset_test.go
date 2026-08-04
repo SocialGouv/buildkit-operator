@@ -320,6 +320,27 @@ func TestStatefulSet_DaemonServiceAccount(t *testing.T) {
 	}
 }
 
+// Daemon pods get no projected Kubernetes API token. buildkitd never calls the API, so the token buys
+// nothing — while the pod runs untrusted RUN steps from the repo being built, which puts a credential
+// for the cluster's API inside reach of that code. This holds for trusted and fork daemons alike, and
+// whether or not a ServiceAccount is named (the namespace's default SA is mounted just the same).
+func TestStatefulSet_NoAutomountServiceAccountToken(t *testing.T) {
+	fork := router.ForkKey(router.ProjectKey("github.com/org/repo", "", "", "amd64"))
+	for _, cfg := range []Config{
+		{Namespace: "ns", Port: 1234},
+		{Namespace: "ns", Port: 1234, DaemonServiceAccount: "buildkit-daemon"},
+	} {
+		for _, key := range []string{"p1", fork} {
+			bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: key, Arch: "amd64"}}
+			got := StatefulSet(bp, cfg).Spec.Template.Spec.AutomountServiceAccountToken
+			if got == nil || *got {
+				t.Errorf("key %q sa %q: AutomountServiceAccountToken = %v, want an explicit false",
+					key, cfg.DaemonServiceAccount, got)
+			}
+		}
+	}
+}
+
 // A node drain evicts daemon pods, severing every build on them — the one disruption this control
 // plane cannot veto by itself. The budget therefore tracks whether the daemon is BUSY: it refuses the
 // eviction while builds run, and permits it when idle so cluster maintenance is never stalled by a

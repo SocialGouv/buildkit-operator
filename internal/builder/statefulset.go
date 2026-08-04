@@ -322,7 +322,11 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 					// pre-feature behaviour); a configured one scopes any cloud workload-identity
 					// binding to the daemons alone.
 					ServiceAccountName: cfg.DaemonServiceAccount,
-					SecurityContext:    podSec,
+					// buildkitd never calls the Kubernetes API, and these pods execute untrusted RUN
+					// steps from the repo being built — a projected API token would be reachable from
+					// inside a build for no benefit at all, so don't mount one.
+					AutomountServiceAccountToken: ptr(false),
+					SecurityContext:              podSec,
 					// Untrusted fork daemons run under a sandboxed runtime when one is configured —
 					// the build executes attacker-controlled code, so isolate it harder than runc.
 					RuntimeClassName: runtimeClassFor(bp, cfg),
