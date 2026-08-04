@@ -36,6 +36,13 @@ type Config struct {
 	SandboxRuntimeClass  string // RuntimeClass for UNTRUSTED (fork) daemons only (e.g. kata-clh / sysbox-runc); empty = runc
 	SandboxBuildkitImage string // NON-rootless buildkit image for sandboxed (Kata) forks; empty = derived from BuildkitImage by stripping "-rootless"
 
+	// DaemonServiceAccount is the ServiceAccount the per-project daemon pods run as. Empty (the
+	// default) is Kubernetes' own behaviour: the `default` ServiceAccount of the builds namespace.
+	// Set it on clouds where credentials are bound to a ServiceAccount (workload identity) so the
+	// cloud identity the daemons need — e.g. read/write on the S3 cold-cache bucket — is scoped to
+	// the daemons instead of being inherited by everything else that runs in the builds namespace.
+	DaemonServiceAccount string
+
 	// Scheduling for the per-project daemon pods. Set these to pin daemons onto a dedicated build
 	// nodepool (nodeSelector to attract them + a toleration for its taint) so build spikes and
 	// untrusted RUN code stay off the app / control-plane nodes. All empty = the cluster default.
@@ -311,7 +318,11 @@ func StatefulSet(bp *bkov1.BuildProject, cfg Config) *appsv1.StatefulSet {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: podLabels(bp)},
 				Spec: corev1.PodSpec{
-					SecurityContext: podSec,
+					// Empty leaves the pod on the builds namespace's `default` ServiceAccount (the
+					// pre-feature behaviour); a configured one scopes any cloud workload-identity
+					// binding to the daemons alone.
+					ServiceAccountName: cfg.DaemonServiceAccount,
+					SecurityContext:    podSec,
 					// Untrusted fork daemons run under a sandboxed runtime when one is configured —
 					// the build executes attacker-controlled code, so isolate it harder than runc.
 					RuntimeClassName: runtimeClassFor(bp, cfg),

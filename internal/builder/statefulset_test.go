@@ -304,6 +304,22 @@ func TestStatefulSet_StorageClassPVC(t *testing.T) {
 	}
 }
 
+// Daemon pods run as the configured ServiceAccount, so a cloud workload-identity binding (EKS Pod
+// Identity / IRSA, GKE / Azure Workload Identity) can be scoped to the daemons instead of to the builds
+// namespace's `default` SA, which every other pod there — the mirror, the S3 lifecycle Job — also uses.
+// Empty must stay a no-op: an unset ServiceAccountName IS the pre-feature behaviour (the default SA).
+func TestStatefulSet_DaemonServiceAccount(t *testing.T) {
+	bp := &bkov1.BuildProject{Spec: bkov1.BuildProjectSpec{Key: "p1", Arch: "amd64"}}
+
+	set := StatefulSet(bp, Config{Namespace: "ns", Port: 1234, DaemonServiceAccount: "buildkit-daemon"})
+	if got := set.Spec.Template.Spec.ServiceAccountName; got != "buildkit-daemon" {
+		t.Errorf("ServiceAccountName = %q, want buildkit-daemon", got)
+	}
+	if got := StatefulSet(bp, Config{Namespace: "ns", Port: 1234}).Spec.Template.Spec.ServiceAccountName; got != "" {
+		t.Errorf("unconfigured: ServiceAccountName = %q, want empty (the namespace default SA)", got)
+	}
+}
+
 // A node drain evicts daemon pods, severing every build on them — the one disruption this control
 // plane cannot veto by itself. The budget therefore tracks whether the daemon is BUSY: it refuses the
 // eviction while builds run, and permits it when idle so cluster maintenance is never stalled by a
