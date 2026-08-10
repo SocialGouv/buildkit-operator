@@ -22,7 +22,7 @@
 {{- /* A namespaced Issuer is unreachable from another namespace, so extra client certs need a
        cluster-scoped issuer. Fail loudly rather than render Certificates that never become Ready. */ -}}
 {{- if and .Values.certs.extraClientNamespaces (not $clusterScoped) }}
-  {{- fail "certs.extraClientNamespaces needs a cluster-scoped issuer: set certManager.ca.clusterIssuer=true, or point certManager.issuerRef at a ClusterIssuer" }}
+  {{- fail (printf "certs.extraClientNamespaces needs a cluster-scoped issuer, but the signing issuer is %s/%s: set certManager.ca.clusterIssuer=true (only honoured while certManager.issuerRef.name is unset), or point certManager.issuerRef at a ClusterIssuer" $issuerKind $issuerName) }}
 {{- end }}
 {{- $caNamespace := ternary $cm.ca.namespace (include "buildkit-operator.buildsNamespace" .) $bootstrapClusterScoped }}
 {{- if and $bootstrapClusterScoped (not $cm.ca.namespace) }}
@@ -34,7 +34,8 @@
     {{- fail (printf "certs.extraClientNamespaces: %q is invalid (empty, or already the builds namespace which gets a client cert anyway)" .) }}
   {{- end }}
 {{- end }}
-{{- if ne (len .Values.certs.extraClientNamespaces) (len (.Values.certs.extraClientNamespaces | uniq)) }}
+{{- $extraClientNs := .Values.certs.extraClientNamespaces | default list }}
+{{- if ne (len $extraClientNs) (len ($extraClientNs | uniq)) }}
   {{- fail "certs.extraClientNamespaces contains duplicates" }}
 {{- end }}
 {{- if $cm.ca.create }}
@@ -123,9 +124,12 @@ spec:
   usages: [client auth, key encipherment, digital signature]
   dnsNames: [client]
   issuerRef: { name: {{ $issuerName }}, kind: {{ $issuerKind }}, group: cert-manager.io }
-{{- range .Values.certs.extraClientNamespaces }}
+{{- range $extraClientNs }}
 ---
 # --- client cert for a consumer namespace (e.g. an in-cluster CI runner) -------------------------
+# The CN carries the consumer namespace. The daemon authenticates on the CA alone and ignores it, but
+# it is what a connection can be attributed to after the fact — with one shared "client" identity the
+# daemon cannot tell two consumers apart at all.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -137,10 +141,10 @@ spec:
   secretName: {{ $.Values.certs.clientSecretName }}
   duration: {{ $cm.duration }}
   renewBefore: {{ $cm.renewBefore }}
-  commonName: client
+  commonName: client.{{ . }}
   privateKey: { algorithm: ECDSA, size: 256 }
   usages: [client auth, key encipherment, digital signature]
-  dnsNames: [client]
+  dnsNames: [client, client.{{ . }}]
   issuerRef: { name: {{ $issuerName }}, kind: {{ $issuerKind }}, group: cert-manager.io }
 {{- end }}
 {{- end }}
