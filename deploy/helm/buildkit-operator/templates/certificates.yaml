@@ -1,3 +1,8 @@
+{{- /* Guard before the certManager.enabled gate: without it the whole file is skipped and
+       extraClientNamespaces is silently ignored, which reads as "configured but broken". */ -}}
+{{- if and .Values.certs.extraClientNamespaces (not .Values.certManager.enabled) }}
+  {{- fail "certs.extraClientNamespaces requires certManager.enabled=true (the chart only mints leaves when cert-manager issues them)" }}
+{{- end }}
 {{- if .Values.certManager.enabled }}
 {{- $fullname := include "buildkit-operator.fullname" . }}
 {{- $cm := .Values.certManager }}
@@ -6,15 +11,42 @@
 {{- if and (not $useCA) (not $cm.issuerRef.name) }}
   {{- fail "certManager.enabled: set certManager.issuerRef.name, or certManager.ca.create=true to bootstrap one" }}
 {{- end }}
+{{- $clusterScoped := ternary $cm.ca.clusterIssuer (eq ($cm.issuerRef.kind | default "Issuer") "ClusterIssuer") $useCA }}
 {{- $issuerName := ternary (printf "%s-ca" $fullname) $cm.issuerRef.name $useCA }}
-{{- $issuerKind := ternary "Issuer" ($cm.issuerRef.kind | default "Issuer") $useCA }}
+{{- $issuerKind := ternary (ternary "ClusterIssuer" "Issuer" $clusterScoped) ($cm.issuerRef.kind | default "Issuer") $useCA }}
+{{- /* The bootstrapped CA follows ca.clusterIssuer only when it is the one actually signing. With an
+       external issuerRef the CA is orphaned, so keep it namespaced exactly as before rather than
+       churning it to cluster scope for nothing. */ -}}
+{{- $bootstrapClusterScoped := and $useCA $cm.ca.clusterIssuer }}
+{{- $bootstrapKind := ternary "ClusterIssuer" "Issuer" $bootstrapClusterScoped }}
+{{- /* A namespaced Issuer is unreachable from another namespace, so extra client certs need a
+       cluster-scoped issuer. Fail loudly rather than render Certificates that never become Ready. */ -}}
+{{- if and .Values.certs.extraClientNamespaces (not $clusterScoped) }}
+  {{- fail (printf "certs.extraClientNamespaces needs a cluster-scoped issuer, but the signing issuer is %s/%s: set certManager.ca.clusterIssuer=true (only honoured while certManager.issuerRef.name is unset), or point certManager.issuerRef at a ClusterIssuer" $issuerKind $issuerName) }}
+{{- end }}
+{{- $caNamespace := ternary $cm.ca.namespace (include "buildkit-operator.buildsNamespace" .) $bootstrapClusterScoped }}
+{{- if and $bootstrapClusterScoped (not $cm.ca.namespace) }}
+  {{- fail "certManager.ca.namespace must be set when certManager.ca.clusterIssuer=true: a ClusterIssuer only reads its CA Secret from cert-manager's --cluster-resource-namespace" }}
+{{- end }}
+{{- $buildsNs := include "buildkit-operator.buildsNamespace" . }}
+{{- range .Values.certs.extraClientNamespaces }}
+  {{- if or (not .) (eq . $buildsNs) }}
+    {{- fail (printf "certs.extraClientNamespaces: %q is invalid (empty, or already the builds namespace which gets a client cert anyway)" .) }}
+  {{- end }}
+{{- end }}
+{{- $extraClientNs := .Values.certs.extraClientNamespaces | default list }}
+{{- if ne (len $extraClientNs) (len ($extraClientNs | uniq)) }}
+  {{- fail "certs.extraClientNamespaces contains duplicates" }}
+{{- end }}
 {{- if $cm.ca.create }}
 # --- self-signed CA bootstrapped in this namespace (use when you have no PKI) --------------------
 apiVersion: cert-manager.io/v1
-kind: Issuer
+kind: {{ $bootstrapKind }}
 metadata:
   name: {{ $fullname }}-selfsign
-  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
+  {{- if not $bootstrapClusterScoped }}
+  namespace: {{ $caNamespace }}
+  {{- end }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -24,7 +56,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ $fullname }}-ca
-  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
+  namespace: {{ $caNamespace }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -33,13 +65,15 @@ spec:
   secretName: {{ $fullname }}-ca
   duration: {{ $cm.ca.duration }}
   privateKey: { algorithm: ECDSA, size: 256 }
-  issuerRef: { name: {{ $fullname }}-selfsign, kind: Issuer, group: cert-manager.io }
+  issuerRef: { name: {{ $fullname }}-selfsign, kind: {{ $bootstrapKind }}, group: cert-manager.io }
 ---
 apiVersion: cert-manager.io/v1
-kind: Issuer
+kind: {{ $bootstrapKind }}
 metadata:
   name: {{ $fullname }}-ca
-  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
+  {{- if not $bootstrapClusterScoped }}
+  namespace: {{ $caNamespace }}
+  {{- end }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -90,4 +124,27 @@ spec:
   usages: [client auth, key encipherment, digital signature]
   dnsNames: [client]
   issuerRef: { name: {{ $issuerName }}, kind: {{ $issuerKind }}, group: cert-manager.io }
+{{- range $extraClientNs }}
+---
+# --- client cert for a consumer namespace (e.g. an in-cluster CI runner) -------------------------
+# The CN carries the consumer namespace. The daemon authenticates on the CA alone and ignores it, but
+# it is what a connection can be attributed to after the fact — with one shared "client" identity the
+# daemon cannot tell two consumers apart at all.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-client
+  namespace: {{ . }}
+  labels:
+    {{- include "buildkit-operator.labels" $ | nindent 4 }}
+spec:
+  secretName: {{ $.Values.certs.clientSecretName }}
+  duration: {{ $cm.duration }}
+  renewBefore: {{ $cm.renewBefore }}
+  commonName: client.{{ . }}
+  privateKey: { algorithm: ECDSA, size: 256 }
+  usages: [client auth, key encipherment, digital signature]
+  dnsNames: [client, client.{{ . }}]
+  issuerRef: { name: {{ $issuerName }}, kind: {{ $issuerKind }}, group: cert-manager.io }
+{{- end }}
 {{- end }}
