@@ -35,10 +35,13 @@ rules:
   - apiGroups: [""]
     resources: ["services", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Pods: read-only (status/readiness of the daemons; the StatefulSet owns them).
+  # Pods: status/readiness of the daemons (the StatefulSet owns them), plus the delete that
+  # maybeAutoGrow uses to bounce an idle daemon once its PVC reports FileSystemResizePending —
+  # without it the kubelet never remounts the grown filesystem and auto-grow silently no-ops,
+  # since the reconciler only logs the failure at V(1).
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "delete"]
   # Daemon cert Secret: buildd reads this Secret only to warn early when gateway.host is configured
   # but the daemon certificate lacks a matching wildcard SAN. Daemon pods mount certs/config via the
   # kubelet; buildd does not need list/watch over Secrets or ConfigMaps.
