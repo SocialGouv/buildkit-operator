@@ -35,10 +35,13 @@ rules:
   - apiGroups: [""]
     resources: ["services", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Pods: read-only (status/readiness of the daemons; the StatefulSet owns them).
+  # Pods: status/readiness of the daemons (the StatefulSet owns them), plus the delete that
+  # maybeAutoGrow uses to bounce an idle daemon once its PVC reports FileSystemResizePending —
+  # without it the kubelet never remounts the grown filesystem and auto-grow silently no-ops,
+  # since the reconciler only logs the failure at V(1).
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "delete"]
   # Daemon cert Secret: buildd reads this Secret only to warn early when gateway.host is configured
   # but the daemon certificate lacks a matching wildcard SAN. Daemon pods mount certs/config via the
   # kubelet; buildd does not need list/watch over Secrets or ConfigMaps.
@@ -69,3 +72,14 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The manager records its LeaderElection event next to the Lease — in THIS
+  # namespace, not the builds one the buildd Role above covers. Without it the
+  # manager logs "events is forbidden" on every leader transition and the
+  # operator namespace never surfaces a single Event.
+  # Both API groups on purpose: leader election still uses the deprecated core/v1
+  # recorder, and controller-runtime carries a TODO to move it to events.k8s.io/v1
+  # (kubernetes/kubernetes#82846). Granting core alone would turn that bump into a
+  # silent return of this same failure.
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
