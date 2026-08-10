@@ -76,6 +76,10 @@ rules:
   # namespace, not the builds one the buildd Role above covers. Without it the
   # manager logs "events is forbidden" on every leader transition and the
   # operator namespace never surfaces a single Event.
-  - apiGroups: [""]
+  # Both API groups on purpose: leader election still uses the deprecated core/v1
+  # recorder, and controller-runtime carries a TODO to move it to events.k8s.io/v1
+  # (kubernetes/kubernetes#82846). Granting core alone would turn that bump into a
+  # silent return of this same failure.
+  - apiGroups: ["", "events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]

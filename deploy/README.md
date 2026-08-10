@@ -15,7 +15,6 @@ deploy/
   cert/create-certs.sh          # mints the shared mTLS material (wildcard daemon SAN)
   cert/.certs/                  # generated certs + Secret manifests (gitignored)
   crd/                          # `task manifests` writes the generated CRDs here
-  rbac/                         # `task manifests` writes generated RBAC here (reference)
   helm/buildkit-operator/                # the Helm chart for the control plane
 ```
 
