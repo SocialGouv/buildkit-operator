@@ -69,3 +69,10 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The manager records its LeaderElection event next to the Lease — in THIS
+  # namespace, not the builds one the buildd Role above covers. Without it the
+  # manager logs "events is forbidden" on every leader transition and the
+  # operator namespace never surfaces a single Event.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
