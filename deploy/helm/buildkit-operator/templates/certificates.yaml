@@ -6,15 +6,24 @@
 {{- if and (not $useCA) (not $cm.issuerRef.name) }}
   {{- fail "certManager.enabled: set certManager.issuerRef.name, or certManager.ca.create=true to bootstrap one" }}
 {{- end }}
+{{- $clusterScoped := ternary $cm.ca.clusterIssuer (eq ($cm.issuerRef.kind | default "Issuer") "ClusterIssuer") $useCA }}
 {{- $issuerName := ternary (printf "%s-ca" $fullname) $cm.issuerRef.name $useCA }}
-{{- $issuerKind := ternary "Issuer" ($cm.issuerRef.kind | default "Issuer") $useCA }}
+{{- $issuerKind := ternary (ternary "ClusterIssuer" "Issuer" $clusterScoped) ($cm.issuerRef.kind | default "Issuer") $useCA }}
+{{- /* A namespaced Issuer is unreachable from another namespace, so extra client certs need a
+       cluster-scoped issuer. Fail loudly rather than render Certificates that never become Ready. */ -}}
+{{- if and .Values.certs.extraClientNamespaces (not $clusterScoped) }}
+  {{- fail "certs.extraClientNamespaces needs a cluster-scoped issuer: set certManager.ca.clusterIssuer=true, or point certManager.issuerRef at a ClusterIssuer" }}
+{{- end }}
+{{- $caNamespace := ternary $cm.ca.namespace (include "buildkit-operator.buildsNamespace" .) $clusterScoped }}
 {{- if $cm.ca.create }}
 # --- self-signed CA bootstrapped in this namespace (use when you have no PKI) --------------------
 apiVersion: cert-manager.io/v1
-kind: Issuer
+kind: {{ $issuerKind }}
 metadata:
   name: {{ $fullname }}-selfsign
-  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
+  {{- if not $clusterScoped }}
+  namespace: {{ $caNamespace }}
+  {{- end }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -24,7 +33,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ $fullname }}-ca
-  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
+  namespace: {{ $caNamespace }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -33,13 +42,15 @@ spec:
   secretName: {{ $fullname }}-ca
   duration: {{ $cm.ca.duration }}
   privateKey: { algorithm: ECDSA, size: 256 }
-  issuerRef: { name: {{ $fullname }}-selfsign, kind: Issuer, group: cert-manager.io }
+  issuerRef: { name: {{ $fullname }}-selfsign, kind: {{ $issuerKind }}, group: cert-manager.io }
 ---
 apiVersion: cert-manager.io/v1
-kind: Issuer
+kind: {{ $issuerKind }}
 metadata:
   name: {{ $fullname }}-ca
-  namespace: {{ include "buildkit-operator.buildsNamespace" . }}
+  {{- if not $clusterScoped }}
+  namespace: {{ $caNamespace }}
+  {{- end }}
   labels:
     {{- include "buildkit-operator.labels" . | nindent 4 }}
 spec:
@@ -90,4 +101,24 @@ spec:
   usages: [client auth, key encipherment, digital signature]
   dnsNames: [client]
   issuerRef: { name: {{ $issuerName }}, kind: {{ $issuerKind }}, group: cert-manager.io }
+{{- range .Values.certs.extraClientNamespaces }}
+---
+# --- client cert for a consumer namespace (e.g. an in-cluster CI runner) -------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-client
+  namespace: {{ . }}
+  labels:
+    {{- include "buildkit-operator.labels" $ | nindent 4 }}
+spec:
+  secretName: {{ $.Values.certs.clientSecretName }}
+  duration: {{ $cm.duration }}
+  renewBefore: {{ $cm.renewBefore }}
+  commonName: client
+  privateKey: { algorithm: ECDSA, size: 256 }
+  usages: [client auth, key encipherment, digital signature]
+  dnsNames: [client]
+  issuerRef: { name: {{ $issuerName }}, kind: {{ $issuerKind }}, group: cert-manager.io }
+{{- end }}
 {{- end }}

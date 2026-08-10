@@ -322,6 +322,12 @@ ingress:
 certs:
   daemonSecretName: buildkit-daemon-certs
   clientSecretName: buildkit-client-certs
+  # Namespaces that should ALSO get a client Secret of the same name, issued off the same CA. For an
+  # in-cluster CI (a runner in its own namespace) this replaces copying the Secret around: each
+  # namespace mints its own leaf, so rotation is cert-manager's job and no copy can go stale.
+  # Requires a cluster-scoped issuer — set certManager.ca.clusterIssuer=true, or point
+  # certManager.issuerRef at a ClusterIssuer.
+  extraClientNamespaces: []
 
 # Optional: let cert-manager issue the mTLS material instead of deploy/cert/create-certs.sh (mkcert).
 # When enabled, the chart renders Certificate resources for the daemon + client Secrets above and buildd
@@ -342,6 +348,12 @@ certManager:
   ca:
     create: false
     duration: 87600h # 10y CA root
+    # Bootstrap the CA as a ClusterIssuer rather than a namespaced Issuer, so leaf certs can be issued
+    # into other namespaces (see certs.extraClientNamespaces). The CA Secret then has to live in
+    # cert-manager's cluster resource namespace, since that is the only place a ClusterIssuer reads it.
+    clusterIssuer: false
+    # cert-manager's --cluster-resource-namespace. Only used when clusterIssuer is true.
+    namespace: cert-manager
 
 # Optional bearer-token auth for the buildd /route API. REQUIRED if you expose the buildd Service
 # off-cluster (service.type: LoadBalancer) — otherwise anyone reaching /route can spin up daemons.
