@@ -66,6 +66,39 @@ daemon reads (no daemon change). With no PKI, `certManager.ca.create=true` boots
 set) `*.<gateway.host>`. Distribute the generated **client** Secret's `tls.crt`/`tls.key`/`ca.crt` to CI
 (the Action's `cert`/`key`/`ca`).
 
+#### Client certs for an in-cluster CI
+
+A runner that lives in the cluster needs the client material in **its own** namespace, and a namespaced
+Issuer cannot be referenced from another namespace. Rather than copying the Secret around — which goes
+stale on every renewal — bootstrap the CA cluster-scoped and let each consumer namespace mint its own
+leaf off it:
+
+```yaml
+certManager:
+  enabled: true
+  ca:
+    create: true
+    clusterIssuer: true      # CA becomes a ClusterIssuer
+    namespace: cert-manager  # cert-manager's --cluster-resource-namespace, where it reads the CA Secret
+certs:
+  extraClientNamespaces:
+    - forgejo-runner         # gets its own Certificate -> certs.clientSecretName
+```
+
+Two things this buys you, and one it costs:
+
+- **Security.** A `ClusterIssuer` is signable from anywhere: any principal that can create a
+  `Certificate` in any namespace can mint a valid **client auth** cert and, since the daemon
+  authenticates on the CA alone, reach any daemon it can route to. On a multi-tenant cluster, restrict
+  `certificates.cert-manager.io/create`, or keep the namespaced Issuer and accept the copy.
+- **Not a hot switch.** Flipping `clusterIssuer` on an existing install moves the CA Certificate to
+  another namespace, so cert-manager generates a **new** self-signed CA and re-signs every leaf. Daemons
+  read `ca.pem` once at startup, so until they restart they reject the new client certs (and clients
+  holding the old CA reject them). Either do it during a maintenance window and
+  `kubectl -n <builds> rollout restart statefulset -l app.kubernetes.io/component=buildkitd`
+  right after, or pre-create the CA Secret under the same name in `certManager.ca.namespace` so
+  cert-manager adopts the existing CA instead of minting one.
+
 ## Kyverno exemption
 
 On a platform that mutates pods to `allowPrivilegeEscalation: false` (fabrique's Kyverno
@@ -172,7 +205,8 @@ restart. Roll back with `helm rollback buildkit-operator -n buildkit-operator`.
 ## Certificate rotation
 
 - **cert-manager** (`certManager.enabled=true`): leaf certs auto-renew at `renewBefore` (default 30d
-  before a 1y expiry); nothing to do. Daemons pick up the rotated Secret on their next restart.
+  before a 1y expiry); nothing to do. Daemons pick up the rotated Secret on their next restart. Leaves
+  minted into `certs.extraClientNamespaces` renew on the same schedule, each in its own namespace.
 - **mkcert / openssl** (`create-certs.sh`): no auto-renewal — regenerate and re-apply before expiry,
   then restart daemons so they re-read the cert:
   ```bash

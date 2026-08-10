@@ -351,6 +351,14 @@ certManager:
     # Bootstrap the CA as a ClusterIssuer rather than a namespaced Issuer, so leaf certs can be issued
     # into other namespaces (see certs.extraClientNamespaces). The CA Secret then has to live in
     # cert-manager's cluster resource namespace, since that is the only place a ClusterIssuer reads it.
+    #
+    # SECURITY: a ClusterIssuer is signable from anywhere — any principal that can create a Certificate
+    # in any namespace can mint a valid client-auth cert, and the daemon authenticates on the CA alone.
+    # On a multi-tenant cluster, restrict certificates.cert-manager.io/create accordingly.
+    #
+    # NOT A HOT SWITCH: flipping this on an existing install moves the CA Certificate to another
+    # namespace, so cert-manager mints a NEW CA and re-signs every leaf. Daemons read ca.pem once at
+    # startup and will reject the new client certs until restarted. See docs/operations.md.
     clusterIssuer: false
     # cert-manager's --cluster-resource-namespace. Only used when clusterIssuer is true.
     namespace: cert-manager
