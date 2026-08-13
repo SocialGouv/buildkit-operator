@@ -52,6 +52,7 @@ spec:
             {{- end }}
             - --buildkitd-configmap={{ include "buildkit-operator.fullname" . }}-buildkitd-config
             - --default-storage-class={{ .Values.defaultStorageClass }}
+            - --daemon-service-account={{ .Values.daemonServiceAccount }}
             - --snapshot-class={{ .Values.snapshotClassName }}
             - --keep-snapshots={{ .Values.snapshots.keep }}
             - --max-cold-starts={{ .Values.maxColdStarts }}
