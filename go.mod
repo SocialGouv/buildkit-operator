@@ -2,7 +2,7 @@ module github.com/socialgouv/buildkit-operator
 
 go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	github.com/coreos/go-oidc/v3 v3.19.0
