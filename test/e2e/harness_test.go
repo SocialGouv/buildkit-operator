@@ -54,13 +54,34 @@ func env(k, def string) string {
 }
 
 func TestMain(m *testing.M) {
+	// Reaching here means the caller passed `-tags e2e`, i.e. asked for this
+	// suite. A missing URL is then a misconfiguration, not a reason to report
+	// success: exiting 0 with nothing executed is indistinguishable from a
+	// green run, and `task test:e2e` did exactly that. BKO_E2E_SKIP is the
+	// explicit way to ask for a no-op, and it says so on the way out.
 	c.buildURL = os.Getenv("BKO_E2E_BUILDD_URL")
-	if c.buildURL == "" {
-		fmt.Println("BKO_E2E_BUILDD_URL unset — skipping the e2e suite")
+	if os.Getenv("BKO_E2E_SKIP") != "" {
+		fmt.Println("BKO_E2E_SKIP set — the e2e suite ran NOTHING, on purpose")
 		os.Exit(0)
 	}
+	if c.buildURL == "" {
+		fmt.Fprintln(os.Stderr, "BKO_E2E_BUILDD_URL unset: the e2e suite cannot run. "+
+			"Set it (see test/e2e/README.md), or set BKO_E2E_SKIP=1 to ask for a no-op explicitly.")
+		os.Exit(1)
+	}
 	c.gatewayHost = os.Getenv("BKO_E2E_GATEWAY_HOST")
-	c.context = env("BKO_E2E_CONTEXT", "ovh-prod")
+	// Defaults to the DEV cluster. These tests create daemons, read a Secret and
+	// run real builds; CLAUDE.md pins ovh-dev plus a dedicated namespace, and
+	// "never target prod for tests". Production stays reachable — deliberately,
+	// for the one case where the thing under test only exists there — but only
+	// by naming it AND saying so a second time, so it cannot be inherited from a
+	// stale shell.
+	c.context = env("BKO_E2E_CONTEXT", "ovh-dev")
+	if strings.Contains(c.context, "prod") && os.Getenv("BKO_E2E_ALLOW_PROD") == "" {
+		fmt.Fprintf(os.Stderr, "BKO_E2E_CONTEXT=%q targets production and this suite mutates the cluster. "+
+			"Set BKO_E2E_ALLOW_PROD=1 if that is really what you want.\n", c.context)
+		os.Exit(1)
+	}
 	c.operatorNS = env("BKO_E2E_OPERATOR_NS", "buildkit-operator")
 	c.buildsNS = env("BKO_E2E_BUILDS_NS", "buildkit-builds")
 	c.authSecret = env("BKO_E2E_AUTH_SECRET", "buildkit-operator-auth")

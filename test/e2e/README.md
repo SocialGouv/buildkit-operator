@@ -6,8 +6,17 @@ resulting cluster state. They cover every shipped feature: routing, warm cache, 
 mounts, **untrusted-fork isolation in a Kata microVM**, SLSA provenance + SBOM, `/prewarm` readiness,
 durable VolumeSnapshots, Prometheus metrics, HA, and scale-to-zero.
 
-They are gated behind the `e2e` build tag **and** skip unless `BKO_E2E_BUILDD_URL` is set, so
-`go test ./...` (unit) never runs them.
+They are gated behind the `e2e` build tag, so `go test ./...` (unit) never runs them.
+
+Passing `-tags e2e` **is** the request to run them: a missing `BKO_E2E_BUILDD_URL` then **fails**
+rather than exiting 0 with nothing executed — a suite that reports success without running is
+indistinguishable from a green one. To ask for a no-op on purpose, set `BKO_E2E_SKIP=1`; it says
+so on the way out (`task test:e2e` passes `-v`, so the line is visible).
+
+These tests **mutate a live cluster** — they create daemons, run real builds and read a Secret. The
+default context is therefore `ovh-dev`. A context whose name contains `prod` is refused unless
+`BKO_E2E_ALLOW_PROD=1` is also set: naming production once could be a stale shell, twice is a
+decision.
 
 ## Requirements
 
@@ -22,7 +31,9 @@ They are gated behind the `e2e` build tag **and** skip unless `BKO_E2E_BUILDD_UR
 |---|---|---|---|
 | `BKO_E2E_BUILDD_URL` | ✅ | — | buildd `/route` API (e.g. `https://buildd.bko.fabrique.social.gouv.fr`) |
 | `KUBECONFIG` | ✅ | — | kubeconfig used for the cluster assertions |
-| `BKO_E2E_CONTEXT` | | `ovh-prod` | kube context to use |
+| `BKO_E2E_CONTEXT` | | `ovh-dev` | kube context to use; a name containing `prod` also needs `BKO_E2E_ALLOW_PROD` |
+| `BKO_E2E_ALLOW_PROD` | | — | the second, explicit yes required to target a production context |
+| `BKO_E2E_SKIP` | | — | run nothing and exit 0, on purpose (says so) |
 | `BKO_E2E_GATEWAY_HOST` | | — | off-cluster SNI host (e.g. `bko.fabrique.social.gouv.fr`) |
 | `BKO_E2E_OPERATOR_NS` | | `buildkit-operator` | control-plane namespace |
 | `BKO_E2E_BUILDS_NS` | | `buildkit-builds` | daemons namespace |
@@ -36,6 +47,7 @@ The bearer token is read from the cluster Secret, so you don't pass it by hand.
 
 ```sh
 export KUBECONFIG=/path/to/kubeconfig
+export BKO_E2E_CONTEXT=ovh-dev   # the default; named here because it is the choice that matters
 export BKO_E2E_BUILDD_URL=https://buildd.bko.fabrique.social.gouv.fr
 export BKO_E2E_GATEWAY_HOST=bko.fabrique.social.gouv.fr
 # optional: exercise the supply-chain push test
