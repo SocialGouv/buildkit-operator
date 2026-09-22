@@ -10,9 +10,17 @@
   // Cooldown: a release must have been public for 14 days before it becomes a PR. Catches the
   // window in which a compromised or botched publish is yanked, and keeps the update stream from
   // tracking every point release. `strict` makes Renovate WAIT instead of opening a PR whose
-  // internal check is still pending, so a branch never exists before the delay has elapsed.
+  // internal check is still pending — it withholds the PULL REQUEST, not the branch: measured on
+  // 2026-09-22, four `renovate/*` branches existed here with no PR attached.
   minimumReleaseAge: "14 days",
   internalChecksFilter: "strict",
+  // The cooldown above is deliberate, but it made the update stream INVISIBLE: a dry run on
+  // 2026-09-22 found 56 flattened updates while three consecutive scheduled runs had produced
+  // zero PRs, and the repository had never carried a single issue — so there was no dashboard to
+  // read and "nothing to do" was indistinguishable from "held silently". The org preset sets
+  // `dependencyDashboardAutoclose: true`; keeping the dashboard open is what makes the held
+  // queue legible.
+  dependencyDashboardAutoclose: false,
   // A known CVE is the one case where waiting is the greater risk: security updates bypass the
   // cooldown entirely. Two independent sources feed that branch: osv.dev (direct dependencies,
   // needs nothing beyond this flag) and GitHub's own Dependabot alerts, which require the
