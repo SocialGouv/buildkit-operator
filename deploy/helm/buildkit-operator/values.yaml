@@ -64,6 +64,18 @@ buildkit:
 # empty for the cluster default).
 defaultStorageClass: ""
 
+# ServiceAccount the per-project daemon pods run as, in the BUILDS namespace (the chart creates it —
+# with no RBAC and no API token, since buildkitd never calls the Kubernetes API). Empty keeps today's
+# behaviour: the daemons run as that namespace's `default` ServiceAccount.
+#
+# Set it on any cloud where credentials are bound to a ServiceAccount (EKS Pod Identity / IRSA, GKE
+# Workload Identity, Azure Workload Identity). The daemons are the workloads that need a cloud identity
+# — they read/write the S3 cold cache — but binding it to `default` grants it to EVERY pod in the builds
+# namespace, including this chart's own optional workloads (the pull-through mirror, the S3 lifecycle
+# hook Job). Naming a dedicated SA here scopes that identity to the daemons alone. The daemon
+# StatefulSets are reconciled by buildd at runtime, so this is the only place to set it.
+daemonServiceAccount: ""
+
 # The other baseline defaults (cacheVolumeGi, tier, idleTimeoutSec, securityProfile) come from the
 # CRD's +kubebuilder:default markers. Two chart-level surfaces refine them:
 #

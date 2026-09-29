@@ -54,6 +54,7 @@ func main() {
 	flag.BoolVar(&cfg.CertManagerCerts, "cert-manager-certs", false, "the daemon certs Secret is cert-manager-issued (keys tls.crt/tls.key/ca.crt); remap them at mount to the .pem filenames buildkitd reads")
 	flag.StringVar(&cfg.BuildkitdConfigMap, "buildkitd-configmap", "buildkitd-config", "ConfigMap holding buildkitd.toml")
 	flag.StringVar(&cfg.DefaultStorageClass, "default-storage-class", "", "default StorageClass for cache PVCs when a BuildProject sets none (empty = the cluster's default StorageClass; OVH MKS: csi-cinder-high-speed-gen2; EKS: e.g. ebs-gp3)")
+	flag.StringVar(&cfg.DaemonServiceAccount, "daemon-service-account", "", "ServiceAccount the per-project daemon pods run as (empty = the builds namespace's default SA). Set it to scope cloud workload-identity credentials — EKS Pod Identity/IRSA, GKE/Azure Workload Identity — to the daemons instead of sharing them with everything else in that namespace")
 	flag.BoolVar(&cfg.Companion, "companion", true, "include the companion sidecar in builder pods")
 	requireBuildID := flag.Bool("require-build-id", false, "reject a /complete that carries no buildId. The id is minted per build by /route, so requiring it stops any authenticated caller from releasing ANOTHER project's builds by key alone. Turn it on once every client is new enough to echo it back")
 	flag.StringVar(&cfg.SandboxRuntimeClass, "sandbox-runtime-class", "", "RuntimeClass applied to UNTRUSTED fork daemons only (e.g. kata-clh / sysbox-runc); empty = the default runtime")
