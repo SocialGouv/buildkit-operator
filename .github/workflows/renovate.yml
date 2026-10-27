@@ -15,7 +15,7 @@ name: renovate
 # .github/workflows/**, et un push d'App sans cette permission est refusé par GitHub.
 on:
   schedule:
-    - cron: "0 3 * * 1" # lundi 03:00 UTC
+    - cron: "23 22 * * *" # daily, 22:23 UTC off-peak
   workflow_dispatch:
     inputs:
       dryRun:
