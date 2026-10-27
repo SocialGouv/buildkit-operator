@@ -32,6 +32,8 @@ image:
   # Empty = pin to the chart appVersion (an immutable release tag) for reproducible deploys.
   # Override only for local/dev images (e.g. tag: dev). Never ship a floating tag to prod.
   tag: ""
+  # Immutable pin: the reference becomes repo:tag@<digest> (the multi-arch index cosign signed). Empty = tag-only.
+  digest: ""
   pullPolicy: IfNotPresent
 
 # --- companion: the inode-GC backstop sidecar -------------------------------
@@ -47,6 +49,8 @@ companion:
     # Empty = pin to the chart appVersion. The companion bundles buildctl and must stay in lockstep
     # with the buildd release (its buildctl talks to the daemon); keep it on the same version.
     tag: ""
+    # Immutable pin: the reference becomes repo:tag@<digest> (the multi-arch index cosign signed). Empty = tag-only.
+    digest: ""
     pullPolicy: IfNotPresent
 
 # --- buildkitd: the per-project daemon image --------------------------------
@@ -262,6 +266,8 @@ gateway:
     # Empty = pin to the chart appVersion (immutable). The gateway is the public-facing LB front; never
     # ship it on a floating tag.
     tag: ""
+    # Immutable pin: the reference becomes repo:tag@<digest> (the multi-arch index cosign signed). Empty = tag-only.
+    digest: ""
   # Cap concurrent connections the public-facing gateway accepts (per replica), BEFORE mTLS auth — so an
   # unauthenticated TCP flood can't exhaust gateway resources. Each build holds one long-lived
   # connection, so size this above the expected concurrent-build peak (with 2 replicas the cluster cap is

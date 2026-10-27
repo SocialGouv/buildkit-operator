@@ -68,3 +68,13 @@ app.kubernetes.io/name: {{ include "buildkit-operator.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: buildd
 {{- end -}}
+
+{{- /* One image reference for a component image map: repo:tag (tag defaults to the chart
+     appVersion) with an optional immutable @digest. */ -}}
+{{- define "buildkit-operator.imageRef" -}}
+{{- $ref := printf "%s:%s" .image.repository (.image.tag | default .root.Chart.AppVersion) -}}
+{{- if .image.digest -}}
+{{- $ref = printf "%s@%s" $ref .image.digest -}}
+{{- end -}}
+{{- $ref -}}
+{{- end -}}
