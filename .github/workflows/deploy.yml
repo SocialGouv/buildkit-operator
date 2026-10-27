@@ -12,7 +12,10 @@ on:
     types: [completed]
     branches: [main]
 
-permissions: {}
+permissions:
+  contents: read
+  packages: read # read this repo's GHCR packages (the sha-<sha> digests)
+  id-token: write # the token-bureau exchange mints the job's OIDC token
 
 concurrency:
   group: deploy
@@ -35,13 +38,14 @@ jobs:
       - name: Resolve the digests this images run published
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
           short="sha-${SHA::7}"
           for c in buildd companion gateway; do
-            d=$(gh api "/orgs/SocialGouv/packages/container/buildkit-operator-$c/versions"               --jq "[.[] | select(.metadata.container.tags | index(\"$short\"))][0].name")
+            d=$(gh api "/orgs/SocialGouv/packages/container/buildkit-operator-$c/versions" --jq "[.[] | select(.metadata.container.tags | index(\"$short\"))][0].name")
             test -n "$d" || { echo "no $short digest published for $c" >&2; exit 1; }
-            echo "${c}_digest=$d" >> "$GITHUB_ENV"
+            echo "${c^^}_DIGEST=$d" >> "$GITHUB_ENV"
           done
 
       - name: Clone the GitOps repo
@@ -50,6 +54,11 @@ jobs:
 
       - name: Pin the chart commit and the three image digests
         uses: mikefarah/yq@bbdd97482f2d439126582a59689eb1c855944955 # v4.44.3
+        env:
+          SHA: ${{ env.SHA }}
+          BUILDD_DIGEST: ${{ env.BUILDD_DIGEST }}
+          COMPANION_DIGEST: ${{ env.COMPANION_DIGEST }}
+          GATEWAY_DIGEST: ${{ env.GATEWAY_DIGEST }}
         with:
           cmd: |
             yq -i '.spec.source.targetRevision = strenv(SHA)' gitops/apps/buildkit-operator-prod.yaml
@@ -57,9 +66,13 @@ jobs:
             yq -i '.spec.source.helm.valuesObject.companion.image.digest = strenv(COMPANION_DIGEST)' gitops/apps/buildkit-operator-prod.yaml
             yq -i '.spec.source.helm.valuesObject.gateway.image.digest = strenv(GATEWAY_DIGEST)' gitops/apps/buildkit-operator-prod.yaml
 
+      # Fail closed: a silently-empty pin would land prod on a stale image (Re35b4d).
+      - name: Assert the pins landed
+        run: |
+          grep -q "targetRevision: $SHA" gitops/apps/buildkit-operator-prod.yaml
+          test "$(grep -c 'digest: sha256:' gitops/apps/buildkit-operator-prod.yaml)" -eq 3
+
       - name: Commit and push
-        env:
-          SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           cd gitops
           git config user.name "buildkit-operator-deploy[bot]"
