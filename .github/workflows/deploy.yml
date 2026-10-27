@@ -1,0 +1,70 @@
+name: deploy
+
+# After a green images build on main, bump the GitOps repo (buildkit-operator-gitops):
+# targetRevision = this merge SHA, and the per-component image digests published by
+# that very run (immutable multi-arch indexes, cosign-signed by images.yml).
+# ArgoCD (syncPolicy automated on buildkit-operator-prod) then rolls prod.
+# Rollback: `argocd app rollback buildkit-operator-prod` — then revert the bump
+# commit in the GitOps repo so autosync does not re-apply it.
+on:
+  workflow_run:
+    workflows: [images]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: SocialGouv/token-bureau@84d3a5f6525f1e86163602fc2e38f767985f450e # v0.0.9
+        id: token
+        with:
+          token-bureau-url: https://token-bureau.fabrique.social.gouv.fr
+          audience: socialgouv
+          permissions: '{"contents": "write"}'
+
+      - name: Resolve the digests this images run published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          short="sha-${SHA::7}"
+          for c in buildd companion gateway; do
+            d=$(gh api "/orgs/SocialGouv/packages/container/buildkit-operator-$c/versions"               --jq "[.[] | select(.metadata.container.tags | index(\"$short\"))][0].name")
+            test -n "$d" || { echo "no $short digest published for $c" >&2; exit 1; }
+            echo "${c}_digest=$d" >> "$GITHUB_ENV"
+          done
+
+      - name: Clone the GitOps repo
+        run: |
+          git clone "https://x-access-token:${{ steps.token.outputs.token }}@github.com/socialgouv/buildkit-operator-gitops.git" gitops
+
+      - name: Pin the chart commit and the three image digests
+        uses: mikefarah/yq@bbdd97482f2d439126582a59689eb1c855944955 # v4.44.3
+        with:
+          cmd: |
+            yq -i '.spec.source.targetRevision = strenv(SHA)' gitops/apps/buildkit-operator-prod.yaml
+            yq -i '.spec.source.helm.valuesObject.image.digest = strenv(BUILDD_DIGEST)' gitops/apps/buildkit-operator-prod.yaml
+            yq -i '.spec.source.helm.valuesObject.companion.image.digest = strenv(COMPANION_DIGEST)' gitops/apps/buildkit-operator-prod.yaml
+            yq -i '.spec.source.helm.valuesObject.gateway.image.digest = strenv(GATEWAY_DIGEST)' gitops/apps/buildkit-operator-prod.yaml
+
+      - name: Commit and push
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          cd gitops
+          git config user.name "buildkit-operator-deploy[bot]"
+          git config user.email "${{ github.repository_owner }}-bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo "nothing to bump"; exit 0; }
+          git commit -m "deploy: ${SHA::7} — buildd@${BUILDD_DIGEST::12} companion@${COMPANION_DIGEST::12} gateway@${GATEWAY_DIGEST::12}"
+          git push
