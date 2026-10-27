@@ -44,7 +44,7 @@ jobs:
           short="sha-${SHA::7}"
           for c in buildd companion gateway; do
             d=$(gh api "/orgs/SocialGouv/packages/container/buildkit-operator-$c/versions" --jq "[.[] | select(.metadata.container.tags | index(\"$short\"))][0].name")
-            test -n "$d" || { echo "no $short digest published for $c" >&2; exit 1; }
+            test -n "$d" && test "$d" != "null" || { echo "no $short digest published for $c" >&2; exit 1; }
             echo "${c^^}_DIGEST=$d" >> "$GITHUB_ENV"
           done
 
