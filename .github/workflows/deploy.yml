@@ -15,7 +15,6 @@ on:
 permissions:
   contents: read
   packages: read # read this repo's GHCR packages (the sha-<sha> digests)
-  id-token: write # the token-bureau exchange mints the job's OIDC token
 
 concurrency:
   group: deploy
@@ -28,13 +27,6 @@ jobs:
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     steps:
-      - uses: SocialGouv/token-bureau@84d3a5f6525f1e86163602fc2e38f767985f450e # v0.0.9
-        id: token
-        with:
-          token-bureau-url: https://token-bureau.fabrique.social.gouv.fr
-          audience: socialgouv
-          permissions: '{"contents": "write"}'
-
       - name: Resolve the digests this images run published
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,7 +42,7 @@ jobs:
 
       - name: Clone the GitOps repo
         run: |
-          git clone "https://x-access-token:${{ steps.token.outputs.token }}@github.com/socialgouv/buildkit-operator-gitops.git" gitops
+          git clone "https://x-access-token:${{ secrets.DEPLOY_REPO_TOKEN }}@github.com/socialgouv/buildkit-operator-gitops.git" gitops
 
       - name: Pin the chart commit and the three image digests
         uses: mikefarah/yq@bbdd97482f2d439126582a59689eb1c855944955 # v4.44.3
