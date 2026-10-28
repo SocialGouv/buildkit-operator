@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 GOARCH=$TARGETARCH GOFLAGS=-trimpath go build -ldflags="-s -w"
 # image, so this stage must resolve to the TARGET arch.
 FROM moby/buildkit:${BUILDKIT_VERSION} AS buildkit
 
-FROM gcr.io/distroless/static:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6
+FROM gcr.io/distroless/static:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 COPY --from=build /out/companion /companion
 COPY --from=buildkit /usr/bin/buildctl /usr/bin/buildctl
 USER 65532:65532
