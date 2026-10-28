@@ -54,6 +54,11 @@ jobs:
           echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > ~/.ssh/known_hosts
           echo "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2I0iQU8Hy6Rq4MCw==" >> ~/.ssh/known_hosts
           git clone git@github.com:socialgouv/buildkit-operator-gitops.git gitops
+          # Re-exported for the SUBSEQUENT steps (commit and push): a GITHUB_ENV
+          # write only reaches the next step, and the step-scoped env above only
+          # covers this one.
+          echo "GIT_SSH_COMMAND=ssh -i ~/.ssh/deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts -o IdentitiesOnly=yes" >> "$GITHUB_ENV"
+
 
       - name: Pin the chart commit and the three image digests
         uses: mikefarah/yq@bbdd97482f2d439126582a59689eb1c855944955 # v4.44.3
