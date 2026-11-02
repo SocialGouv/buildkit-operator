@@ -1,51 +1,41 @@
 {
   "lockfile_version": "1",
   "packages": {
-    "cosign@3.1.1": {
-      "last_modified": "2026-06-16T10:57:20Z",
-      "resolved": "github:NixOS/nixpkgs/3e41b24abd260e8f71dbe2f5737d24122f972158#cosign",
+    "cosign@3.1.3": {
+      "last_modified": "2026-11-02T01:28:21Z",
+      "resolved": "github:NixOS/nixpkgs/5c9de89ec55bff981cb8da1a4ee92b10f1438ffc#cosign",
       "source": "devbox-search",
-      "version": "3.1.1",
+      "version": "3.1.3",
       "systems": {
         "aarch64-darwin": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/hf0sflphzk4wx0haql10brispn5vgcm5-cosign-3.1.1",
+              "path": "/nix/store/062wrb6g8jynsha18k2x5nigkcnvfiq6-cosign-3.1.3",
               "default": true
             }
           ],
-          "store_path": "/nix/store/hf0sflphzk4wx0haql10brispn5vgcm5-cosign-3.1.1"
+          "store_path": "/nix/store/062wrb6g8jynsha18k2x5nigkcnvfiq6-cosign-3.1.3"
         },
         "aarch64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/a5gxj7ny4c70airiii6f6r18lwih61xz-cosign-3.1.1",
+              "path": "/nix/store/q9ql0cpysrb0q31rrg7l2w4yc69q0h90-cosign-3.1.3",
               "default": true
             }
           ],
-          "store_path": "/nix/store/a5gxj7ny4c70airiii6f6r18lwih61xz-cosign-3.1.1"
-        },
-        "x86_64-darwin": {
-          "outputs": [
-            {
-              "name": "out",
-              "path": "/nix/store/m0vl73s2rzgxqc2igks6x9f0nq6kdpf9-cosign-3.1.1",
-              "default": true
-            }
-          ],
-          "store_path": "/nix/store/m0vl73s2rzgxqc2igks6x9f0nq6kdpf9-cosign-3.1.1"
+          "store_path": "/nix/store/q9ql0cpysrb0q31rrg7l2w4yc69q0h90-cosign-3.1.3"
         },
         "x86_64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/y0dhhhn4m35rvs4c36bj7d93l4mviq3h-cosign-3.1.1",
+              "path": "/nix/store/8ps0if61n57vj2jyhp2njlzflavippjq-cosign-3.1.3",
               "default": true
             }
           ],
-          "store_path": "/nix/store/y0dhhhn4m35rvs4c36bj7d93l4mviq3h-cosign-3.1.1"
+          "store_path": "/nix/store/8ps0if61n57vj2jyhp2njlzflavippjq-cosign-3.1.3"
         }
       }
     },
@@ -516,7 +506,7 @@
     },
     "nodejs@24": {
       "last_modified": "2025-12-29T16:45:58Z",
-      "plugin_version": "0.0.4",
+      "plugin_version": "0.0.5",
       "resolved": "github:NixOS/nixpkgs/346dd96ad74dc4457a9db9de4f4f57dab2e5731d#nodejs_24",
       "source": "devbox-search",
       "version": "24.12.0",
