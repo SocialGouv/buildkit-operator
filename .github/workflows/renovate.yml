@@ -31,6 +31,7 @@ on:
 permissions:
   contents: write # branches de mise à jour
   pull-requests: write # ouverture/màj des PR
+  statuses: write # the renovate/stability-days commit status on held branches; without it the run aborts ("Resource not accessible by integration")
 
 concurrency:
   group: renovate
