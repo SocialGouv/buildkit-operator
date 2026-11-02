@@ -32,10 +32,6 @@ permissions:
   contents: write # branches de mise à jour
   pull-requests: write # ouverture/màj des PR
 
-concurrency:
-  group: renovate
-  cancel-in-progress: false
-
 jobs:
   renovate:
     runs-on: ubuntu-latest
