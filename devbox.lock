@@ -39,51 +39,41 @@
         }
       }
     },
-    "forgejo-cli@0.5.0": {
-      "last_modified": "2026-06-08T15:01:26Z",
-      "resolved": "github:NixOS/nixpkgs/8c3cede7ddc26bd659d2d383b5610efbd2c7a16e#forgejo-cli",
+    "forgejo-cli@0.6.0": {
+      "last_modified": "2026-10-17T03:39:59Z",
+      "resolved": "github:NixOS/nixpkgs/7a6522c868711d06e3a520bbcdfafe9806f4337f#forgejo-cli",
       "source": "devbox-search",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "systems": {
         "aarch64-darwin": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/dvxfcpmak98ghz5l4117ajdpb8mb78mv-forgejo-cli-0.5.0",
+              "path": "/nix/store/1ybnj9lljwk0pq5ipw1grsya335h0zgv-forgejo-cli-0.6.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/dvxfcpmak98ghz5l4117ajdpb8mb78mv-forgejo-cli-0.5.0"
+          "store_path": "/nix/store/1ybnj9lljwk0pq5ipw1grsya335h0zgv-forgejo-cli-0.6.0"
         },
         "aarch64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/5z5zyjj130j7d9iygavadfbn56cibp2k-forgejo-cli-0.5.0",
+              "path": "/nix/store/rymc3m7rj9bgsvv7fnx39qgah1zz2z0h-forgejo-cli-0.6.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/5z5zyjj130j7d9iygavadfbn56cibp2k-forgejo-cli-0.5.0"
-        },
-        "x86_64-darwin": {
-          "outputs": [
-            {
-              "name": "out",
-              "path": "/nix/store/2sbg9g5sjnr0nkk4ydpgp4wm5qdkp3rg-forgejo-cli-0.5.0",
-              "default": true
-            }
-          ],
-          "store_path": "/nix/store/2sbg9g5sjnr0nkk4ydpgp4wm5qdkp3rg-forgejo-cli-0.5.0"
+          "store_path": "/nix/store/rymc3m7rj9bgsvv7fnx39qgah1zz2z0h-forgejo-cli-0.6.0"
         },
         "x86_64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/bxxrm0f4vb0wnmwvisxzfgap5kkylww1-forgejo-cli-0.5.0",
+              "path": "/nix/store/n05r1c3ksd25cwx6y5s735h32k4qnv3m-forgejo-cli-0.6.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/bxxrm0f4vb0wnmwvisxzfgap5kkylww1-forgejo-cli-0.5.0"
+          "store_path": "/nix/store/n05r1c3ksd25cwx6y5s735h32k4qnv3m-forgejo-cli-0.6.0"
         }
       }
     },
