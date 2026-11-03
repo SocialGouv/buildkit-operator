@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.17.3/.schema/devbox.schema.json",
   "packages": [
     "go@1.26",
-    "kubectl@1.36.2",
+    "kubectl@1.37.1",
     "kubernetes-helm@4.2.1",
     "jq@1.8.2",
     "cosign@3.1.1",
