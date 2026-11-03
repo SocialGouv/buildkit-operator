@@ -60,3 +60,26 @@ devbox run -- task test:e2e -- -run TestUntrustedKataIsolation
 
 Expect **10–20 min**: several subtests cold-start a fresh daemon (PVC provision), and the Kata fork
 boots a microVM under nested virt. Each subtest cleans up the BuildProjects (and snapshots) it creates.
+
+## CI status — who runs this suite
+
+**No workflow under `.github/workflows/` carries the `e2e` build tag today** (`grep -rn e2e
+.github/workflows` finds only image/release concerns): the layer is maintained here and in
+`task test:e2e`, and nothing ever proves it in CI. That is the third defect of
+[SocialGouv/iterion#1592](https://github.com/SocialGouv/iterion/issues/1592) — the first two (the
+silent exit 0, the `ovh-prod` default) are fixed in the harness; this one is a decision, not a
+one-liner.
+
+Why no job is added alongside that fix: the suite needs **live credentials** — a kubeconfig context
+for `ovh-dev`, the client mTLS certs, a reachable buildd — and wiring secrets for a scheduled job
+that mutates a shared cluster is an operator decision, not a drive-by in a fix PR.
+
+Until that decision lands, the convention is:
+
+- A change that leans on this layer — a dependency bump the e2e layer is meant to de-risk, a
+  routing/lifecycle change — must come with a **recorded green run**: `task test:e2e` against
+  `ovh-dev`, result pasted in the PR body or appended to `docs/validation-report.md` (the repo's
+  existing durable-record convention).
+- The candidate end states, per the ticket: a scheduled workflow against `ovh-dev`, or a durable,
+  dated record of the last green run. Today there is neither, so treat this layer as **unproven in
+  CI** when weighing a merge on its strength.
