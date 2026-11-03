@@ -14,8 +14,20 @@ name: renovate
 # humaine. L'App a besoin de `workflows: write` : helpers:pinGitHubActionDigests réécrit
 # .github/workflows/**, et un push d'App sans cette permission est refusé par GitHub.
 on:
+  # GitHub drops most scheduled triggers here: the hourly cron at :23 materialised as 3-4 runs a
+  # day (measured 2026-11-01..03, gaps of up to 11 h). A denser schedule leaves more survivors;
+  # CVE alerts bypass the 14-day cooldown, so each surviving pass is a CVE check.
   schedule:
-    - cron: "23 * * * *" # hourly at :23 (off-peak minute); CVE alerts bypass the 14-day cooldown, so they are discovered within the hour
+    - cron: "8,23,38,53 * * * *" # every 15 min, off the :00/:30 peaks
+  # A merge on main leaves every other open update PR behind the strict ruleset, and only a
+  # pass rebases them: it starts at the merge instead of at the next surviving cron.
+  push:
+    branches: [main]
+  # Ticking a box on the Dependency Dashboard asks for a pass (open a held PR, rebase one): it
+  # starts one now. Renovate rewrites the dashboard itself on every pass, so the job ignores
+  # edits made by a bot — otherwise each pass would trigger the next.
+  issues:
+    types: [edited]
   workflow_dispatch:
     inputs:
       dryRun:
@@ -32,8 +44,16 @@ permissions:
   contents: write # branches de mise à jour
   pull-requests: write # ouverture/màj des PR
 
+# One pass at a time: a burst of triggers (a merge, a cron, a tick) collapses into the running
+# pass plus one pending, and a pass re-reads the whole repository anyway. Removing this group
+# (#36) did not raise the cadence — the dropping is GitHub's — so the serialisation is back.
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
 jobs:
   renovate:
+    if: github.event_name != 'issues' || (github.event.issue.title == 'Dependency Dashboard' && github.event.sender.type != 'Bot')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
