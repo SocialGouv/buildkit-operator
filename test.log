@@ -1,0 +1,18 @@
+Info: New devbox available: 0.18.0 -> v0.19.0. Please run `devbox version update`.
+Info: Running script "go" on /tmp/iterion/repos/01a1a21a-b86e-79ef-9bca-456a61d5a8fc
+Preparing pnpm@11.11.0 for immediate activation...
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.
+ok  	github.com/socialgouv/buildkit-operator/api/v1alpha1	1.052s	coverage: 54.8% of statements
+ok  	github.com/socialgouv/buildkit-operator/cmd/build	9.614s	coverage: 89.5% of statements
+ok  	github.com/socialgouv/buildkit-operator/cmd/buildd	6.548s	coverage: 50.1% of statements
+ok  	github.com/socialgouv/buildkit-operator/cmd/companion	6.414s	coverage: 66.9% of statements
+ok  	github.com/socialgouv/buildkit-operator/cmd/gateway	1.105s	coverage: 61.0% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/builder	1.041s	coverage: 96.5% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/controller	6.404s	coverage: 82.2% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/identity	2.529s	coverage: 78.4% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/metrics	1.129s	coverage: 100.0% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/projectdefaults	1.067s	coverage: 97.8% of statements
+?   	github.com/socialgouv/buildkit-operator/internal/provisioner	[no test files]
+ok  	github.com/socialgouv/buildkit-operator/internal/provisioner/k8s	8.242s	coverage: 81.2% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/provisioner/local	8.420s	coverage: 60.8% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/router	1.042s	coverage: 92.0% of statements
