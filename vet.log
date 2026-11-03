@@ -1,0 +1,5 @@
+Info: New devbox available: 0.18.0 -> v0.19.0. Please run `devbox version update`.
+Info: Running script "go" on /tmp/iterion/repos/01a1a235-456e-7b8b-916e-2071a7c3a053
+Preparing pnpm@11.11.0 for immediate activation...
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.
+go: downloading github.com/kylelemons/godebug v1.1.0
