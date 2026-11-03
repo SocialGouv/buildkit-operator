@@ -504,7 +504,7 @@
     },
     "nodejs@24": {
       "last_modified": "2026-11-03T03:15:56Z",
-      "plugin_version": "0.0.5",
+      "plugin_version": "0.0.4",
       "resolved": "github:NixOS/nixpkgs/9a6cbf4722bdbbef65f9e0400452ca088e31dc4b#nodejs",
       "source": "devbox-search",
       "version": "24.21.0",
