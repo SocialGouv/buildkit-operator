@@ -120,7 +120,7 @@ an EBS-CSI VolumeSnapshotClass. They must already exist — the chart references
 ## Security profile & the Kyverno caveat
 
 The per-project daemons default to **rootless** buildkit
-(`securityProfile: rootless`, image `moby/buildkit:v0.31.1-rootless`). Rootless
+(`securityProfile: rootless`, image `moby/buildkit:v0.34.0-rootless`). Rootless
 buildkit needs `seccompProfile: Unconfined` on the daemon pod (it manages its own
 user-namespaced sandbox).
 
