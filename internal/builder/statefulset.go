@@ -22,7 +22,7 @@ import (
 // Config holds the cluster-wide defaults injected by buildd.
 type Config struct {
 	Namespace            string // namespace the daemons run in
-	BuildkitImage        string // rootless image, e.g. moby/buildkit:v0.34.0-rootless
+	BuildkitImage        string // rootless image, e.g. moby/buildkit:v0.34.2-rootless
 	CompanionImage       string // our sidecar image (must bundle buildctl)
 	DaemonCertsSecret    string // mTLS server certs (wildcard SAN) shared by all daemons
 	CertManagerCerts     bool   // daemon certs Secret is cert-manager-issued (keys tls.crt/tls.key/ca.crt) → remap at mount to the .pem filenames buildkitd reads
