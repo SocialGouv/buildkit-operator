@@ -58,7 +58,7 @@ companion:
 # Rootless variant by default to minimise breakout surface.
 buildkit:
   # renovate: datasource=docker depName=moby/buildkit versioning=docker
-  image: moby/buildkit:v0.34.0-rootless
+  image: moby/buildkit:v0.34.2-rootless
   # gRPC port each per-project Service exposes (TCP + mTLS).
   port: 1234
 
