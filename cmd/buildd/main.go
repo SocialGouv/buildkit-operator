@@ -48,7 +48,7 @@ func main() {
 	backend := flag.String("backend", "k8s", "provisioning backend: k8s (Kubernetes StatefulSets) | local (single-host Incus + ZFS)")
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context to target (empty = current-context)")
 	flag.StringVar(&cfg.Namespace, "namespace", "buildkit-builds", "namespace the per-project daemons + BuildProjects + their certs/config live in (the 'builds' ns, distinct from the operator ns buildd runs in)")
-	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.34.0-rootless", "buildkitd image (vanilla)")
+	flag.StringVar(&cfg.BuildkitImage, "buildkit-image", "moby/buildkit:v0.34.2-rootless", "buildkitd image (vanilla)")
 	flag.StringVar(&cfg.CompanionImage, "companion-image", "ghcr.io/socialgouv/buildkit-operator-companion:dev", "companion sidecar image")
 	flag.StringVar(&cfg.DaemonCertsSecret, "daemon-certs-secret", "buildkit-daemon-certs", "mTLS server certs secret")
 	flag.BoolVar(&cfg.CertManagerCerts, "cert-manager-certs", false, "the daemon certs Secret is cert-manager-issued (keys tls.crt/tls.key/ca.crt); remap them at mount to the .pem filenames buildkitd reads")
