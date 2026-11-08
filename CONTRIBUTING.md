@@ -14,7 +14,7 @@ Thanks for helping improve buildkit-operator. This is the control plane (routing
   it, run `devbox shell` for an interactive shell, or prefix one-off commands with `devbox run -- <cmd>`.
 
 > Without devbox at all you must provide the toolchain yourself: **Go 1.26+**, and for releases
-> **Node ≥22.13 + pnpm 11** (via corepack). Dependency updates are automated by Renovate
+> **Node ≥22.22.2 + pnpm 11** (via corepack). Dependency updates are automated by Renovate
 > (`.github/renovate.json5`).
 
 ### Working on the code
