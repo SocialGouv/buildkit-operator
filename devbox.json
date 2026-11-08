@@ -7,7 +7,7 @@
     "jq@1.8.2",
     "cosign@3.1.3",
     "nodejs@24",
-    "go-task@3.48.0",
+    "go-task@3.53.1",
     "gh@2.102.0",
     "glab@1.114.0",
     "forgejo-cli@0.5.0"
