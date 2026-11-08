@@ -1,7 +1,7 @@
 # buildd — control plane (controller-runtime manager + /route API). Distroless, nonroot.
 # Build on the NATIVE builder arch and cross-compile to $TARGETARCH (pure Go, CGO off): a multi-arch
 # build then costs one compile per arch instead of an emulated toolchain.
-FROM --platform=$BUILDPLATFORM golang:1.26@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS build
+FROM --platform=$BUILDPLATFORM golang:1.27@sha256:e519d3b0a5b285e5aa53ab9eef02bc6bbb9cb04608389b743a136a9ce75f0d1e AS build
 ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
