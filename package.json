@@ -6,7 +6,7 @@
   "scripts": {
     "release": "release-it"
   },
-  "packageManager": "pnpm@11.11.0",
+  "packageManager": "pnpm@11.28.8",
   "devDependencies": {
     "@release-it/conventional-changelog": "^11.0.1",
     "release-it": "^20.2.0"
