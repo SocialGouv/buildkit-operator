@@ -305,8 +305,11 @@ spec:
                     of builds that are still running.
                   properties:
                     id:
-                      description: ID is the opaque token /route returned to the client,
-                        which /complete echoes back.
+                      description: |-
+                        ID identifies the build. It is the SHA-256 of the token /route handed the client, never the
+                        token itself: releasing a build is authorized by presenting that token, and the status of a
+                        BuildProject is readable by anything with get/list in the builds namespace. Storing the token
+                        would put a live credential in plain sight there.
                       type: string
                     since:
                       description: |-
