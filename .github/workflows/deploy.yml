@@ -61,7 +61,7 @@ jobs:
 
 
       - name: Pin the chart commit and the three image digests
-        uses: mikefarah/yq@bbdd97482f2d439126582a59689eb1c855944955 # v4.44.3
+        uses: mikefarah/yq@504fc38780cc46be8444ea1b72fb55919fc0bfb0 # v4.54.1
         env:
           SHA: ${{ env.SHA }}
           BUILDD_DIGEST: ${{ env.BUILDD_DIGEST }}
