@@ -1,0 +1,10 @@
+Info: New devbox available: 0.18.0 -> v0.19.0. Please run `devbox version update`.
+Info: Running script "go" on /tmp/iterion/repos/01a1be26-b81a-7e6b-bb78-4b303d98ced4
+Preparing pnpm@12.15.0 for immediate activation...
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.
+go: github.com/golangci-lint/v2/cmd/golangci-lint@v2.15.0: github.com/golangci-lint/v2/cmd/golangci-lint@v2.15.0: invalid version: git ls-remote -q --end-of-options origin in /home/devbox/go/pkg/mod/cache/vcs/7c62762ded94eba0f9c2dafcb31185adf3f8916b824dd20b3f9d9674c9633c04: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+Error: error running script "go" in Devbox: exit status 1
+
