@@ -10,7 +10,7 @@
     "go-task@3.53.1",
     "gh@2.103.2",
     "glab@1.114.0",
-    "forgejo-cli@0.5.0"
+    "forgejo-cli@0.7.0"
   ],
   "env": {
     "DEVBOX_COREPACK_ENABLED": "1"
