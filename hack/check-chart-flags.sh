@@ -16,6 +16,7 @@ VALUES=(
   --set s3.bucket=b --set s3.credsSecret=s3creds
   --set snapshotClassName=snapclass
   --set defaultStorageClass=sc
+  --set daemonServiceAccount=buildkit-daemon
   --set mirror.enabled=true --set mirror.host=mirror:5000
   --set sandbox.runtimeClass=kata-clh
   --set daemonScheduling.pinArch=true
