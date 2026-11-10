@@ -14,6 +14,11 @@
   // 2026-09-22, four `renovate/*` branches existed here with no PR attached.
   minimumReleaseAge: "14 days",
   internalChecksFilter: "strict",
+  // The auto-maintenance gate (SocialGouv/iterion#1585) aligns a renovate branch on `main` with a
+  // commit authored by its forge App. Renovate reads any foreign author as a manual edit: it stops
+  // rebasing the branch, then retitles the PR "- abandoned" and leaves it conflicting forever
+  // (#69, 2026-11-08). Ignoring that author keeps the branch renovate's to rebase and autoclose.
+  gitIgnoredAuthors: ["327430414+iterion-forge-core[bot]@users.noreply.github.com"],
   // The cooldown above is deliberate, but it made the update stream INVISIBLE: a dry run on
   // 2026-09-22 found 56 flattened updates while three consecutive scheduled runs had produced
   // zero PRs, and the repository had never carried a single issue — so there was no dashboard to
