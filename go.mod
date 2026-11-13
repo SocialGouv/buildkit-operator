@@ -6,7 +6,7 @@ toolchain go1.26.10
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/go-jose/go-jose/v4 v4.1.6
+	github.com/go-jose/go-jose/v4 v4.1.7
 	github.com/go-logr/logr v1.4.4
 	github.com/kubernetes-csi/external-snapshotter/client/v8 v8.7.0
 	github.com/prometheus/client_golang v1.25.0
