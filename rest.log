@@ -1,0 +1,46 @@
+Info: New devbox available: 0.18.0 -> v0.21.0. Please run `devbox version update`.
+Info: Running script "go" on /tmp/iterion/repos/01a1dfbb-046c-71d1-b0d2-868ce41f1b08
+Preparing pnpm@12.17.0 for immediate activation...
+Internal Error: Error when performing the request to https://registry.npmjs.org/pnpm/-/pnpm-12.17.0.tgz; for troubleshooting help, see https://github.com/nodejs/corepack#troubleshooting
+    at fetch (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13170:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fetchUrlStream (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13200:20)
+    at async download (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13352:18)
+    at async installVersion (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13466:55)
+    at async Engine.ensurePackageManager (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13994:32)
+    at async PrepareCommand.execute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14756:27)
+    at async PrepareCommand.validateAndExecute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:1352:26)
+    at async _Cli.run (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:2462:22)
+    at async Object.runMain (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14832:19)
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.
+Info: New devbox available: 0.18.0 -> v0.21.0. Please run `devbox version update`.
+Info: Running script "go" on /tmp/iterion/repos/01a1dfbb-046c-71d1-b0d2-868ce41f1b08
+Preparing pnpm@12.17.0 for immediate activation...
+Internal Error: Error when performing the request to https://registry.npmjs.org/pnpm/-/pnpm-12.17.0.tgz; for troubleshooting help, see https://github.com/nodejs/corepack#troubleshooting
+    at fetch (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13170:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fetchUrlStream (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13200:20)
+    at async download (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13352:18)
+    at async installVersion (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13466:55)
+    at async Engine.ensurePackageManager (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13994:32)
+    at async PrepareCommand.execute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14756:27)
+    at async PrepareCommand.validateAndExecute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:1352:26)
+    at async _Cli.run (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:2462:22)
+    at async Object.runMain (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14832:19)
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.
+Info: New devbox available: 0.18.0 -> v0.21.0. Please run `devbox version update`.
+Info: Running script "gofmt" on /tmp/iterion/repos/01a1dfbb-046c-71d1-b0d2-868ce41f1b08
+gofmt needed:
+Preparing pnpm@12.17.0 for immediate activation...
+Internal Error: Error when performing the request to https://registry.npmjs.org/pnpm/-/pnpm-12.17.0.tgz; for troubleshooting help, see https://github.com/nodejs/corepack#troubleshooting
+    at fetch (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13170:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fetchUrlStream (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13200:20)
+    at async download (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13352:18)
+    at async installVersion (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13466:55)
+    at async Engine.ensurePackageManager (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13994:32)
+    at async PrepareCommand.execute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14756:27)
+    at async PrepareCommand.validateAndExecute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:1352:26)
+    at async _Cli.run (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:2462:22)
+    at async Object.runMain (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14832:19)
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.

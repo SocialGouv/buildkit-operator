@@ -1,0 +1,281 @@
+Info: New devbox available: 0.18.0 -> v0.21.0. Please run `devbox version update`.
+Info: Running script "gofmt" on /tmp/iterion/repos/01a1dfbb-046c-71d1-b0d2-868ce41f1b08
+FMT-OK
+Info: New devbox available: 0.18.0 -> v0.21.0. Please run `devbox version update`.
+Info: Running script "bash" on /tmp/iterion/repos/01a1dfbb-046c-71d1-b0d2-868ce41f1b08
+Preparing pnpm@12.17.0 for immediate activation...
+Internal Error: Error when performing the request to https://registry.npmjs.org/pnpm/-/pnpm-12.17.0.tgz; for troubleshooting help, see https://github.com/nodejs/corepack#troubleshooting
+    at fetch (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13170:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fetchUrlStream (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13200:20)
+    at async download (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13352:18)
+    at async installVersion (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13466:55)
+    at async Engine.ensurePackageManager (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13994:32)
+    at async PrepareCommand.execute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14756:27)
+    at async PrepareCommand.validateAndExecute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:1352:26)
+    at async _Cli.run (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:2462:22)
+    at async Object.runMain (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14832:19)
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.
+check-chart-flags: buildd — 35 rendered flags, all defined
+check-chart-flags: gateway — 7 rendered flags, all defined
+Info: New devbox available: 0.18.0 -> v0.21.0. Please run `devbox version update`.
+Info: Running script "go" on /tmp/iterion/repos/01a1dfbb-046c-71d1-b0d2-868ce41f1b08
+Preparing pnpm@12.17.0 for immediate activation...
+Internal Error: Error when performing the request to https://registry.npmjs.org/pnpm/-/pnpm-12.17.0.tgz; for troubleshooting help, see https://github.com/nodejs/corepack#troubleshooting
+    at fetch (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13170:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fetchUrlStream (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13200:20)
+    at async download (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13352:18)
+    at async installVersion (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13466:55)
+    at async Engine.ensurePackageManager (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13994:32)
+    at async PrepareCommand.execute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14756:27)
+    at async PrepareCommand.validateAndExecute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:1352:26)
+    at async _Cli.run (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:2462:22)
+    at async Object.runMain (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14832:19)
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.
+ok  	github.com/socialgouv/buildkit-operator/api/v1alpha1	1.172s	coverage: 54.8% of statements
+ok  	github.com/socialgouv/buildkit-operator/cmd/build	19.118s	coverage: 89.5% of statements
+ok  	github.com/socialgouv/buildkit-operator/cmd/buildd	5.418s	coverage: 50.1% of statements
+ok  	github.com/socialgouv/buildkit-operator/cmd/companion	6.745s	coverage: 66.3% of statements
+ok  	github.com/socialgouv/buildkit-operator/cmd/gateway	1.264s	coverage: 61.0% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/builder	0.146s	coverage: 96.5% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/controller	5.688s	coverage: 82.2% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/identity	2.199s	coverage: 78.4% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/metrics	1.194s	coverage: 100.0% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/projectdefaults	1.178s	coverage: 97.8% of statements
+?   	github.com/socialgouv/buildkit-operator/internal/provisioner	[no test files]
+ok  	github.com/socialgouv/buildkit-operator/internal/provisioner/k8s	8.053s	coverage: 81.2% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/provisioner/local	8.884s	coverage: 60.8% of statements
+ok  	github.com/socialgouv/buildkit-operator/internal/router	1.092s	coverage: 92.0% of statements
+Info: New devbox available: 0.18.0 -> v0.21.0. Please run `devbox version update`.
+Info: Running script "bash" on /tmp/iterion/repos/01a1dfbb-046c-71d1-b0d2-868ce41f1b08
+Preparing pnpm@12.17.0 for immediate activation...
+Internal Error: Error when performing the request to https://registry.npmjs.org/pnpm/-/pnpm-12.17.0.tgz; for troubleshooting help, see https://github.com/nodejs/corepack#troubleshooting
+    at fetch (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13170:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fetchUrlStream (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13200:20)
+    at async download (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13352:18)
+    at async installVersion (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13466:55)
+    at async Engine.ensurePackageManager (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13994:32)
+    at async PrepareCommand.execute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14756:27)
+    at async PrepareCommand.validateAndExecute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:1352:26)
+    at async _Cli.run (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:2462:22)
+    at async Object.runMain (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14832:19)
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.
+unit-testable coverage (excl. generated + bootstrap): 86.7% (threshold 85%)
+Info: New devbox available: 0.18.0 -> v0.21.0. Please run `devbox version update`.
+Info: Running script "go" on /tmp/iterion/repos/01a1dfbb-046c-71d1-b0d2-868ce41f1b08
+Preparing pnpm@12.17.0 for immediate activation...
+Internal Error: Error when performing the request to https://registry.npmjs.org/pnpm/-/pnpm-12.17.0.tgz; for troubleshooting help, see https://github.com/nodejs/corepack#troubleshooting
+    at fetch (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13170:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fetchUrlStream (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13200:20)
+    at async download (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13352:18)
+    at async installVersion (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13466:55)
+    at async Engine.ensurePackageManager (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:13994:32)
+    at async PrepareCommand.execute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14756:27)
+    at async PrepareCommand.validateAndExecute (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:1352:26)
+    at async _Cli.run (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:2462:22)
+    at async Object.runMain (/nix/store/hxg65alxvkr4gbpbbxwcn5g8wwz5mygw-nodejs-slim-24.21.0-corepack/lib/node_modules/corepack/dist/lib/corepack.cjs:14832:19)
+buildkit-operator devbox ready: go-task, go, node+pnpm (corepack), kubectl, helm, jq, cosign, forge CLIs (gh, glab, forgejo-cli/fj). Run tasks with: devbox run -- task <name> (task --list). controller-gen & golangci-lint stay pinned in the Taskfile.
+go: downloading github.com/golangci/golangci-lint/v2 v2.15.0
+go: downloading dev.gaijin.team/go/exhaustruct/v5 v5.2.0
+go: downloading github.com/gostaticanalysis/forcetypeassert v0.2.0
+go: downloading codeberg.org/polyfloyd/go-errorlint v1.9.0
+go: downloading github.com/kisielk/errcheck v1.30.0
+go: downloading go.augendre.info/fatcontext v0.10.1
+go: downloading github.com/karamaru-alpha/copyloopvar v1.2.2
+go: downloading github.com/ultraware/funlen v0.2.0
+go: downloading github.com/manuelarte/funcorder v0.6.0
+go: downloading github.com/breml/errchkjson v0.4.1
+go: downloading github.com/charithe/durationcheck v0.0.11
+go: downloading go.augendre.info/arangolint v0.4.0
+go: downloading github.com/pelletier/go-toml/v2 v2.4.3
+go: downloading gitlab.com/bosi/decorder v0.4.2
+go: downloading 4d63.com/gocheckcompilerdirectives v1.4.0
+go: downloading github.com/alingse/asasalint v0.0.11
+go: downloading github.com/Djarvur/go-err113 v0.1.1
+go: downloading github.com/Antonboom/errname v1.1.2
+go: downloading mvdan.cc/gofumpt v0.12.0
+go: downloading github.com/OpenPeeDeeP/depguard/v2 v2.2.1
+go: downloading github.com/sivchari/containedctx v1.0.3
+go: downloading github.com/mitchellh/go-homedir v1.1.0
+go: downloading github.com/go-xmlfmt/xmlfmt v1.1.3
+go: downloading github.com/nunnatsa/ginkgolinter v0.24.0
+go: downloading github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c
+go: downloading github.com/nishanths/exhaustive v0.15.0
+go: downloading github.com/go-viper/mapstructure/v2 v2.5.0
+go: downloading github.com/gofrs/flock v0.13.1
+go: downloading github.com/golangci/golines v0.16.0
+go: downloading github.com/Abirdcfly/dupword v0.1.8
+go: downloading github.com/rogpeppe/go-internal v1.16.0
+go: downloading github.com/golangci/swaggoswag v0.0.0-20250504205917-77f2aca3143e
+go: downloading github.com/ashanbrown/forbidigo/v2 v2.3.1
+go: downloading github.com/bkielbasa/cyclop v1.2.3
+go: downloading github.com/daixiang0/gci v0.13.7
+go: downloading github.com/breml/bidichk v0.3.4
+go: downloading github.com/golangci/canonicalheader v0.0.0-20260928145534-e18e5c5a078f
+go: downloading github.com/ClickHouse/clickhouse-go-linter v1.2.1
+go: downloading charm.land/lipgloss/v2 v2.0.6
+go: downloading github.com/golangci/gofmt v0.0.0-20260820135601-e84e05053792
+go: downloading github.com/hashicorp/go-version v1.9.0
+go: downloading github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+go: downloading github.com/ldez/grignotin v0.10.1
+go: downloading github.com/alecthomas/chroma/v2 v2.27.0
+go: downloading github.com/stretchr/testify v1.12.1
+go: downloading github.com/manuelarte/embeddedstructfieldcheck v0.4.0
+go: downloading github.com/golangci/asciicheck v0.5.0
+go: downloading github.com/kkHAIKE/contextcheck v1.1.6
+go: downloading github.com/sirupsen/logrus v1.10.2
+go: downloading github.com/sourcegraph/go-diff v0.9.0
+go: downloading github.com/golangci/dupl v0.0.0-20260401084720-c99c5cf5c202
+go: downloading github.com/golangci/revgrep v0.8.0
+go: downloading dev.gaijin.team/go/exhaustruct/v4 v4.0.0
+go: downloading github.com/spf13/viper v1.12.0
+go: downloading golang.org/x/mod v0.42.0
+go: downloading github.com/mattn/go-colorable v0.1.16
+go: downloading github.com/golangci/plugin-module-register v0.1.2
+go: downloading golang.org/x/tools v0.52.0
+go: downloading github.com/alecthomas/go-check-sumtype v0.5.1-0.20260828200218-ae6904d28606
+go: downloading 4d63.com/gochecknoglobals v0.2.2
+go: downloading github.com/ldez/exptostd v0.4.5
+go: downloading github.com/fzipp/gocyclo v0.6.0
+go: downloading github.com/uudashr/gocognit v1.3.0
+go: downloading github.com/quasilyte/go-ruleguard/dsl v0.3.23
+go: downloading github.com/jgautheron/goconst v1.11.0
+go: downloading github.com/ldez/gomoddirectives v0.10.0
+go: downloading github.com/securego/gosec/v2 v2.29.0
+go: downloading github.com/denis-tingaikin/go-header v0.5.0
+go: downloading github.com/golangci/go-printf-func-name v0.1.1
+go: downloading github.com/xen0n/gosmopolitan v1.3.0
+go: downloading github.com/Masterminds/semver/v3 v3.5.0
+go: downloading github.com/tetafro/godot v1.5.6
+go: downloading github.com/ryancurrah/gomodguard/v2 v2.1.3
+go: downloading github.com/ryancurrah/gomodguard v1.4.1
+go: downloading github.com/matoous/godox v1.1.0
+go: downloading github.com/go-critic/go-critic v0.15.0
+go: downloading github.com/leonklingele/grouper v1.1.2
+go: downloading github.com/quasilyte/go-ruleguard v0.4.5
+go: downloading github.com/uudashr/iface v1.5.3
+go: downloading github.com/pelletier/go-toml v1.9.5
+go: downloading github.com/macabu/inamedparam v0.2.0
+go: downloading github.com/gordonklaus/ineffassign v0.2.0
+go: downloading github.com/sashamelentyev/interfacebloat v1.1.0
+go: downloading github.com/ckaznocha/intrange v0.3.1
+go: downloading github.com/godoc-lint/godoc-lint v0.11.4
+go: downloading github.com/AdminBenni/iota-mixing v1.0.0
+go: downloading github.com/julz/importas v0.2.0
+go: downloading github.com/butuzov/ireturn v0.4.1
+go: downloading github.com/timonwong/loggercheck v0.13.0
+go: downloading github.com/butuzov/mirror v1.3.3
+go: downloading github.com/yagipy/maintidx v1.0.0
+go: downloading github.com/tommy-muehle/go-mnd/v2 v2.5.1
+go: downloading github.com/golangci/misspell v0.8.0
+go: downloading github.com/ashanbrown/makezero/v2 v2.2.1
+go: downloading go-simpler.org/musttag v0.14.0
+go: downloading github.com/alexkohler/nakedret/v2 v2.0.6
+go: downloading github.com/gostaticanalysis/nilerr v0.1.2
+go: downloading github.com/nakabonne/nestif v0.3.1
+go: downloading github.com/Antonboom/nilnil v1.1.2
+go: downloading github.com/alingse/nilnesserr v0.2.0
+go: downloading github.com/ssgreg/nlreturn/v2 v2.2.1
+go: downloading github.com/AlwxSin/noinlineerr v1.0.6
+go: downloading github.com/firefart/nonamedreturns v1.0.8
+go: downloading github.com/stbenjam/no-sprintf-host-port v0.3.1
+go: downloading github.com/kunwardeep/paralleltest v1.0.16
+go: downloading github.com/catenacyber/perfsprint v0.10.1
+go: downloading github.com/alexkohler/prealloc v1.1.0
+go: downloading github.com/nishanths/predeclared v0.3.0
+go: downloading github.com/yeya24/promlinter v0.3.0
+go: downloading github.com/sonatard/noctx v0.5.1
+go: downloading github.com/ghostiam/protogetter v1.0.1
+go: downloading github.com/curioswitch/go-reassign v0.3.0
+go: downloading github.com/raeperd/recvcheck v0.3.1
+go: downloading github.com/BurntSushi/toml v1.6.0
+go: downloading go-simpler.org/sloglint v0.12.0
+go: downloading github.com/mgechev/revive v1.17.1
+go: downloading github.com/golangci/rowserrcheck v0.0.0-20261005233414-e0740d52dee8
+go: downloading github.com/jjti/go-spancheck v0.6.5
+go: downloading github.com/ryanrolds/sqlclosecheck v0.6.0
+go: downloading honnef.co/go/tools v0.8.2
+go: downloading github.com/4meepo/tagalign v1.4.4
+go: downloading github.com/ldez/tagliatelle v0.8.0
+go: downloading github.com/maratori/testableexamples v1.0.1
+go: downloading github.com/Antonboom/testifylint v1.6.4
+go: downloading github.com/maratori/testpackage v1.1.2
+go: downloading github.com/kulti/thelper v0.7.1
+go: downloading github.com/moricho/tparallel v0.3.2
+go: downloading github.com/golangci/unconvert v0.0.0-20250410112200-a129a6e6413e
+go: downloading mvdan.cc/unparam v0.0.0-20260823230713-2fa3d841b0c8
+go: downloading github.com/MirrexOne/unqueryvet v1.5.4
+go: downloading github.com/ldez/usetesting v0.5.0
+go: downloading github.com/sashamelentyev/usestdlibvars v1.29.0
+go: downloading github.com/blizzy78/varnamelen v0.8.0
+go: downloading github.com/sanposhiho/wastedassign/v2 v2.1.0
+go: downloading github.com/ultraware/whitespace v0.2.0
+go: downloading github.com/tomarrell/wrapcheck/v2 v2.13.0
+go: downloading github.com/bombsimon/wsl/v4 v4.7.0
+go: downloading github.com/ykadowak/zerologlint v0.1.5
+go: downloading github.com/bombsimon/wsl/v5 v5.9.0
+go: downloading github.com/mattn/go-isatty v0.0.22
+go: downloading github.com/gostaticanalysis/analysisutil v0.7.1
+go: downloading go.uber.org/zap v1.27.0
+go: downloading github.com/hexops/gotextdiff v1.0.3
+go: downloading github.com/go-toolsmith/astcast v1.1.0
+go: downloading github.com/fsnotify/fsnotify v1.9.0
+go: downloading github.com/mitchellh/mapstructure v1.5.0
+go: downloading github.com/spf13/afero v1.15.0
+go: downloading github.com/spf13/cast v1.5.0
+go: downloading github.com/spf13/jwalterweatherman v1.1.0
+go: downloading github.com/go-toolsmith/astcopy v1.1.0
+go: downloading github.com/go-toolsmith/astequal v1.2.0
+go: downloading github.com/go-toolsmith/astfmt v1.1.0
+go: downloading github.com/go-toolsmith/astp v1.1.0
+go: downloading github.com/go-toolsmith/strparse v1.1.0
+go: downloading github.com/go-toolsmith/typep v1.1.0
+go: downloading github.com/quasilyte/regex/syntax v0.0.0-20210819130434-b3f0c404a727
+go: downloading golang.org/x/text v0.41.0
+go: downloading github.com/gobwas/glob v0.2.3
+go: downloading github.com/google/go-cmp v0.7.0
+go: downloading dev.gaijin.team/go/golib v0.8.1
+go: downloading github.com/stretchr/objx v0.5.3
+go: downloading github.com/dave/dst v0.28.0
+go: downloading github.com/charmbracelet/colorprofile v0.4.3
+go: downloading github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886
+go: downloading github.com/charmbracelet/x/term v0.2.2
+go: downloading github.com/charmbracelet/x/ansi v0.11.8
+go: downloading github.com/clipperhouse/displaywidth v0.11.0
+go: downloading github.com/lucasb-eyer/go-colorful v1.4.1
+go: downloading github.com/rivo/uniseg v0.4.7
+go: downloading github.com/ccojocar/zxcvbn-go v1.0.4
+go: downloading github.com/gostaticanalysis/comment v1.5.0
+go: downloading github.com/hashicorp/hcl v1.0.0
+go: downloading github.com/subosito/gotenv v1.4.1
+go: downloading gopkg.in/ini.v1 v1.67.0
+go: downloading github.com/magiconair/properties v1.8.6
+go: downloading github.com/ettle/strcase v0.2.0
+go: downloading github.com/hashicorp/go-immutable-radix/v2 v2.1.0
+go: downloading github.com/alfatraining/structtag v1.0.0
+go: downloading github.com/ldez/structtags v0.6.1
+go: downloading github.com/prometheus/client_golang v1.12.1
+go: downloading github.com/prometheus/client_model v0.2.0
+go: downloading github.com/quasilyte/gogrep v0.5.0
+go: downloading github.com/quasilyte/stdinfo v0.0.0-20220114132959-f7386bf02567
+go: downloading golang.org/x/exp/typeparams v0.0.0-20260811152304-ee035b5b010f
+go: downloading github.com/dlclark/regexp2/v2 v2.2.1
+go: downloading github.com/fatih/structtag v1.2.0
+go: downloading codeberg.org/chavacava/garif v0.2.1
+go: downloading go.uber.org/multierr v1.10.0
+go: downloading github.com/mattn/go-runewidth v0.0.24
+go: downloading github.com/clipperhouse/uax29/v2 v2.7.0
+go: downloading github.com/xo/terminfo v1.0.0
+go: downloading golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
+go: downloading github.com/muesli/cancelreader v0.2.2
+go: downloading github.com/charmbracelet/x/termios v0.1.1
+go: downloading github.com/charmbracelet/x/windows v0.2.2
+go: downloading github.com/hashicorp/golang-lru/v2 v2.0.7
+go: downloading github.com/golang/protobuf v1.5.3
+go: downloading github.com/prometheus/common v0.32.1
+go: downloading github.com/prometheus/procfs v0.7.3
+go: downloading github.com/matttproud/golang_protobuf_extensions v1.0.1
+go: downloading github.com/dlclark/regexp2 v1.12.0
