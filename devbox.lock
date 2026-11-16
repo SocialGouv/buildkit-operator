@@ -203,41 +203,41 @@
         }
       }
     },
-    "go@1.26": {
-      "last_modified": "2026-11-06T15:06:19Z",
-      "resolved": "github:NixOS/nixpkgs/4fe25e12eb9f4c744966dd3de5a05246cf098601#go",
+    "go@1.27": {
+      "last_modified": "2026-11-14T08:26:23Z",
+      "resolved": "github:NixOS/nixpkgs/5d2b81a7a3be3e2f832879028e4d60abbf58e9a0#go",
       "source": "devbox-search",
-      "version": "1.26.10",
+      "version": "1.27.3",
       "systems": {
         "aarch64-darwin": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/zm3sm3zv21c2jz90bh16jc7rgqfcnivs-go-1.26.10",
+              "path": "/nix/store/0n6nm2j8ymbrnzb9kc5y5sar4d9vp93s-go-1.27.3",
               "default": true
             }
           ],
-          "store_path": "/nix/store/zm3sm3zv21c2jz90bh16jc7rgqfcnivs-go-1.26.10"
+          "store_path": "/nix/store/0n6nm2j8ymbrnzb9kc5y5sar4d9vp93s-go-1.27.3"
         },
         "aarch64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/k2vfr5rajk1gjpsdzgqdfz1gkadrc7v7-go-1.26.10",
+              "path": "/nix/store/4iwsn73m5dqlvjddjnaqgy3m34kqmicw-go-1.27.3",
               "default": true
             }
           ],
-          "store_path": "/nix/store/k2vfr5rajk1gjpsdzgqdfz1gkadrc7v7-go-1.26.10"
+          "store_path": "/nix/store/4iwsn73m5dqlvjddjnaqgy3m34kqmicw-go-1.27.3"
         },
         "x86_64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/fkz7zn1a0yiryf9kri2yh1s12k1sv557-go-1.26.10",
+              "path": "/nix/store/6pavbn9myjkx0djx70hm7q4rdrv7q2iw-go-1.27.3",
               "default": true
             }
           ],
-          "store_path": "/nix/store/fkz7zn1a0yiryf9kri2yh1s12k1sv557-go-1.26.10"
+          "store_path": "/nix/store/6pavbn9myjkx0djx70hm7q4rdrv7q2iw-go-1.27.3"
         }
       }
     },
