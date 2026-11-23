@@ -43,7 +43,7 @@ jobs:
       # pnpm is provisioned by Corepack, pinned via the package.json "packageManager" field.
       - run: corepack enable
       - run: pnpm install --frozen-lockfile # frozen lockfile keeps the working dir clean for release-it
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
       - run: helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
       - run: |
           git config user.name "github-actions[bot]"
