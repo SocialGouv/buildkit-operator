@@ -27,7 +27,7 @@ jobs:
       # (a repository ruleset only accepts actors from the owning org), so the
       # release authenticates as the org's token-bureau App, which the ruleset
       # does bypass. Same mechanism SocialGouv/iterion uses for its releases.
-      - uses: SocialGouv/token-bureau@453f0eeb5add59489df124a0aedcb20a9b7fb027 # v0.0.10
+      - uses: SocialGouv/token-bureau@1ff14fd08c4972ea9c65a2b958c7ce41d4f28036 # v0.0.11
         id: token
         with:
           token-bureau-url: https://token-bureau.fabrique.social.gouv.fr
