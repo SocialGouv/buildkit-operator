@@ -127,41 +127,41 @@
       "last_modified": "2026-11-06T15:06:19Z",
       "resolved": "github:NixOS/nixpkgs/4fe25e12eb9f4c744966dd3de5a05246cf098601?lastModified=1793977579&narHash=sha256-WrSODdZFVIs%2FHh2NzC0bY%2BROByi0bATg8WfePX8dPj8%3D"
     },
-    "glab@1.126.0": {
-      "last_modified": "2026-11-10T04:36:05Z",
-      "resolved": "github:NixOS/nixpkgs/9ac0edc06bfb33e6c0000be79d98ef8d89e26503#glab",
+    "glab@1.128.0": {
+      "last_modified": "2026-11-14T08:26:23Z",
+      "resolved": "github:NixOS/nixpkgs/5d2b81a7a3be3e2f832879028e4d60abbf58e9a0#glab",
       "source": "devbox-search",
-      "version": "1.126.0",
+      "version": "1.128.0",
       "systems": {
         "aarch64-darwin": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/hvfzzy9n8bvm12j65q9f1d17kazacqx0-glab-1.126.0",
+              "path": "/nix/store/zc52ax2fmnpzh42wir71fa0mpc923fhf-glab-1.128.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/hvfzzy9n8bvm12j65q9f1d17kazacqx0-glab-1.126.0"
+          "store_path": "/nix/store/zc52ax2fmnpzh42wir71fa0mpc923fhf-glab-1.128.0"
         },
         "aarch64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/af4kzzvvfn9d3v409wbljrza7nq9q7as-glab-1.126.0",
+              "path": "/nix/store/7z5qk1xr4g1dkj4wjd4zqpw2iad7kmg4-glab-1.128.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/af4kzzvvfn9d3v409wbljrza7nq9q7as-glab-1.126.0"
+          "store_path": "/nix/store/7z5qk1xr4g1dkj4wjd4zqpw2iad7kmg4-glab-1.128.0"
         },
         "x86_64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/grznb3f12synxxhy7qimixbp77zn4caf-glab-1.126.0",
+              "path": "/nix/store/wlx0pavs5nccg2zbz303fslsmh8hm0p5-glab-1.128.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/grznb3f12synxxhy7qimixbp77zn4caf-glab-1.126.0"
+          "store_path": "/nix/store/wlx0pavs5nccg2zbz303fslsmh8hm0p5-glab-1.128.0"
         }
       }
     },
